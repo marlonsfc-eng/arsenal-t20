@@ -59,6 +59,141 @@ Hooks.once("ready", () => {
 
 });
 
+// ============================================================
+// PAINEL DE CONDIÇÕES
+// ============================================================
+
+class PainelCondicoes extends Application {
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: "arsenal-painel-condicoes",
+      title: "⚔️ Condições — Arsenal T20",
+      width: 280,
+      height: "auto",
+      resizable: true,
+      minimizable: true,
+    });
+  }
+
+  _getCondicoes() {
+    return (CONFIG.statusEffects ?? [])
+      .filter(e => e.id && e.name)
+      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  }
+
+  async getData() { return {}; }
+
+  async _renderInner() {
+    return $(`<div id="arsenal-cond-inner"></div>`);
+  }
+
+  activateListeners(html) {
+    super.activateListeners(html);
+    this._renderPainel(html);
+  }
+
+  _renderPainel(html) {
+    const busca     = this._busca ?? "";
+    const q         = busca.toLowerCase().trim();
+    const condicoes = this._getCondicoes().filter(e =>
+      !q || e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q)
+    );
+    const alvo = canvas.tokens?.controlled[0]?.name ?? "Nenhum token selecionado";
+
+    const linhas = condicoes.map(e => {
+      const ativa = canvas.tokens.controlled[0]?.actor?.statuses?.has(e.id);
+      return `
+        <button class="t20-painel-cond" data-id="${e.id}" data-nome="${e.name}"
+          style="display:flex;align-items:center;gap:6px;width:100%;
+            padding:5px 8px;margin-bottom:3px;border-radius:4px;
+            cursor:pointer;text-align:left;font-size:0.82em;
+            background:${ativa ? "#0a2a0a" : "#1a1a26"};
+            border:1px solid ${ativa ? "#27ae60" : "#3a3a50"};
+            color:${ativa ? "#27ae60" : "#d4c5a0"}">
+          ${e.icon ? `<img src="${e.icon}" style="width:16px;height:16px;border:none;opacity:${ativa ? 1 : 0.7}">` : "🔮"}
+          <span>${e.name}</span>
+          ${ativa ? `<span style="margin-left:auto;font-size:0.8em">✓</span>` : ""}
+        </button>`;
+    }).join("");
+
+    html.find("#arsenal-cond-inner").html(`
+      <div style="padding:8px;font-family:'Crimson Text',serif;">
+        <div style="font-size:0.8em;color:#888;margin-bottom:8px;
+          padding:4px 8px;background:#1a1a26;border-radius:4px;
+          border-left:3px solid #c9a227">
+          🎯 <b style="color:#c9a227">${alvo}</b>
+        </div>
+        <input id="t20-busca-cond" type="text" placeholder="🔍 Buscar..."
+          value="${busca}"
+          style="width:100%;padding:5px 8px;margin-bottom:8px;box-sizing:border-box;
+            background:#1a1a26;border:1px solid #3a3a50;color:#d4c5a0;
+            border-radius:4px;font-size:0.9em">
+        <div style="max-height:420px;overflow-y:auto;
+          scrollbar-width:thin;scrollbar-color:#3a3a50 #0a0a0f">
+          ${linhas || `<div style="color:#666;padding:10px;text-align:center">Nenhuma condição encontrada</div>`}
+        </div>
+        <div style="margin-top:8px;padding-top:6px;border-top:1px solid #2a2a38;
+          font-size:0.72em;color:#555;text-align:center">
+          Clique para aplicar/remover no token selecionado
+        </div>
+      </div>`);
+
+    html.find("#t20-busca-cond").on("input", e => {
+      this._busca = e.target.value;
+      this._renderPainel(html);
+      html.find("#t20-busca-cond").focus();
+    });
+
+    html.find(".t20-painel-cond").on("click", async e => {
+      const btn   = e.currentTarget;
+      const id    = btn.dataset.id;
+      const nome  = btn.dataset.nome;
+      const actor = canvas.tokens.controlled[0]?.actor ?? game.user.character;
+      if (!actor) return ui.notifications.warn("⚔️ Selecione um token primeiro!");
+
+      if (game.user.isGM) {
+        const jaAtiva = actor.statuses?.has(id);
+        await actor.toggleStatusEffect(id);
+        ui.notifications.info(`🔮 ${nome} ${jaAtiva ? "removida de" : "aplicada em"} ${actor.name}`);
+      } else {
+        game.socket.emit("module.arsenal-t20", {
+          tipo: "aplicarCondicoes",
+          actorId: actor.id,
+          condicoes: [id],
+          nomeItem: "Painel de Condições",
+        });
+        ui.notifications.info(`🔮 Solicitando ${nome} para ${actor.name}...`);
+      }
+      setTimeout(() => this._renderPainel(html), 200);
+    });
+  }
+}
+
+let _painelCondicoes = null;
+
+function abrirPainelCondicoes() {
+  if (_painelCondicoes?.rendered) {
+    _painelCondicoes.close();
+    _painelCondicoes = null;
+  } else {
+    _painelCondicoes = new PainelCondicoes();
+    _painelCondicoes.render(true);
+  }
+}
+
+// Botão nos controles da cena (aba de tokens, lado esquerdo)
+Hooks.on("getSceneControlButtons", (controls) => {
+  const tokens = controls.find(c => c.name === "token");
+  if (!tokens) return;
+  tokens.tools.push({
+    name:    "arsenal-condicoes",
+    title:   "Condições Rápidas — Arsenal T20",
+    icon:    "fas fa-skull-crossbones",
+    button:  true,
+    onClick: () => abrirPainelCondicoes(),
+  });
+});
+
 // Helper para verificar configurações
 function cfg(chave) {
   try { return game.settings.get("arsenal-t20", chave); }
@@ -1160,122 +1295,6 @@ async function aplicarCondicoes(actor, condicoes, nomeItem) {
     </div>`
   });
 }
-
-// ============================================================
-// CARD DE CONDIÇÕES RÁPIDAS
-// Detecta qualquer item com condições e gera card com botões de 1 clique
-// ============================================================
-
-Hooks.on("createChatMessage", async (message, options, userId) => {
-  if (!cfg("autoCondicoes")) return;
-  if (userId !== game.userId) return;
-
-  const itemData = message.flags?.tormenta20?.itemData;
-  if (!itemData) return;
-
-  // Só gera o card se NÃO tiver resistência (senão já é tratado pelo card de salvamento)
-  const resistencia = itemData?.resistencia;
-  if (resistencia?.txt || resistencia?.pericia) return;
-
-  const descricaoTexto = (itemData?.description?.value ?? "");
-  if (!descricaoTexto) return;
-
-  // Nome e imagem
-  const nomeMatch = message.content?.match(/title="([^"]+)"/);
-  const imgMatch  = message.content?.match(/img[^>]+src="([^"]+)"/);
-  const nomeItem  = itemData?.name ?? nomeMatch?.[1] ?? "Habilidade";
-  const imgItem   = imgMatch?.[1] ?? "";
-
-  // Detectar condições no texto
-  const { aoFalhar, aoPassar } = detectarCondicoesContexto(nomeItem, descricaoTexto, "");
-
-  // Para itens sem resistência, "aoFalhar" significa "aplica diretamente"
-  const todasCondicoes = [...new Set([...aoFalhar, ...aoPassar])];
-  if (!todasCondicoes.length) return;
-
-  await criarCardCondicoesRapidas(nomeItem, imgItem, todasCondicoes, message);
-});
-
-async function criarCardCondicoesRapidas(nomeItem, imgItem, condicoes, message) {
-  // Gera botões individuais por condição
-  const btns = condicoes.map(id => {
-    const nome = CONFIG.statusEffects.find(e => e.id === id)?.name ?? id;
-    const icone = CONFIG.statusEffects.find(e => e.id === id)?.icon ?? "";
-    return `<button class="t20-cond-rapida"
-      data-cond-id="${id}"
-      data-cond-nome="${nome}"
-      data-item-nome="${nomeItem}"
-      style="display:flex;align-items:center;gap:6px;
-        padding:5px 10px;border-radius:4px;cursor:pointer;
-        background:#2a1a3a;border:1px solid #5a2a7a;
-        color:#d4b8f0;font-size:0.85em;font-family:'Cinzel',serif;
-        transition:all 0.15s;width:100%;margin-bottom:4px;text-align:left">
-      ${icone ? `<img src="${icone}" style="width:18px;height:18px;border:none">` : "🔮"}
-      <span>Aplicar <b>${nome}</b></span>
-    </button>`;
-  }).join("");
-
-  const html = `
-    <div class="t20-card" style="background:linear-gradient(135deg,#0f0a1a,#1a0f2a);
-      border:1px solid #3a1a5a;border-top:3px solid #9b59b6;
-      border-radius:6px;padding:10px 12px;font-family:'Crimson Text',serif;color:#d4b8f0">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;
-        padding-bottom:6px;border-bottom:1px solid #3a1a5a">
-        ${imgItem ? `<img src="${imgItem}" style="width:28px;height:28px;border-radius:4px;border:1px solid #5a2a7a">` : ""}
-        <span style="color:#b07fd4;font-family:'Cinzel',serif;font-weight:bold;font-size:0.95em">
-          🔮 ${nomeItem}
-        </span>
-      </div>
-      <div style="font-size:0.82em;color:#907ab0;margin-bottom:8px">
-        Clique para aplicar no token selecionado:
-      </div>
-      ${btns}
-    </div>`;
-
-  await ChatMessage.create({
-    content: html,
-    speaker: message.speaker,
-    whisper: game.user.isGM ? [] : ChatMessage.getWhisperRecipients("GM").map(u => u.id),
-  });
-}
-
-// Listener para os botões de condição rápida
-Hooks.on("renderChatMessageHTML", (message, html) => {
-  html.querySelectorAll(".t20-cond-rapida").forEach(btn => {
-    if (btn.dataset.listenerAdded) return;
-    btn.dataset.listenerAdded = "1";
-    btn.addEventListener("click", async () => {
-      const condId   = btn.dataset.condId;
-      const condNome = btn.dataset.condNome;
-      const itemNome = btn.dataset.itemNome;
-
-      // Pega o token controlado pelo jogador
-      const token = canvas.tokens.controlled[0];
-      const actor = token?.actor ?? game.user.character;
-      if (!actor) return ui.notifications.warn("Selecione um token antes de aplicar a condição!");
-
-      if (game.user.isGM) {
-        await aplicarCondicoes(actor, [condId], itemNome);
-      } else {
-        // Jogador envia para o GM aplicar
-        game.socket.emit("module.arsenal-t20", {
-          tipo: "aplicarCondicoes",
-          actorId: actor.id,
-          condicoes: [condId],
-          nomeItem: itemNome,
-        });
-        ui.notifications.info(`🔮 Solicitando aplicar ${condNome} em ${actor.name}...`);
-      }
-
-      // Feedback visual no botão
-      btn.style.background = "#1a3a1a";
-      btn.style.borderColor = "#27ae60";
-      btn.style.color = "#27ae60";
-      btn.innerHTML = `✅ <b>${condNome}</b> aplicada em ${actor.name}`;
-      btn.disabled = true;
-    });
-  });
-});
 
 // ============================================================
 // CURA ACELERADA
