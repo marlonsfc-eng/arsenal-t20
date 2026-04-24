@@ -181,17 +181,69 @@ function abrirPainelCondicoes() {
   }
 }
 
-// Botão nos controles da cena (aba de tokens, lado esquerdo)
+// Botão nos controles da cena — compatível com Foundry v11/v12/v13
 Hooks.on("getSceneControlButtons", (controls) => {
-  const tokens = controls.find(c => c.name === "token");
-  if (!tokens) return;
-  tokens.tools.push({
-    name:    "arsenal-condicoes",
-    title:   "Condições Rápidas — Arsenal T20",
-    icon:    "fas fa-skull-crossbones",
-    button:  true,
-    onClick: () => abrirPainelCondicoes(),
+  // v13: controls é um objeto com chaves; v11/v12: array
+  if (Array.isArray(controls)) {
+    const tokens = controls.find(c => c.name === "token");
+    if (tokens) {
+      tokens.tools.push({
+        name:    "arsenal-condicoes",
+        title:   "Condições Rápidas — Arsenal T20",
+        icon:    "fas fa-skull-crossbones",
+        button:  true,
+        onClick: () => abrirPainelCondicoes(),
+      });
+    }
+  } else {
+    // v13: controles são objetos com .tools como objeto também
+    const tokens = controls.token ?? controls.tokens;
+    if (tokens) {
+      tokens.tools["arsenal-condicoes"] = {
+        name:    "arsenal-condicoes",
+        title:   "Condições Rápidas — Arsenal T20",
+        icon:    "fas fa-skull-crossbones",
+        button:  true,
+        onChange: () => abrirPainelCondicoes(),
+        order:   100,
+      };
+    }
+  }
+});
+
+// Fallback: botão fixo no HUD (sempre visível independente da versão)
+Hooks.on("ready", () => {
+  // Adiciona botão flutuante fixo na tela
+  const btn = document.createElement("button");
+  btn.id = "arsenal-cond-btn";
+  btn.title = "Condições Rápidas — Arsenal T20";
+  btn.innerHTML = `<i class="fas fa-skull-crossbones"></i>`;
+  btn.style.cssText = `
+    position: fixed;
+    bottom: 80px;
+    right: ${document.getElementById("sidebar")?.offsetWidth ? document.getElementById("sidebar").offsetWidth + 10 : 330}px;
+    z-index: 100;
+    width: 36px; height: 36px;
+    background: #1a1a26;
+    border: 1px solid #3a3a50;
+    border-radius: 50%;
+    color: #c9a227;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    transition: all 0.2s;
+  `;
+  btn.addEventListener("mouseenter", () => {
+    btn.style.background = "#8b1a1a";
+    btn.style.borderColor = "#c0392b";
   });
+  btn.addEventListener("mouseleave", () => {
+    btn.style.background = "#1a1a26";
+    btn.style.borderColor = "#3a3a50";
+  });
+  btn.addEventListener("click", () => abrirPainelCondicoes());
+  document.body.appendChild(btn);
 });
 
 // Helper para verificar configurações
