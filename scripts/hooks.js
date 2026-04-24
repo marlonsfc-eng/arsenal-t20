@@ -81,40 +81,20 @@ class PainelCondicoes extends Application {
       .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   }
 
-  // Foundry chama este método para obter o HTML interno da janela
-  async _renderHTML(context, options) {
-    const div = document.createElement("div");
-    div.id = "arsenal-cond-inner";
-    div.style.height = "100%";
+  // Retorna HTML estático mínimo — o conteúdo real é injetado em activateListeners
+  async getData() { return {}; }
+  get template() { return null; }
+
+  async _renderInner(_data) {
+    const div = $(`<div id="arsenal-cond-inner" style="height:100%"></div>`);
     return div;
   }
 
-  // v13 usa _replaceHTML, v12 usa _injectHTML — cobrir os dois
-  _replaceHTML(element, html) {
-    element.replaceChildren(html);
-    this._activateListeners(element);
-  }
-
-  _injectHTML(html) {
-    this.element.find(".window-content").empty().append(html);
-    this._activateListeners(this.element[0].querySelector("#arsenal-cond-inner"));
-  }
-
-  // Compatibilidade adicional — activateListeners é chamado no v11/v12
   activateListeners(html) {
     super.activateListeners(html);
-    const inner = html instanceof jQuery
-      ? html[0].querySelector("#arsenal-cond-inner") ?? html[0]
-      : html.querySelector?.("#arsenal-cond-inner") ?? html;
-    this._ativarPainel(inner);
-  }
-
-  _activateListeners(root) {
-    this._ativarPainel(root);
-  }
-
-  _ativarPainel(root) {
-    if (!root) return;
+    // html pode ser jQuery (v12) ou wrapper — normalizar para elemento DOM
+    const root = html instanceof jQuery ? html[0] : html;
+    this._root = root;
     this._atualizarConteudo(root);
   }
 
