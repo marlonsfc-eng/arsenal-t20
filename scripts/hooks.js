@@ -69,7 +69,7 @@ class PainelCondicoes extends Application {
       id: "arsenal-painel-condicoes",
       title: "⚔️ Condições — Arsenal T20",
       width: 280,
-      height: "auto",
+      height: 560,
       resizable: true,
       minimizable: true,
     });
@@ -81,18 +81,44 @@ class PainelCondicoes extends Application {
       .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   }
 
-  async getData() { return {}; }
-
-  async _renderInner() {
-    return $(`<div id="arsenal-cond-inner"></div>`);
+  // Foundry chama este método para obter o HTML interno da janela
+  async _renderHTML(context, options) {
+    const div = document.createElement("div");
+    div.id = "arsenal-cond-inner";
+    div.style.height = "100%";
+    return div;
   }
 
+  // v13 usa _replaceHTML, v12 usa _injectHTML — cobrir os dois
+  _replaceHTML(element, html) {
+    element.replaceChildren(html);
+    this._activateListeners(element);
+  }
+
+  _injectHTML(html) {
+    this.element.find(".window-content").empty().append(html);
+    this._activateListeners(this.element[0].querySelector("#arsenal-cond-inner"));
+  }
+
+  // Compatibilidade adicional — activateListeners é chamado no v11/v12
   activateListeners(html) {
     super.activateListeners(html);
-    this._renderPainel(html);
+    const inner = html instanceof jQuery
+      ? html[0].querySelector("#arsenal-cond-inner") ?? html[0]
+      : html.querySelector?.("#arsenal-cond-inner") ?? html;
+    this._ativarPainel(inner);
   }
 
-  _renderPainel(html) {
+  _activateListeners(root) {
+    this._ativarPainel(root);
+  }
+
+  _ativarPainel(root) {
+    if (!root) return;
+    this._atualizarConteudo(root);
+  }
+
+  _atualizarConteudo(root) {
     const busca     = this._busca ?? "";
     const q         = busca.toLowerCase().trim();
     const condicoes = this._getCondicoes().filter(e =>
@@ -101,70 +127,72 @@ class PainelCondicoes extends Application {
     const alvo = canvas.tokens?.controlled[0]?.name ?? "Nenhum token selecionado";
 
     const linhas = condicoes.map(e => {
-      const ativa = canvas.tokens.controlled[0]?.actor?.statuses?.has(e.id);
-      return `
-        <button class="t20-painel-cond" data-id="${e.id}" data-nome="${e.name}"
-          style="display:flex;align-items:center;gap:6px;width:100%;
-            padding:5px 8px;margin-bottom:3px;border-radius:4px;
-            cursor:pointer;text-align:left;font-size:0.82em;
-            background:${ativa ? "#0a2a0a" : "#1a1a26"};
-            border:1px solid ${ativa ? "#27ae60" : "#3a3a50"};
-            color:${ativa ? "#27ae60" : "#d4c5a0"}">
-          ${e.icon ? `<img src="${e.icon}" style="width:16px;height:16px;border:none;opacity:${ativa ? 1 : 0.7}">` : "🔮"}
-          <span>${e.name}</span>
-          ${ativa ? `<span style="margin-left:auto;font-size:0.8em">✓</span>` : ""}
-        </button>`;
+      const ativa = canvas.tokens?.controlled[0]?.actor?.statuses?.has(e.id) ?? false;
+      return `<button class="t20-painel-cond" data-id="${e.id}" data-nome="${e.name}"
+        style="display:flex;align-items:center;gap:6px;width:100%;
+          padding:5px 8px;margin-bottom:3px;border-radius:4px;
+          cursor:pointer;text-align:left;font-size:0.82em;
+          background:${ativa ? "#0a2a0a" : "#1a1a26"};
+          border:1px solid ${ativa ? "#27ae60" : "#3a3a50"};
+          color:${ativa ? "#27ae60" : "#d4c5a0"}">
+        ${e.icon ? `<img src="${e.icon}" style="width:16px;height:16px;border:none;opacity:${ativa ? 1 : 0.7}">` : ""}
+        <span>${e.name}</span>
+        ${ativa ? `<span style="margin-left:auto">✓</span>` : ""}
+      </button>`;
     }).join("");
 
-    html.find("#arsenal-cond-inner").html(`
-      <div style="padding:8px;font-family:'Crimson Text',serif;">
+    root.innerHTML = `
+      <div style="padding:8px;font-family:'Crimson Text',serif;height:100%;display:flex;flex-direction:column;">
         <div style="font-size:0.8em;color:#888;margin-bottom:8px;
           padding:4px 8px;background:#1a1a26;border-radius:4px;
-          border-left:3px solid #c9a227">
+          border-left:3px solid #c9a227;flex-shrink:0">
           🎯 <b style="color:#c9a227">${alvo}</b>
         </div>
-        <input id="t20-busca-cond" type="text" placeholder="🔍 Buscar..."
+        <input id="t20-busca-cond" type="text" placeholder="🔍 Buscar condição..."
           value="${busca}"
           style="width:100%;padding:5px 8px;margin-bottom:8px;box-sizing:border-box;
             background:#1a1a26;border:1px solid #3a3a50;color:#d4c5a0;
-            border-radius:4px;font-size:0.9em">
-        <div style="max-height:420px;overflow-y:auto;
+            border-radius:4px;font-size:0.9em;flex-shrink:0">
+        <div style="overflow-y:auto;flex:1;
           scrollbar-width:thin;scrollbar-color:#3a3a50 #0a0a0f">
           ${linhas || `<div style="color:#666;padding:10px;text-align:center">Nenhuma condição encontrada</div>`}
         </div>
-        <div style="margin-top:8px;padding-top:6px;border-top:1px solid #2a2a38;
-          font-size:0.72em;color:#555;text-align:center">
+        <div style="padding-top:6px;border-top:1px solid #2a2a38;
+          font-size:0.72em;color:#555;text-align:center;flex-shrink:0">
           Clique para aplicar/remover no token selecionado
         </div>
-      </div>`);
+      </div>`;
 
-    html.find("#t20-busca-cond").on("input", e => {
+    // Busca
+    root.querySelector("#t20-busca-cond")?.addEventListener("input", e => {
       this._busca = e.target.value;
-      this._renderPainel(html);
-      html.find("#t20-busca-cond").focus();
+      this._atualizarConteudo(root);
+      root.querySelector("#t20-busca-cond")?.focus();
     });
 
-    html.find(".t20-painel-cond").on("click", async e => {
-      const btn   = e.currentTarget;
-      const id    = btn.dataset.id;
-      const nome  = btn.dataset.nome;
-      const actor = canvas.tokens.controlled[0]?.actor ?? game.user.character;
-      if (!actor) return ui.notifications.warn("⚔️ Selecione um token primeiro!");
+    // Botões de condição
+    root.querySelectorAll(".t20-painel-cond").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const id   = btn.dataset.id;
+        const nome = btn.dataset.nome;
+        const actor = canvas.tokens.controlled[0]?.actor ?? game.user.character;
+        if (!actor) return ui.notifications.warn("⚔️ Selecione um token primeiro!");
 
-      if (game.user.isGM) {
-        const jaAtiva = actor.statuses?.has(id);
-        await actor.toggleStatusEffect(id);
-        ui.notifications.info(`🔮 ${nome} ${jaAtiva ? "removida de" : "aplicada em"} ${actor.name}`);
-      } else {
-        game.socket.emit("module.arsenal-t20", {
-          tipo: "aplicarCondicoes",
-          actorId: actor.id,
-          condicoes: [id],
-          nomeItem: "Painel de Condições",
-        });
-        ui.notifications.info(`🔮 Solicitando ${nome} para ${actor.name}...`);
-      }
-      setTimeout(() => this._renderPainel(html), 200);
+        if (game.user.isGM) {
+          const jaAtiva = actor.statuses?.has(id);
+          await actor.toggleStatusEffect(id);
+          ui.notifications.info(`🔮 ${nome} ${jaAtiva ? "removida de" : "aplicada em"} ${actor.name}`);
+        } else {
+          game.socket.emit("module.arsenal-t20", {
+            tipo: "aplicarCondicoes",
+            actorId: actor.id,
+            condicoes: [id],
+            nomeItem: "Painel de Condições",
+          });
+          ui.notifications.info(`🔮 Solicitando ${nome} para ${actor.name}...`);
+        }
+        setTimeout(() => this._atualizarConteudo(root), 200);
+      });
     });
   }
 }
@@ -211,39 +239,57 @@ Hooks.on("getSceneControlButtons", (controls) => {
   }
 });
 
-// Fallback: botão fixo no HUD (sempre visível independente da versão)
+// Botão fixo ao lado da barra de players (canto inferior esquerdo)
 Hooks.on("ready", () => {
-  // Adiciona botão flutuante fixo na tela
   const btn = document.createElement("button");
-  btn.id = "arsenal-cond-btn";
+  btn.id    = "arsenal-cond-btn";
   btn.title = "Condições Rápidas — Arsenal T20";
-  btn.innerHTML = `<i class="fas fa-skull-crossbones"></i>`;
+  btn.innerHTML = `<i class="fas fa-skull-crossbones" style="margin-right:4px"></i><span style="font-size:0.75em;font-family:'Cinzel',serif;letter-spacing:0.03em">Condições</span>`;
   btn.style.cssText = `
     position: fixed;
-    bottom: 80px;
-    right: ${document.getElementById("sidebar")?.offsetWidth ? document.getElementById("sidebar").offsetWidth + 10 : 330}px;
+    bottom: 8px;
+    left: 0;
     z-index: 100;
-    width: 36px; height: 36px;
+    height: 44px;
+    padding: 0 12px;
     background: #1a1a26;
     border: 1px solid #3a3a50;
-    border-radius: 50%;
+    border-radius: 0 6px 6px 0;
     color: #c9a227;
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    box-shadow: 2px 2px 8px rgba(0,0,0,0.6);
     transition: all 0.2s;
   `;
   btn.addEventListener("mouseenter", () => {
-    btn.style.background = "#8b1a1a";
-    btn.style.borderColor = "#c0392b";
+    btn.style.background = "#2a1a0a";
+    btn.style.borderColor = "#c9a227";
+    btn.style.color = "#f0c040";
   });
   btn.addEventListener("mouseleave", () => {
     btn.style.background = "#1a1a26";
     btn.style.borderColor = "#3a3a50";
+    btn.style.color = "#c9a227";
   });
   btn.addEventListener("click", () => abrirPainelCondicoes());
+
+  // Posiciona após a barra de players quando ela renderizar
+  const posicionar = () => {
+    const players = document.getElementById("players");
+    if (players) {
+      const rect = players.getBoundingClientRect();
+      btn.style.left   = "0px";
+      btn.style.bottom = `${window.innerHeight - rect.bottom + (rect.height - 44) / 2}px`;
+    }
+  };
+
   document.body.appendChild(btn);
+  // Tenta posicionar agora e novamente após render completo
+  setTimeout(posicionar, 500);
+  Hooks.on("renderPlayerList", posicionar);
 });
 
 // Helper para verificar configurações
