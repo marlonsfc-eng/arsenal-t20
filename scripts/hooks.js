@@ -122,7 +122,7 @@ class PainelCondicoes extends Application {
     }).join("");
 
     root.innerHTML = `
-      <div style="padding:8px;font-family:'Crimson Text',serif;height:100%;display:flex;flex-direction:column;">
+      <div style="padding:8px;font-family:'Crimson Text',serif;height:100%;display:flex;flex-direction:column;direction:ltr;unicode-bidi:normal;">
         <div style="font-size:0.8em;color:#888;margin-bottom:8px;
           padding:4px 8px;background:#1a1a26;border-radius:4px;
           border-left:3px solid #c9a227;flex-shrink:0">
@@ -132,7 +132,8 @@ class PainelCondicoes extends Application {
           value="${busca}"
           style="width:100%;padding:5px 8px;margin-bottom:8px;box-sizing:border-box;
             background:#1a1a26;border:1px solid #3a3a50;color:#d4c5a0;
-            border-radius:4px;font-size:0.9em;flex-shrink:0">
+            border-radius:4px;font-size:0.9em;flex-shrink:0;
+            direction:ltr;unicode-bidi:normal;transform:none;text-align:left;">
         <div style="overflow-y:auto;flex:1;
           scrollbar-width:thin;scrollbar-color:#3a3a50 #0a0a0f">
           ${linhas || `<div style="color:#666;padding:10px;text-align:center">Nenhuma condição encontrada</div>`}
@@ -244,6 +245,14 @@ Hooks.on("ready", () => {
     box-shadow: 2px 2px 8px rgba(0,0,0,0.6);
     transition: all 0.2s;
   `;
+  // Posiciona acima da barra de players
+  const ajustarPosicao = () => {
+    const players = document.getElementById("players");
+    if (players) {
+      const alturaPlayers = players.offsetHeight;
+      btn.style.bottom = (alturaPlayers + 12) + "px";
+    }
+  };
   btn.addEventListener("mouseenter", () => {
     btn.style.background = "#2a1a0a";
     btn.style.borderColor = "#c9a227";
@@ -257,19 +266,9 @@ Hooks.on("ready", () => {
   btn.addEventListener("click", () => abrirPainelCondicoes());
 
   // Posiciona após a barra de players quando ela renderizar
-  const posicionar = () => {
-    const players = document.getElementById("players");
-    if (players) {
-      const rect = players.getBoundingClientRect();
-      btn.style.left   = "0px";
-      btn.style.bottom = `${window.innerHeight - rect.bottom + (rect.height - 44) / 2}px`;
-    }
-  };
-
   document.body.appendChild(btn);
-  // Tenta posicionar agora e novamente após render completo
-  setTimeout(posicionar, 500);
-  Hooks.on("renderPlayerList", posicionar);
+  setTimeout(ajustarPosicao, 500);
+  Hooks.on("renderPlayerList", ajustarPosicao);
 });
 
 // Helper para verificar configurações
@@ -658,22 +657,54 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   const nomeItem  = nomeMatch?.[1] ?? "Habilidade";
   const imgItem   = imgMatch?.[1]  ?? "";
 
-  // Extrair bônus de CD dos efeitos ativos (ex: "Fortalecimento Arcano: +1 na CD de magias")
+  // ── Cálculo de CD de magias ────────────────────────────────
+  const atribConjuracao = actor.system?.attributes?.conjuracao ?? "int";
+  const valorAtrib      = actor.system?.atributos?.[atribConjuracao]?.value ?? 0;
+
+  // Nível do personagem
+  const nivel       = actor.system?.attributes?.nivel?.value ?? 0;
+  const metadeNivel = Math.floor(nivel / 2);
+
+  // Base: 10 + metade do nível
+  const cdBaseCalc = 10 + metadeNivel;
+
+  // Bônus dos efeitos ativos na própria mensagem (ex: onUseEffects do item)
   const onUseEffects = message.flags?.tormenta20?.onUseEffects ?? [];
   let bonusCD = 0;
   for (const efeito of onUseEffects) {
     const desc = efeito.description ?? "";
     const match = desc.match(/\+(\d+)\s+na\s+CD/i);
-    if (match) {
-      bonusCD += parseInt(match[1]) * (parseInt(efeito.qty) || 1);
+    if (match) bonusCD += parseInt(match[1]) * (parseInt(efeito.qty) || 1);
+  }
+
+  // Bônus passivos dos itens/poderes do ator
+  // Padrões reconhecidos nos itens:
+  //   "+N na CD", "+N à CD", "+N nas CDs", "+N em testes de resistência"
+  //   "aumenta a CD em N", "CD de magias +N"
+  const REGEX_CD_ITEM = [
+    /[+](\d+)\s+(?:na|à|nas|em)\s+CD/i,
+    /CD\s+(?:de\s+magias?\s*)?[+](\d+)/i,
+    /aumenta\s+a\s+CD\s+em\s+(\d+)/i,
+    /[+](\d+)\s+(?:na|à)\s+cd\s+de\s+magias/i,
+  ];
+
+  for (const item of actor.items) {
+    // Só considera poderes/habilidades passivos ou que não precisam de ativação
+    const tipo = item.type ?? "";
+    if (!["feat", "power", "feature", "habilidade", "poder"].includes(tipo)) continue;
+
+    const desc = (item.system?.description?.value ?? "").replace(/<[^>]+>/g, " ");
+    for (const regex of REGEX_CD_ITEM) {
+      const m = desc.match(regex);
+      if (m) {
+        bonusCD += parseInt(m[1]);
+        break; // um bônus por item
+      }
     }
   }
 
-  // CD de magias: attributes.cd (base = 10 + metade nível) + atributos[conjuracao].value + bonusCD
-  const atribConjuracao = actor.system?.attributes?.conjuracao ?? "int";
-  const cdBase    = actor.system?.attributes?.cd ?? 0;        // ex: 12 (10 + metade nível)
-  const valorAtrib = actor.system?.atributos?.[atribConjuracao]?.value ?? 0; // ex: +3 INT
-  const cd = cdBase + valorAtrib + bonusCD;
+  const cd = cdBaseCalc + valorAtrib + bonusCD;
+  console.log(`Arsenal T20 | CD | nivel=${nivel} metade=${metadeNivel} atrib=${atribConjuracao}(${valorAtrib}) bonusCD=${bonusCD} → CD=${cd}`);
 
   // Dano da magia
   const rolls       = itemData?.rolls ?? [];
@@ -690,26 +721,138 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   const condicoesAoFalhar = condicoesIA.aoFalhar ?? [];
   const condicoesAoPassar = condicoesIA.aoPassar ?? [];
 
+  // Verifica se o item tem área (template) — se sim, guarda dados para usar no template
+  const temArea = !!(itemData?.target?.type && ["cone","circle","square","ray","line"].includes(itemData.target.type));
+
+  if (temArea) {
+    // Guarda os dados do salvamento para associar ao próximo template criado
+    _salvamentoPendente = {
+      nomeItem,
+      imgItem,
+      nomeConjurador: actor.name,
+      salvLabel:    salvInfo.label,
+      salvPericia:  salvInfo.pericia,
+      salvAtributo: salvInfo.atributo,
+      cd,
+      efeitoSucesso: resistencia.txt,
+      tipoDano,
+      formulaDano,
+      danoRolado,
+      condicoesAoFalhar,
+      condicoesAoPassar,
+      actorId: actor.id,
+      expira: Date.now() + 30000, // expira em 30s se nenhum template for criado
+    };
+    ui.notifications.info(`🎯 ${nomeItem} — posicione o template de área. O card de resistência será gerado automaticamente.`);
+  } else {
+    // Sem área: gera o card normal (alvos selecionados manualmente)
+    await criarCartaoSalvamento({
+      nomeItem,
+      imgItem,
+      nomeConjurador: actor.name,
+      salvLabel:    salvInfo.label,
+      salvPericia:  salvInfo.pericia,
+      salvAtributo: salvInfo.atributo,
+      cd,
+      efeitoSucesso: resistencia.txt,
+      tipoDano,
+      formulaDano,
+      danoRolado,
+      condicoesAoFalhar,
+      condicoesAoPassar,
+    });
+  }
+});
+
+// ── Dados do salvamento pendente (aguardando template de área) ──
+let _salvamentoPendente = null;
+
+// ── Detecta tokens dentro de um MeasuredTemplate ──────────
+function tokensNaArea(template) {
+  const scene = game.scenes.active;
+  if (!scene) return [];
+
+  const tokens = scene.tokens.contents;
+  const resultado = [];
+
+  for (const token of tokens) {
+    try {
+      // Centro do token em coordenadas do canvas
+      const tokenDoc = token;
+      const tw = (tokenDoc.width  ?? 1) * scene.grid.size;
+      const th = (tokenDoc.height ?? 1) * scene.grid.size;
+      const cx = tokenDoc.x + tw / 2;
+      const cy = tokenDoc.y + th / 2;
+
+      // Usa a API do Foundry para checar se o ponto está dentro do template
+      const tmplObj = template.object ?? canvas.templates?.get(template.id);
+      if (!tmplObj) continue;
+
+      // Foundry v13: tmplObj.shape é um PIXI shape com método contains()
+      if (tmplObj.shape?.contains) {
+        // Coordenadas relativas ao template
+        const relX = cx - template.x;
+        const relY = cy - template.y;
+        if (tmplObj.shape.contains(relX, relY)) {
+          resultado.push(tokenDoc);
+        }
+      } else if (typeof tmplObj.isInside === "function") {
+        // Fallback API mais antiga
+        if (tmplObj.isInside({ x: cx, y: cy })) {
+          resultado.push(tokenDoc);
+        }
+      }
+    } catch(e) { /* ignora erros por token */ }
+  }
+  return resultado;
+}
+
+// ── Hook: template criado → associa ao salvamento pendente ──
+Hooks.on("createMeasuredTemplate", async (template, options, userId) => {
+  if (userId !== game.userId) return;
+  if (!_salvamentoPendente) return;
+
+  // Checa se expirou
+  if (Date.now() > _salvamentoPendente.expira) {
+    _salvamentoPendente = null;
+    return;
+  }
+
+  const dados = _salvamentoPendente;
+  _salvamentoPendente = null;
+
+  // Pequena espera para o template renderizar no canvas
+  await new Promise(r => setTimeout(r, 150));
+
+  // Detecta tokens na área
+  const tokensAlvos = tokensNaArea(template);
+  const nomesAlvos  = tokensAlvos.map(t => t.name);
+
+  // Gera o card de salvamento com a lista de alvos na área
   await criarCartaoSalvamento({
-    nomeItem,
-    imgItem,
-    nomeConjurador: actor.name,
-    salvLabel:    salvInfo.label,
-    salvPericia:  salvInfo.pericia,
-    salvAtributo: salvInfo.atributo,
-    cd,
-    efeitoSucesso: resistencia.txt,
-    tipoDano,
-    formulaDano,
-    danoRolado,
-    condicoesAoFalhar,
-    condicoesAoPassar,
+    ...dados,
+    tokensNaArea: nomesAlvos,
+    templateId:   template.id,
   });
+
+  // Deleta o template após 60s automaticamente (opcional — pode remover se preferir)
+  // setTimeout(() => template.delete?.(), 60000);
 });
 
 async function criarCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
     salvLabel, salvPericia, salvAtributo, cd, efeitoSucesso, tipoDano, formulaDano, danoRolado,
-    condicoesAoFalhar = [], condicoesAoPassar = [] }) {
+    condicoesAoFalhar = [], condicoesAoPassar = [],
+    tokensNaArea = [], templateId = null }) {
+
+  // Se vieram alvos da área, gera um card por alvo (cada um rola independente)
+  // Caso contrário, gera o card normal (alvo selecionado manualmente)
+  const alvosLabel = tokensNaArea.length > 0
+    ? `<div style="font-size:0.8em;color:#aaa;margin-bottom:6px;
+        padding:4px 8px;background:rgba(0,0,0,0.2);border-radius:4px;
+        border-left:3px solid #27ae60">
+        🎯 Alvos na área: <b style="color:#e8d5b7">${tokensNaArea.join(", ")}</b>
+      </div>`
+    : "";
 
   const html = `
     <div class="t20-card" style="background:linear-gradient(135deg,#0a1a0a,#0f2a1a);border:1px solid #1a4a1a;border-top:3px solid #27ae60;border-radius:6px;padding:12px;color:#e8d5b7;font-family:'Palatino Linotype',serif;">
@@ -725,6 +868,7 @@ async function criarCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
           <input type="number" class="t20-cd-input" value="${cd}" style="width:50px;text-align:center;font-size:1.3em;font-weight:bold;color:#e74c3c;background:transparent;border:1px solid #e74c3c33;border-radius:4px;padding:2px"/>
         </div>
       </div>
+      ${alvosLabel}
       <div style="font-size:0.85em;color:#aaa;margin-bottom:10px">
         🎲 Teste de <b style="color:#e8d5b7">${salvLabel}</b> CD ${cd}
         ${efeitoSucesso ? `<br>✅ Sucesso: ${efeitoSucesso}` : ""}
