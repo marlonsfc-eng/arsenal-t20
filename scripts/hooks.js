@@ -839,23 +839,26 @@ Hooks.on("createMeasuredTemplate", async (template, options, userId) => {
   // setTimeout(() => template.delete?.(), 60000);
 });
 
-async function criarCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
-    salvLabel, salvPericia, salvAtributo, cd, efeitoSucesso, tipoDano, formulaDano, danoRolado,
+// Gera o HTML de um card de salvamento (reutilizável)
+function htmlCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
+    salvLabel, salvPericia, cd, efeitoSucesso, tipoDano, formulaDano, danoRolado,
     condicoesAoFalhar = [], condicoesAoPassar = [],
-    tokensNaArea = [], templateId = null }) {
+    nomeAlvo = null, tokenId = null }) {
 
-  // Se vieram alvos da área, gera um card por alvo (cada um rola independente)
-  // Caso contrário, gera o card normal (alvo selecionado manualmente)
-  const alvosLabel = tokensNaArea.length > 0
-    ? `<div style="font-size:0.8em;color:#aaa;margin-bottom:6px;
-        padding:4px 8px;background:rgba(0,0,0,0.2);border-radius:4px;
-        border-left:3px solid #27ae60">
-        🎯 Alvos na área: <b style="color:#e8d5b7">${tokensNaArea.join(", ")}</b>
+  const tagAlvo = nomeAlvo
+    ? `<div style="font-size:0.8em;color:#aaa;margin-bottom:8px;
+        padding:3px 8px;background:rgba(0,0,0,0.2);border-radius:4px;
+        border-left:3px solid #c9a227">
+        🎯 Alvo: <b style="color:#e8d5b7">${nomeAlvo}</b>
       </div>`
     : "";
 
-  const html = `
-    <div class="t20-card" style="background:linear-gradient(135deg,#0a1a0a,#0f2a1a);border:1px solid #1a4a1a;border-top:3px solid #27ae60;border-radius:6px;padding:12px;color:#e8d5b7;font-family:'Palatino Linotype',serif;">
+  const dataToken = tokenId ? `data-token-alvo="${tokenId}"` : "";
+
+  return `
+    <div class="t20-card" style="background:linear-gradient(135deg,#0a1a0a,#0f2a1a);
+      border:1px solid #1a4a1a;border-top:3px solid #27ae60;
+      border-radius:6px;padding:12px;color:#e8d5b7;font-family:'Palatino Linotype',serif;">
       <div style="display:flex;align-items:center;gap:10px;
         border-bottom:1px solid #1a6a2a;padding-bottom:8px;margin-bottom:10px">
         ${imgItem ? `<img src="${imgItem}" style="width:34px;height:34px;border-radius:4px;border:1px solid #c9a227;object-fit:cover"/>` : ""}
@@ -865,10 +868,13 @@ async function criarCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
         </div>
         <div style="margin-left:auto;text-align:center">
           <div style="font-size:0.7em;color:#aaa;text-transform:uppercase">CD</div>
-          <input type="number" class="t20-cd-input" value="${cd}" style="width:50px;text-align:center;font-size:1.3em;font-weight:bold;color:#e74c3c;background:transparent;border:1px solid #e74c3c33;border-radius:4px;padding:2px"/>
+          <input type="number" class="t20-cd-input" value="${cd}"
+            style="width:50px;text-align:center;font-size:1.3em;font-weight:bold;
+              color:#e74c3c;background:transparent;border:1px solid #e74c3c33;
+              border-radius:4px;padding:2px"/>
         </div>
       </div>
-      ${alvosLabel}
+      ${tagAlvo}
       <div style="font-size:0.85em;color:#aaa;margin-bottom:10px">
         🎲 Teste de <b style="color:#e8d5b7">${salvLabel}</b> CD ${cd}
         ${efeitoSucesso ? `<br>✅ Sucesso: ${efeitoSucesso}` : ""}
@@ -888,6 +894,7 @@ async function criarCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
           data-condicoes-passar="${condicoesAoPassar.join(',')}"
           data-poder="0"
           data-evasao="0"
+          ${dataToken}
           title="Sucesso: ÷2 | Falha: total"
           style="flex:2;padding:6px 4px;border-radius:4px;cursor:pointer;font-size:0.82em;
             background:linear-gradient(135deg,#1a4a1a,#2a6a2a);
@@ -903,6 +910,7 @@ async function criarCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
           data-tipo-dano="${tipoDano}"
           data-condicoes-falhar="${condicoesAoFalhar.join(',')}"
           data-condicoes-passar="${condicoesAoPassar.join(',')}"
+          ${dataToken}
           title="Escolher atributo, bônus e habilidades"
           style="flex:1;padding:6px 4px;border-radius:4px;cursor:pointer;font-size:0.82em;
             background:linear-gradient(135deg,#3a2a1a,#5a3a1a);
@@ -911,8 +919,49 @@ async function criarCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
         </button>
       </div>
     </div>`;
+}
 
-  await ChatMessage.create({ content: html });
+async function criarCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
+    salvLabel, salvPericia, salvAtributo, cd, efeitoSucesso, tipoDano, formulaDano, danoRolado,
+    condicoesAoFalhar = [], condicoesAoPassar = [],
+    tokensNaArea = [], templateId = null }) {
+
+  const dadosBase = {
+    nomeItem, imgItem, nomeConjurador, salvLabel, salvPericia,
+    cd, efeitoSucesso, tipoDano, formulaDano, danoRolado,
+    condicoesAoFalhar, condicoesAoPassar,
+  };
+
+  if (tokensNaArea.length > 0) {
+    // Magia em área: gera um card individual por token detectado
+    // Header único com o nome da magia
+    const headerHtml = `
+      <div style="background:linear-gradient(135deg,#0a1a0a,#0f2a1a);
+        border:1px solid #1a4a1a;border-top:3px solid #27ae60;
+        border-radius:6px;padding:8px 12px;margin-bottom:4px;
+        color:#e8d5b7;font-family:'Palatino Linotype',serif;">
+        <div style="display:flex;align-items:center;gap:8px">
+          ${imgItem ? `<img src="${imgItem}" style="width:28px;height:28px;border-radius:4px;border:1px solid #c9a227;object-fit:cover"/>` : ""}
+          <div>
+            <div style="color:#c9a227;font-weight:bold">🎯 ${nomeItem} — Área</div>
+            <div style="font-size:0.78em;color:#888">por ${nomeConjurador} · CD ${cd} · ${tokensNaArea.length} alvo(s)</div>
+          </div>
+        </div>
+      </div>`;
+
+    // Um card por token
+    const cardsHtml = tokensNaArea.map(t =>
+      htmlCartaoSalvamento({ ...dadosBase, nomeAlvo: t.name, tokenId: t.id })
+    ).join("");
+
+    await ChatMessage.create({ content: headerHtml + cardsHtml });
+
+  } else {
+    // Magia sem área: card único sem alvo fixo
+    await ChatMessage.create({
+      content: htmlCartaoSalvamento(dadosBase),
+    });
+  }
 }
 
 async function rolarSalvamento(btn) {
@@ -929,7 +978,10 @@ async function rolarSalvamento(btn) {
   const condicoesFalhar = (btn.dataset.condicoesFalhar ?? "").split(",").filter(Boolean);
   const condicoesPassar = (btn.dataset.condicoesPassar ?? "").split(",").filter(Boolean);
 
-  const actor = canvas.tokens.controlled[0]?.actor ?? game.user.character;
+  // Se o card tem um token fixo (magia em área), usa ele; senão usa o controlado
+  const tokenAlvoId = btn.dataset.tokenAlvo;
+  const tokenAlvo   = tokenAlvoId ? canvas.tokens.get(tokenAlvoId) : canvas.tokens.controlled[0];
+  const actor       = tokenAlvo?.actor ?? game.user.character;
   if (!actor) return ui.notifications.warn("Selecione seu token antes de rolar!");
 
   const pericias = actor.system?.pericias ?? {};
@@ -1073,7 +1125,9 @@ async function abrirDialogCustom(btn) {
   const condicoesFalhar = (btn.dataset.condicoesFalhar ?? "").split(",").filter(Boolean);
   const condicoesPassar = (btn.dataset.condicoesPassar ?? "").split(",").filter(Boolean);
 
-  const actor = canvas.tokens.controlled[0]?.actor ?? game.user.character;
+  const tokenAlvoId2 = btn.dataset.tokenAlvo;
+  const tokenAlvo2   = tokenAlvoId2 ? canvas.tokens.get(tokenAlvoId2) : canvas.tokens.controlled[0];
+  const actor        = tokenAlvo2?.actor ?? game.user.character;
   if (!actor) return ui.notifications.warn("Selecione seu token antes de rolar!");
 
   // Bônus de perícias de salvamento
