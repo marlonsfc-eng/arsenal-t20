@@ -335,6 +335,86 @@ function calcularDanoComResistencias(valorBase, tipoNorm, tracos) {
   return { dano, notas };
 }
 
+
+function textoChatLimpo(html) {
+  try {
+    const div = document.createElement("div");
+    div.innerHTML = html ?? "";
+    return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
+  } catch {
+    return String(html ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+}
+
+function mensagemEhTesteDeResistencia(message) {
+  const texto = [
+    message.flavor,
+    message.content,
+    message.flags?.tormenta20?.itemData?.resistencia?.txt,
+    message.flags?.tormenta20?.roll?.type,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  return (
+    /\b(reflexos|fortitude|vontade)\b[^.]{0,80}\b(cd\s*\d+|contra)\b/i.test(texto) ||
+    /\bresist[eê]ncia\b/i.test(texto) ||
+    ["resistencia", "resistência", "save", "savingThrow"].includes(String(message.flags?.tormenta20?.roll?.type ?? ""))
+  );
+}
+
+function mensagemEhAtaqueReal(message, rollAtaque) {
+  if (mensagemEhTesteDeResistencia(message)) return false;
+
+  const itemData = message.flags?.tormenta20?.itemData ?? {};
+  const rollFlag = message.flags?.tormenta20?.roll ?? {};
+  const texto = [
+    message.flavor,
+    message.content,
+    rollFlag?.type,
+    itemData?.type,
+    itemData?.tipo,
+    itemData?.activation?.type,
+    itemData?.system?.activation?.type,
+    itemData?.name,
+    itemData?.nome,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  if (/\b(ataque|attack|arma|weapon|golpe)\b/i.test(texto)) return true;
+  if (rollFlag?.type === "attack" || rollFlag?.tipo === "ataque") return true;
+
+  // Fallback conservador: só considera ataque se houver pelo menos uma rolagem de dano junto
+  // e não houver texto típico de teste de resistência/perícia.
+  const temDano = message.rolls?.some(r => r !== rollAtaque && !r.formula?.includes("d20"));
+  if (temDano && !/\b(reflexos|fortitude|vontade|per[ií]cia|teste)\b/i.test(texto)) return true;
+
+  return false;
+}
+
+function extrairResistenciaDaMensagem(message, itemData = {}) {
+  const res = itemData?.resistencia;
+  if (res?.txt || res?.pericia) return { ...res };
+
+  const texto = textoChatLimpo(message.content ?? "");
+  const flavor = textoChatLimpo(message.flavor ?? "");
+  const combinado = `${texto} ${flavor}`;
+
+  const tipoMatch = combinado.match(/\b(Reflexos|Fortitude|Vontade)\b/i);
+  if (!tipoMatch) return null;
+
+  const tipo = tipoMatch[1].toLowerCase();
+  const cdMatch = combinado.match(/\bCD\s*(\d+)\b/i);
+  const txtMatch =
+    combinado.match(/Resist[eê]ncia:\s*([^.;]+)/i) ??
+    combinado.match(/\b(Reflexos|Fortitude|Vontade)\b[^.]{0,80}(?:CD\s*\d+)?/i);
+
+  const pericia = tipo.startsWith("ref") ? "refl" : tipo.startsWith("fort") ? "fort" : "vont";
+  return {
+    txt: txtMatch?.[0] ?? tipoMatch[0],
+    pericia,
+    cdTexto: cdMatch ? parseInt(cdMatch[1]) : null,
+  };
+}
+
+
 Hooks.on("createChatMessage", async (message, options, userId) => {
   if (!cfg("autoAtaque")) return;
   if (!message.rolls?.length) return;
@@ -342,6 +422,7 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
 
   const rollAtaque = message.rolls.find(r => r.formula?.includes("d20"));
   if (!rollAtaque) return;
+  if (!mensagemEhAtaqueReal(message, rollAtaque)) return;
 
   const rollDano = message.rolls.find(r => !r.formula?.includes("d20"));
   const targets = Array.from(game.user.targets);
@@ -810,11 +891,11 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   const actorId = message.speaker?.actor;
   if (!actorId) return;
 
-  // T20 guarda os dados do item em flags.tormenta20.itemData
-  const itemData = message.flags?.tormenta20?.itemData;
-  if (!itemData) return;
+  // T20 normalmente guarda os dados do item em flags.tormenta20.itemData.
+  // Algumas rolagens, porém, chegam apenas com o HTML do card; por isso há fallback por texto.
+  const itemData = message.flags?.tormenta20?.itemData ?? {};
 
-  const resistencia = itemData?.resistencia;
+  const resistencia = extrairResistenciaDaMensagem(message, itemData);
   if (!resistencia?.txt && !resistencia?.pericia) return;
 
   // Ignorar se não houver texto de salvamento
@@ -835,16 +916,20 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   if (!salvInfo) return;
 
   // Nome e imagem do item pelo HTML da mensagem
-  const nomeMatch = message.content?.match(/title="([^"]+)"/);
+  const nomeMatch =
+    message.content?.match(/title="([^"]+)"/) ??
+    message.content?.match(/<h[1-4][^>]*>(.*?)<\/h[1-4]>/i);
   const imgMatch  = message.content?.match(/img[^>]+src="([^"]+)"/);
-  const nomeItem  = nomeMatch?.[1] ?? "Habilidade";
-  const imgItem   = imgMatch?.[1]  ?? "";
+  const nomeItem  = itemData?.name ?? itemData?.nome ?? (nomeMatch?.[1] ? textoChatLimpo(nomeMatch[1]) : "Habilidade");
+  const imgItem   = itemData?.img ?? imgMatch?.[1]  ?? "";
 
   // ── Cálculo de CD de magias ────────────────────────────────
   // Preferimos a CD final preparada pelo sistema T20 quando disponível, pois ela já inclui
   // bônus passivos transferidos para a ficha. Se o campo não existir, usamos o cálculo-base
   // com fallbacks para descrições e Active Effects.
-  const cd = calcularCDMagiaAtor(actor, itemData, message);
+  const cdCalculada = calcularCDMagiaAtor(actor, itemData, message);
+  const cdTexto = Number.isFinite(resistencia.cdTexto) ? resistencia.cdTexto : null;
+  const cd = Math.max(cdCalculada, cdTexto ?? -Infinity);
 
   // Dano da magia
   const rolls       = itemData?.rolls ?? [];
