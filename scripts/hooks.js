@@ -630,6 +630,36 @@ const SALV_MAP = {
   vontade:    { label: "Vontade",    atributo: "sab", pericia: "vont" },
 };
 
+function itemTemAreaOuTemplate(itemData = {}, message = null) {
+  const targetType = String(
+    itemData?.target?.type ??
+    itemData?.system?.target?.type ??
+    itemData?.alvo?.type ??
+    itemData?.area?.type ??
+    ""
+  ).toLowerCase();
+
+  if (["cone", "circle", "square", "ray", "line", "rect", "rectangle", "sphere", "cylinder", "area"].includes(targetType)) {
+    return true;
+  }
+
+  const texto = [
+    itemData?.target?.type,
+    itemData?.target?.value,
+    itemData?.target?.units,
+    itemData?.system?.target?.type,
+    itemData?.system?.target?.value,
+    itemData?.alvo,
+    itemData?.area,
+    itemData?.efeito,
+    itemData?.effect,
+    itemData?.description?.value,
+    message?.content,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  return /\b(área|area|cone|linha|círculo|circulo|esfera|quadrado|cubo|cilindro|raio|explosão|explosao|emanação|emanacao|template|modelo)\b/i.test(texto);
+}
+
 function numeroOuNull(valor) {
   if (valor === undefined || valor === null || valor === "") return null;
   if (typeof valor === "number" && Number.isFinite(valor)) return valor;
@@ -839,7 +869,7 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   const condicoesAoPassar = condicoesIA.aoPassar ?? [];
 
   // Verifica se o item tem área (template) — se sim, guarda dados para usar no template
-  const temArea = !!(itemData?.target?.type && ["cone","circle","square","ray","line"].includes(itemData.target.type));
+  const temArea = itemTemAreaOuTemplate(itemData, message);
 
   if (temArea) {
     // Guarda os dados do salvamento para associar ao próximo template criado
@@ -886,41 +916,57 @@ let _salvamentoPendente = null;
 
 // ── Detecta tokens dentro de um MeasuredTemplate ──────────
 function tokensNaArea(template) {
-  const scene = game.scenes.active;
-  if (!scene) return [];
-
-  const tokens = scene.tokens.contents;
+  const tmplObj = template?.object ?? canvas.templates?.get(template?.id);
+  const tokens = Array.from(canvas.tokens?.placeables ?? []).filter(t => t?.actor);
   const resultado = [];
+
+  if (!tmplObj && !template) return resultado;
 
   for (const token of tokens) {
     try {
-      // Centro do token em coordenadas do canvas
-      const tokenDoc = token;
-      const tw = (tokenDoc.width  ?? 1) * scene.grid.size;
-      const th = (tokenDoc.height ?? 1) * scene.grid.size;
-      const cx = tokenDoc.x + tw / 2;
-      const cy = tokenDoc.y + th / 2;
+      const center = token.center ?? {
+        x: token.x + (token.w ?? token.width ?? canvas.grid.size) / 2,
+        y: token.y + (token.h ?? token.height ?? canvas.grid.size) / 2,
+      };
 
-      // Usa a API do Foundry para checar se o ponto está dentro do template
-      const tmplObj = template.object ?? canvas.templates?.get(template.id);
-      if (!tmplObj) continue;
+      let dentro = false;
 
-      // Foundry v13: tmplObj.shape é um PIXI shape com método contains()
-      if (tmplObj.shape?.contains) {
-        // Coordenadas relativas ao template
-        const relX = cx - template.x;
-        const relY = cy - template.y;
-        if (tmplObj.shape.contains(relX, relY)) {
-          resultado.push(tokenDoc);
+      // Foundry v11/v12/v13: converter o centro do token para coordenadas locais do template.
+      if (tmplObj?.shape?.contains) {
+        let local;
+        if (typeof tmplObj.toLocal === "function") {
+          local = tmplObj.toLocal(center);
+        } else {
+          local = {
+            x: center.x - (tmplObj.x ?? template.x ?? 0),
+            y: center.y - (tmplObj.y ?? template.y ?? 0),
+          };
         }
-      } else if (typeof tmplObj.isInside === "function") {
-        // Fallback API mais antiga
-        if (tmplObj.isInside({ x: cx, y: cy })) {
-          resultado.push(tokenDoc);
-        }
+        dentro = tmplObj.shape.contains(local.x, local.y);
       }
-    } catch(e) { /* ignora erros por token */ }
+
+      // Fallback para versões/formatos em que o shape não esteja disponível.
+      if (!dentro && typeof tmplObj?.isInside === "function") {
+        dentro = tmplObj.isInside(center);
+      }
+
+      // Fallback para templates circulares quando a API do shape falhar.
+      const t = String(template?.t ?? template?.type ?? template?.shape ?? "").toLowerCase();
+      if (!dentro && ["circle", "circletemplate", "circulo", "círculo"].includes(t)) {
+        const gridSize = canvas.grid?.size ?? game.scenes.active?.grid?.size ?? 100;
+        const dist = Math.hypot(center.x - template.x, center.y - template.y);
+        const templateDistance = Number(template.distance ?? template.d ?? template.radius ?? 0);
+        const sceneDistance = Number(canvas.scene?.grid?.distance ?? game.scenes.active?.grid?.distance ?? 1) || 1;
+        const radiusPx = (templateDistance / sceneDistance) * gridSize;
+        dentro = dist <= radiusPx;
+      }
+
+      if (dentro) resultado.push(token);
+    } catch (e) {
+      console.warn("Arsenal T20 | erro ao checar token na área", e);
+    }
   }
+
   return resultado;
 }
 
@@ -938,13 +984,20 @@ Hooks.on("createMeasuredTemplate", async (template, options, userId) => {
   const dados = _salvamentoPendente;
   _salvamentoPendente = null;
 
-  // Pequena espera para o template renderizar no canvas
-  await new Promise(r => setTimeout(r, 150));
+  // Espera o template ser desenhado no canvas. Alguns sistemas criam o documento antes do objeto visual existir.
+  await new Promise(r => setTimeout(r, 500));
+
+  const templateAtualizado = canvas.templates?.get(template.id)?.document ?? template;
 
   // Detecta tokens na área
-  const tokensAlvos = tokensNaArea(template);
+  const tokensAlvos = tokensNaArea(templateAtualizado);
 
-  // Gera o card de salvamento com a lista de alvos na área
+  if (!tokensAlvos.length) {
+    ui.notifications.warn(`Arsenal T20 | Nenhum token foi detectado dentro da área de ${dados.nomeItem}.`);
+  }
+
+  // Gera o prompt/card de salvamento individual para cada token enquadrado no template.
+  // Se nenhum token for detectado, ainda gera um card manual para não perder a rolagem.
   await criarCartaoSalvamento({
     ...dados,
     tokensNaArea: tokensAlvos,
@@ -1040,6 +1093,121 @@ function htmlCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
     </div>`;
 }
 
+
+function htmlCartaoMagiaConsolidado({ nomeItem, imgItem, nomeConjurador,
+    salvLabel, salvPericia, cd, efeitoSucesso, tipoDano, formulaDano, danoRolado,
+    condicoesAoFalhar = [], condicoesAoPassar = [],
+    alvos = [], area = false, templateId = null }) {
+
+  const condFalhaLabel = condicoesAoFalhar
+    .map(id => CONFIG.statusEffects.find(e => e.id === id)?.name ?? id)
+    .join(", ");
+
+  const condSucessoLabel = condicoesAoPassar
+    .map(id => CONFIG.statusEffects.find(e => e.id === id)?.name ?? id)
+    .join(", ");
+
+  const temAlvos = Array.isArray(alvos) && alvos.length > 0;
+  const alvosRender = temAlvos ? alvos : [{ id: "", name: "Token selecionado", img: "" }];
+
+  const linhasAlvos = alvosRender.map((t, idx) => {
+    const tokenData = t.id ? `data-token-alvo="${t.id}"` : "";
+    const alvoNome = t.name ?? `Alvo ${idx + 1}`;
+    const alvoImg = t.img ? `<img src="${t.img}" style="width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid rgba(201,162,39,0.45)">` : `<span style="width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:#20283a;border:1px solid rgba(201,162,39,0.35);color:#d9b85f;font-size:0.8em">🎯</span>`;
+
+    return `
+      <div class="t20-alvo-row" data-token-row="${t.id ?? ""}" style="
+        display:grid;grid-template-columns:minmax(0,1.15fr) 0.95fr 0.75fr;gap:8px;
+        align-items:center;padding:8px;margin-top:6px;border-radius:7px;
+        background:rgba(255,255,255,0.045);border:1px solid rgba(255,255,255,0.06)">
+        <div style="display:flex;align-items:center;gap:7px;min-width:0">
+          ${alvoImg}
+          <div style="min-width:0">
+            <div style="color:#f2e6c9;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${alvoNome}</div>
+            <div class="t20-resultado-inline" style="font-size:0.74em;color:#8f97aa">Aguardando teste</div>
+          </div>
+        </div>
+
+        <button class="t20-salvar"
+          data-salv-pericia="${salvPericia}"
+          data-salv-label="${salvLabel}"
+          data-cd="${cd}"
+          data-item="${nomeItem}"
+          data-dano="${danoRolado ?? 0}"
+          data-tipo-dano="${tipoDano}"
+          data-condicoes-falhar="${condicoesAoFalhar.join(',')}"
+          data-condicoes-passar="${condicoesAoPassar.join(',')}"
+          data-poder="0"
+          data-evasao="0"
+          ${tokenData}
+          title="Sucesso: ÷2 | Falha: total"
+          style="padding:7px 7px;border-radius:6px;cursor:pointer;font-size:0.82em;
+            background:linear-gradient(180deg,#2d7a52,#245f42);
+            border:1px solid #3c9870;color:#fff;font-weight:bold;
+            box-shadow:0 2px 6px rgba(0,0,0,0.25)">
+          🎲 ${salvLabel}
+        </button>
+
+        <button class="t20-custom"
+          data-salv-pericia="${salvPericia}"
+          data-salv-label="${salvLabel}"
+          data-cd="${cd}"
+          data-item="${nomeItem}"
+          data-dano="${danoRolado ?? 0}"
+          data-tipo-dano="${tipoDano}"
+          data-condicoes-falhar="${condicoesAoFalhar.join(',')}"
+          data-condicoes-passar="${condicoesAoPassar.join(',')}"
+          ${tokenData}
+          title="Escolher atributo, bônus e habilidades"
+          style="padding:7px 7px;border-radius:6px;cursor:pointer;font-size:0.82em;
+            background:linear-gradient(180deg,#334765,#25344d);
+            border:1px solid #47638c;color:#eef3ff;font-weight:bold;
+            box-shadow:0 2px 6px rgba(0,0,0,0.25)">
+          ⚙️ Mod.
+        </button>
+      </div>`;
+  }).join("");
+
+  return `
+    <div class="t20-card t20-magia-card" data-template-id="${templateId ?? ""}" style="
+      background:linear-gradient(180deg,#131722 0%,#0e1320 100%);
+      border:1px solid #2c3448;border-top:3px solid #c9a227;
+      box-shadow:0 8px 18px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.04);
+      border-radius:8px;padding:12px;color:#e8d5b7;font-family:'Palatino Linotype',serif;">
+
+      <div style="display:flex;align-items:center;gap:10px;
+        border-bottom:1px solid rgba(201,162,39,0.22);padding-bottom:8px;margin-bottom:10px">
+        ${imgItem ? `<img src="${imgItem}" style="width:40px;height:40px;border-radius:6px;border:1px solid rgba(201,162,39,0.55);object-fit:cover;box-shadow:0 2px 6px rgba(0,0,0,0.35)"/>` : ""}
+        <div style="min-width:0;flex:1">
+          <div style="color:#d9b85f;font-weight:bold;font-size:1.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${area ? "🎯 " : ""}${nomeItem}</div>
+          <div style="font-size:0.78em;color:#8f97aa">por ${nomeConjurador}${area ? ` · área · ${temAlvos ? alvos.length : 0} alvo(s)` : ""}</div>
+        </div>
+        <div style="text-align:center;background:rgba(0,0,0,0.18);padding:5px 8px;border-radius:6px;border:1px solid rgba(217,184,95,0.18)">
+          <div style="font-size:0.68em;color:#8f97aa;text-transform:uppercase;letter-spacing:0.05em">CD</div>
+          <input type="number" class="t20-cd-input" value="${cd}"
+            style="width:52px;text-align:center;font-size:1.28em;font-weight:bold;
+              color:#ff6b6b;background:transparent;border:1px solid rgba(255,107,107,0.22);
+              border-radius:5px;padding:2px 4px"/>
+        </div>
+      </div>
+
+      <div style="font-size:0.85em;color:#b8becf;margin-bottom:10px;line-height:1.45">
+        🎲 <b style="color:#f2e6c9">${salvLabel}</b> CD ${cd}
+        ${efeitoSucesso ? `<br><span style="color:#7dd3a7">✅ Sucesso:</span> ${efeitoSucesso}` : ""}
+        ${formulaDano ? `<br><span style="color:#f07f7f">✷ Dano:</span> ${formulaDano}${tipoDano ? ` [${tipoDano}]` : ""}${danoRolado ? ` · rolado: <b>${danoRolado}</b>` : ""}` : ""}
+        ${condFalhaLabel ? `<br><span style="color:#ff8d8d">❌ Falha aplica:</span> <b>${condFalhaLabel}</b>` : ""}
+        ${condSucessoLabel ? `<br><span style="color:#e8cc82">⚠️ Sucesso aplica:</span> <b>${condSucessoLabel}</b>` : ""}
+      </div>
+
+      <div style="padding-top:2px">
+        <div style="font-size:0.78em;color:#8f97aa;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">
+          ${temAlvos ? "Alvos e testes" : "Teste manual"}
+        </div>
+        ${linhasAlvos}
+      </div>
+    </div>`;
+}
+
 async function criarCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
     salvLabel, salvPericia, salvAtributo, cd, efeitoSucesso, tipoDano, formulaDano, danoRolado,
     condicoesAoFalhar = [], condicoesAoPassar = [],
@@ -1051,36 +1219,25 @@ async function criarCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
     condicoesAoFalhar, condicoesAoPassar,
   };
 
-  if (tokensNaArea.length > 0) {
-    // Magia em área: gera um card individual por token detectado
-    // Header único com o nome da magia
-    const headerHtml = `
-      <div style="background:linear-gradient(135deg,#0a1a0a,#0f2a1a);
-        border:1px solid #1a4a1a;border-top:3px solid #27ae60;
-        border-radius:6px;padding:8px 12px;margin-bottom:4px;
-        color:#e8d5b7;font-family:'Palatino Linotype',serif;">
-        <div style="display:flex;align-items:center;gap:8px">
-          ${imgItem ? `<img src="${imgItem}" style="width:28px;height:28px;border-radius:4px;border:1px solid #c9a227;object-fit:cover"/>` : ""}
-          <div>
-            <div style="color:#c9a227;font-weight:bold">🎯 ${nomeItem} — Área</div>
-            <div style="font-size:0.78em;color:#888">por ${nomeConjurador} · CD ${cd} · ${tokensNaArea.length} alvo(s)</div>
-          </div>
-        </div>
-      </div>`;
+  // Card consolidado:
+  // - para magia em área: usa os tokens detectados dentro do template;
+  // - para magia sem área: usa os alvos selecionados no momento, se houver;
+  // - se não houver alvo, cria um teste manual usando o token controlado/personagem.
+  const alvosSelecionados = Array.from(game.user?.targets ?? []);
+  const alvos = tokensNaArea.length > 0
+    ? tokensNaArea
+    : alvosSelecionados.length > 0
+      ? alvosSelecionados
+      : [];
 
-    // Um card por token
-    const cardsHtml = tokensNaArea.map(t =>
-      htmlCartaoSalvamento({ ...dadosBase, nomeAlvo: t.name, tokenId: t.id })
-    ).join("");
-
-    await ChatMessage.create({ content: headerHtml + cardsHtml });
-
-  } else {
-    // Magia sem área: card único sem alvo fixo
-    await ChatMessage.create({
-      content: htmlCartaoSalvamento(dadosBase),
-    });
-  }
+  await ChatMessage.create({
+    content: htmlCartaoMagiaConsolidado({
+      ...dadosBase,
+      alvos,
+      area: tokensNaArea.length > 0,
+      templateId,
+    }),
+  });
 }
 
 async function rolarSalvamento(btn) {
@@ -1199,6 +1356,20 @@ async function rolarSalvamento(btn) {
     content: msgConteudo,
     speaker: ChatMessage.getSpeaker({ actor }),
   });
+
+  // Atualiza a linha do alvo no card consolidado, sem revelar PV.
+  try {
+    const row = btn.closest(".t20-alvo-row");
+    const inline = row?.querySelector(".t20-resultado-inline");
+    if (inline) {
+      inline.innerHTML = `${sucesso ? "✅ Sucesso" : "❌ Falha"}${danoFinal > 0 ? ` · ${danoFinal} dano aplicado` : ""}`;
+      inline.style.color = sucesso ? "#7dd3a7" : "#ff8d8d";
+    }
+    btn.disabled = true;
+    btn.style.opacity = "0.55";
+  } catch (e) {
+    console.warn("Arsenal T20 | não foi possível atualizar a linha do card consolidado", e);
+  }
 
   // Aplicar condições baseado no resultado
   const condicoesAplicar = sucesso ? condicoesPassar : condicoesFalhar;
@@ -1535,6 +1706,18 @@ async function rolarSalvamentoCustom({ actor, cd, nomeItem, danoBase, tipoDano,
     speaker: ChatMessage.getSpeaker({ actor }),
   });
 
+  // Atualiza a linha do alvo no card consolidado, sem revelar PV.
+  try {
+    const row = document.querySelector(`.t20-alvo-row[data-token-row="${actor.getActiveTokens()?.[0]?.id ?? ""}"]`);
+    const inline = row?.querySelector(".t20-resultado-inline");
+    if (inline) {
+      inline.innerHTML = `${sucesso ? "✅ Sucesso" : "❌ Falha"}${danoFinal > 0 ? ` · ${danoFinal} dano aplicado` : ""}`;
+      inline.style.color = sucesso ? "#7dd3a7" : "#ff8d8d";
+    }
+  } catch (e) {
+    console.warn("Arsenal T20 | não foi possível atualizar o card consolidado custom", e);
+  }
+
   const condicoesAplicar2 = sucesso ? condicoesPassar : condicoesFalhar;
   if (cfg("autoCondicoes") && condicoesAplicar2.length) {
     if (game.user.isGM) {
@@ -1593,11 +1776,21 @@ function ehRolagemDeCura(message, roll) {
   return true;
 }
 
-function escolherAlvoCura() {
-  // Preferência: alvo selecionado com T. Se não houver, token controlado. Se não houver, personagem do usuário.
-  return Array.from(game.user.targets ?? [])[0] ??
-    canvas.tokens?.controlled?.[0] ??
-    null;
+function obterAlvosCura() {
+  // Prioridade: todos os alvos selecionados com T.
+  const alvosSelecionados = Array.from(game.user.targets ?? []).filter(t => t?.actor);
+  if (alvosSelecionados.length) return alvosSelecionados;
+
+  // Fallback: todos os tokens controlados.
+  const tokensControlados = Array.from(canvas.tokens?.controlled ?? []).filter(t => t?.actor);
+  if (tokensControlados.length) return tokensControlados;
+
+  // Último fallback: personagem do usuário, empacotado como alvo lógico.
+  if (game.user.character) {
+    return [{ actor: game.user.character, name: game.user.character.name }];
+  }
+
+  return [];
 }
 
 function htmlCartaoCura({ nomeItem, imgItem, nomeConjurador, valorCura }) {
@@ -1621,14 +1814,14 @@ function htmlCartaoCura({ nomeItem, imgItem, nomeConjurador, valorCura }) {
       </div>
 
       <div style="font-size:0.86em;color:#304f36;margin-bottom:12px;line-height:1.45">
-        🌿 Recupera <b>${valorCura} PV</b> do alvo escolhido.
+        🌿 Recupera <b>${valorCura} PV</b> dos alvos escolhidos.
       </div>
 
       <div style="display:flex;gap:8px;margin-top:6px">
         <button class="t20-aplicar-cura"
           data-cura="${valorCura}"
           data-item="${nomeItem}"
-          title="Aplica a cura ao alvo selecionado ou ao token controlado"
+          title="Aplica a cura a todos os alvos selecionados ou tokens controlados"
           style="flex:1;padding:8px 8px;border-radius:6px;cursor:pointer;font-size:0.86em;
             background:linear-gradient(180deg,#3fa35b,#2f7f47);
             border:1px solid #56bd75;color:#fff;font-weight:bold;
@@ -1677,22 +1870,35 @@ async function aplicarCura(btn) {
   const cura = parseInt(btn.dataset.cura) || 0;
   if (cura <= 0) return;
 
-  const token = escolherAlvoCura();
-  const actor = token?.actor ?? game.user.character;
-  if (!actor) return ui.notifications.warn("Selecione um alvo ou token para receber a cura.");
+  const alvos = obterAlvosCura();
+  if (!alvos.length) return ui.notifications.warn("Selecione um ou mais alvos, ou controle um token, para receber a cura.");
 
   const pvPath = "system.attributes.pv.value";
   const pvMaxPath = "system.attributes.pv.max";
+  const resultados = [];
 
-  const pvAtual = foundry.utils.getProperty(actor, pvPath);
-  const pvMax = foundry.utils.getProperty(actor, pvMaxPath) ?? pvAtual;
+  for (const alvo of alvos) {
+    const actor = alvo.actor;
+    if (!actor) continue;
 
-  if (pvAtual === undefined) return ui.notifications.warn("PV não encontrado na ficha do alvo.");
+    const pvAtual = foundry.utils.getProperty(actor, pvPath);
+    const pvMax = foundry.utils.getProperty(actor, pvMaxPath) ?? pvAtual;
 
-  const novoPV = Math.min(pvMax, pvAtual + cura);
-  const curaEfetiva = Math.max(0, novoPV - pvAtual);
+    if (pvAtual === undefined) {
+      resultados.push(`<div>⚠️ <b>${actor.name}</b>: PV não encontrado.</div>`);
+      continue;
+    }
 
-  await actor.update({ [pvPath]: novoPV });
+    const novoPV = Math.min(pvMax, pvAtual + cura);
+    const curaEfetiva = Math.max(0, novoPV - pvAtual);
+
+    await actor.update({ [pvPath]: novoPV });
+
+    resultados.push(`
+      <div style="margin:2px 0">
+        ✚ <b>${actor.name}</b> recuperou <b>${curaEfetiva}</b> PV${curaEfetiva < cura ? ` <span style="color:#55735b">(limitado pelo PV máximo)</span>` : ""}.
+      </div>`);
+  }
 
   await ChatMessage.create({
     content: `
@@ -1700,12 +1906,12 @@ async function aplicarCura(btn) {
         border:1px solid #7fbf72;border-left:4px solid #3f9f58;
         padding:8px 11px;border-radius:6px;color:#1f3523;
         box-shadow:0 4px 10px rgba(0,0,0,0.18)">
-        <div style="font-weight:bold;color:#25753a;margin-bottom:5px">✚ Cura aplicada — ${actor.name}</div>
+        <div style="font-weight:bold;color:#25753a;margin-bottom:5px">✚ Cura aplicada</div>
         <div style="font-size:0.9em;line-height:1.4">
-          Recuperou <b>${curaEfetiva}</b> PV${curaEfetiva < cura ? ` <span style="color:#55735b">(limitado pelo PV máximo)</span>` : ""}.
+          ${resultados.join("")}
         </div>
       </div>`,
-    speaker: ChatMessage.getSpeaker({ actor }),
+    speaker: ChatMessage.getSpeaker({ actor: alvos[0]?.actor }),
   });
 
   btn.disabled = true;
