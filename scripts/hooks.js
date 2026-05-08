@@ -514,16 +514,18 @@ async function criarMensagemGM(totalAtaque, dadosAlvos, danoPorTipo, danoTotal) 
             data-token="${a.tokenId}"
             data-dano="${danoFinalTotal}"
             data-dano-perda="${danoPerda}"
-            style="flex:1;padding:5px;border-radius:4px;cursor:pointer;
-              background:#7a1a1a;border:1px solid #a02020;color:#fff;font-size:0.85em">
+            style="flex:1;padding:7px 8px;border-radius:6px;cursor:pointer;
+              background:linear-gradient(180deg,#8a2f38,#6b2028);border:1px solid #b94a58;color:#fff;font-size:0.85em;font-weight:bold;
+              box-shadow:0 2px 6px rgba(0,0,0,0.25)">
             💔 Aplicar ${danoFinalTotal + danoPerda} de Dano
           </button>
           <button class="t20-metade"
             data-token="${a.tokenId}"
             data-dano="${Math.floor(danoFinalTotal / 2)}"
             data-dano-perda="${Math.floor(danoPerda / 2)}"
-            style="flex:1;padding:5px;border-radius:4px;cursor:pointer;
-              background:#2c3e50;border:1px solid #3d5166;color:#fff;font-size:0.85em">
+            style="flex:1;padding:7px 8px;border-radius:6px;cursor:pointer;
+              background:linear-gradient(180deg,#334765,#25344d);border:1px solid #47638c;color:#eef3ff;font-size:0.85em;font-weight:bold;
+              box-shadow:0 2px 6px rgba(0,0,0,0.25)">
             🛡️ Metade (${Math.floor((danoFinalTotal + danoPerda) / 2)})
           </button>
         </div>` : a.acertou ? `
@@ -590,14 +592,13 @@ async function aplicarDano(btn) {
 
   await token.actor.update(update);
 
-  const cor = novoPV === 0 ? "red" : novoPV <= novoMax / 2 ? "orange" : "green";
   const danTotal = dano + danoPerda;
 
+  // Mensagem pública sem revelar PV atual/máximo do alvo.
   ChatMessage.create({
-    content: `💔 <b>${token.name}</b> sofreu <b>${danTotal} de dano</b>.<br>
-      PV: ${pvAtual} → <span style="color:${cor}"><b>${novoPV}</b>/${novoMax}</span>
-      ${msgExtra}
-      ${novoPV === 0 ? "<br>💀 <b>Incapacitado!</b>" : ""}`
+    content: `<div style="background:linear-gradient(180deg,#171b26 0%,#0f1420 100%);border:1px solid #2b3347;border-left:4px solid #b94a58;padding:8px 11px;border-radius:6px;box-shadow:0 4px 10px rgba(0,0,0,0.22);color:#d7dcea">
+      💔 <b>${token.name}</b> sofreu <b>${danTotal} de dano</b>.
+    </div>`
   });
 
   btn.closest("div").querySelectorAll("button")
@@ -814,8 +815,15 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   const rollDanoMagia = message.rolls?.find(r => !r.formula?.includes("d20"));
   const danoRolado = rollDanoMagia?.total ?? null;
 
-  // Detectar condições via IA
-  const descricaoTexto = itemData?.description?.value ?? "";
+  // Detectar condições por contexto textual.
+  // Usa a descrição do item, o conteúdo final do chat e efeitos temporários/onUse,
+  // pois algumas condições do sistema T20 aparecem apenas como link/efeito no card renderizado.
+  const descricaoTexto = [
+    itemData?.description?.value ?? "",
+    message.content ?? "",
+    ...(message.flags?.tormenta20?.onUseEffects ?? []).map(e => `${e?.label ?? e?.name ?? ""} ${e?.description ?? ""}`),
+    ...(itemData?.effects ?? []).map(e => `${e?.label ?? e?.name ?? ""} ${e?.description ?? e?.system?.description?.value ?? ""}`),
+  ].filter(Boolean).join(" ");
   const condicoesIA = detectarCondicoesContexto(nomeItem, descricaoTexto, resistencia.txt ?? "");
   const condicoesAoFalhar = condicoesIA.aoFalhar ?? [];
   const condicoesAoPassar = condicoesIA.aoPassar ?? [];
@@ -925,12 +933,11 @@ Hooks.on("createMeasuredTemplate", async (template, options, userId) => {
 
   // Detecta tokens na área
   const tokensAlvos = tokensNaArea(template);
-  const nomesAlvos  = tokensAlvos.map(t => t.name);
 
   // Gera o card de salvamento com a lista de alvos na área
   await criarCartaoSalvamento({
     ...dados,
-    tokensNaArea: nomesAlvos,
+    tokensNaArea: tokensAlvos,
     templateId:   template.id,
   });
 
@@ -945,43 +952,44 @@ function htmlCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
     nomeAlvo = null, tokenId = null }) {
 
   const tagAlvo = nomeAlvo
-    ? `<div style="font-size:0.8em;color:#aaa;margin-bottom:8px;
-        padding:3px 8px;background:rgba(0,0,0,0.2);border-radius:4px;
-        border-left:3px solid #c9a227">
-        🎯 Alvo: <b style="color:#e8d5b7">${nomeAlvo}</b>
+    ? `<div style="font-size:0.8em;color:#b8becf;margin-bottom:10px;
+        padding:5px 9px;background:rgba(255,255,255,0.045);border-radius:6px;
+        border-left:3px solid #c9a227;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.04)">
+        🎯 Alvo: <b style="color:#f2e6c9">${nomeAlvo}</b>
       </div>`
     : "";
 
   const dataToken = tokenId ? `data-token-alvo="${tokenId}"` : "";
 
   return `
-    <div class="t20-card" style="background:linear-gradient(135deg,#0a1a0a,#0f2a1a);
-      border:1px solid #1a4a1a;border-top:3px solid #27ae60;
-      border-radius:6px;padding:12px;color:#e8d5b7;font-family:'Palatino Linotype',serif;">
+    <div class="t20-card" style="background:linear-gradient(180deg,#131722 0%,#0e1320 100%);
+      border:1px solid #2c3448;border-top:3px solid #c9a227;
+      box-shadow:0 8px 18px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.04);
+      border-radius:8px;padding:12px;color:#e8d5b7;font-family:'Palatino Linotype',serif;">
       <div style="display:flex;align-items:center;gap:10px;
-        border-bottom:1px solid #1a6a2a;padding-bottom:8px;margin-bottom:10px">
-        ${imgItem ? `<img src="${imgItem}" style="width:34px;height:34px;border-radius:4px;border:1px solid #c9a227;object-fit:cover"/>` : ""}
+        border-bottom:1px solid rgba(201,162,39,0.22);padding-bottom:8px;margin-bottom:10px">
+        ${imgItem ? `<img src="${imgItem}" style="width:36px;height:36px;border-radius:6px;border:1px solid rgba(201,162,39,0.55);object-fit:cover;box-shadow:0 2px 6px rgba(0,0,0,0.35)"/>` : ""}
         <div>
-          <div style="color:#c9a227;font-weight:bold">${nomeItem}</div>
-          <div style="font-size:0.78em;color:#888">por ${nomeConjurador}</div>
+          <div style="color:#d9b85f;font-weight:bold;font-size:1.05em">${nomeItem}</div>
+          <div style="font-size:0.78em;color:#8f97aa">por ${nomeConjurador}</div>
         </div>
-        <div style="margin-left:auto;text-align:center">
-          <div style="font-size:0.7em;color:#aaa;text-transform:uppercase">CD</div>
+        <div style="margin-left:auto;text-align:center;background:rgba(0,0,0,0.18);padding:5px 8px;border-radius:6px;border:1px solid rgba(217,184,95,0.18)">
+          <div style="font-size:0.68em;color:#8f97aa;text-transform:uppercase;letter-spacing:0.05em">CD</div>
           <input type="number" class="t20-cd-input" value="${cd}"
-            style="width:50px;text-align:center;font-size:1.3em;font-weight:bold;
-              color:#e74c3c;background:transparent;border:1px solid #e74c3c33;
-              border-radius:4px;padding:2px"/>
+            style="width:52px;text-align:center;font-size:1.28em;font-weight:bold;
+              color:#ff6b6b;background:transparent;border:1px solid rgba(255,107,107,0.22);
+              border-radius:5px;padding:2px 4px"/>
         </div>
       </div>
       ${tagAlvo}
-      <div style="font-size:0.85em;color:#aaa;margin-bottom:10px">
-        🎲 Teste de <b style="color:#e8d5b7">${salvLabel}</b> CD ${cd}
-        ${efeitoSucesso ? `<br>✅ Sucesso: ${efeitoSucesso}` : ""}
-        ${formulaDano   ? `<br>💥 Dano: ${formulaDano}${tipoDano ? ` [${tipoDano}]` : ""}` : ""}
-        ${condicoesAoFalhar.length ? `<br>❌ Falha aplica: <b>${condicoesAoFalhar.map(id => CONFIG.statusEffects.find(e=>e.id===id)?.name ?? id).join(", ")}</b>` : ""}
-        ${condicoesAoPassar.length ? `<br>✅ Sucesso aplica: <b>${condicoesAoPassar.map(id => CONFIG.statusEffects.find(e=>e.id===id)?.name ?? id).join(", ")}</b>` : ""}
+      <div style="font-size:0.85em;color:#b8becf;margin-bottom:12px;line-height:1.45">
+        🎲 Teste de <b style="color:#f2e6c9">${salvLabel}</b> CD ${cd}
+        ${efeitoSucesso ? `<br><span style="color:#7dd3a7">✅ Sucesso:</span> ${efeitoSucesso}` : ""}
+        ${formulaDano   ? `<br><span style="color:#f07f7f">✷ Dano:</span> ${formulaDano}${tipoDano ? ` [${tipoDano}]` : ""}` : ""}
+        ${condicoesAoFalhar.length ? `<br><span style="color:#ff8d8d">❌ Falha aplica:</span> <b>${condicoesAoFalhar.map(id => CONFIG.statusEffects.find(e=>e.id===id)?.name ?? id).join(", ")}</b>` : ""}
+        ${condicoesAoPassar.length ? `<br><span style="color:#e8cc82">⚠️ Sucesso aplica:</span> <b>${condicoesAoPassar.map(id => CONFIG.statusEffects.find(e=>e.id===id)?.name ?? id).join(", ")}</b>` : ""}
       </div>
-      <div style="display:flex;gap:6px;margin-top:6px">
+      <div style="display:flex;gap:8px;margin-top:6px">
         <button class="t20-salvar"
           data-salv-pericia="${salvPericia}"
           data-salv-label="${salvLabel}"
@@ -995,9 +1003,10 @@ function htmlCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
           data-evasao="0"
           ${dataToken}
           title="Sucesso: ÷2 | Falha: total"
-          style="flex:2;padding:6px 4px;border-radius:4px;cursor:pointer;font-size:0.82em;
-            background:linear-gradient(135deg,#1a4a1a,#2a6a2a);
-            border:1px solid #3a8a3a;color:#fff;font-weight:bold">
+          style="flex:2;padding:8px 8px;border-radius:6px;cursor:pointer;font-size:0.84em;
+            background:linear-gradient(180deg,#2d7a52,#245f42);
+            border:1px solid #3c9870;color:#fff;font-weight:bold;
+            box-shadow:0 2px 6px rgba(0,0,0,0.25)">
           🎲 ${salvLabel}
         </button>
         <button class="t20-custom"
@@ -1011,9 +1020,10 @@ function htmlCartaoSalvamento({ nomeItem, imgItem, nomeConjurador,
           data-condicoes-passar="${condicoesAoPassar.join(',')}"
           ${dataToken}
           title="Escolher atributo, bônus e habilidades"
-          style="flex:1;padding:6px 4px;border-radius:4px;cursor:pointer;font-size:0.82em;
-            background:linear-gradient(135deg,#3a2a1a,#5a3a1a);
-            border:1px solid #8a5a2a;color:#fff;font-weight:bold">
+          style="flex:1;padding:8px 8px;border-radius:6px;cursor:pointer;font-size:0.84em;
+            background:linear-gradient(180deg,#334765,#25344d);
+            border:1px solid #47638c;color:#eef3ff;font-weight:bold;
+            box-shadow:0 2px 6px rgba(0,0,0,0.25)">
           ⚙️ Modificador
         </button>
       </div>
@@ -1150,9 +1160,7 @@ async function rolarSalvamento(btn) {
         if (pvAtual !== undefined) {
           const novoPV = Math.max(0, pvAtual - danoFinal);
           await actor.update({ [hpPath]: novoPV });
-          const corPV = novoPV === 0 ? "red" : novoPV <= pvMax / 2 ? "orange" : "green";
-          notaDano += `<br>💔 ${danoFinal} de dano. PV: ${pvAtual} → <span style="color:${corPV}"><b>${novoPV}</b></span>`;
-          if (novoPV === 0) notaDano += "<br>💀 <b>Incapacitado!</b>";
+          notaDano += `<br>💔 ${danoFinal} de dano aplicado.`;
         }
       } else {
         notaDano += "<br>Nenhum dano aplicado.";
@@ -1168,11 +1176,11 @@ async function rolarSalvamento(btn) {
 
   // Mensagem separada com resultado e dano aplicado
   const msgConteudo = `
-    <div style="border-left:4px solid ${cor};padding:6px 10px;border-radius:0 4px 4px 0">
-      <div style="font-weight:bold;font-size:1.05em;color:${cor};margin-bottom:4px">
+    <div style="background:linear-gradient(180deg,#171b26 0%,#0f1420 100%);border:1px solid #2b3347;border-left:4px solid ${cor};padding:8px 11px;border-radius:6px;box-shadow:0 4px 10px rgba(0,0,0,0.22)">
+      <div style="font-weight:bold;font-size:1.02em;color:${cor};margin-bottom:5px">
         ${label} — ${actor.name}
       </div>
-      <div style="font-size:0.88em">
+      <div style="font-size:0.88em;color:#d7dcea;line-height:1.4">
         ${notaDano}
       </div>
     </div>`;
@@ -1496,9 +1504,7 @@ async function rolarSalvamentoCustom({ actor, cd, nomeItem, danoBase, tipoDano,
         if (pvAtual !== undefined) {
           const novoPV = Math.max(0, pvAtual - danoFinal);
           await actor.update({ [hpPath]: novoPV });
-          const corPV = novoPV === 0 ? "red" : novoPV <= pvMax / 2 ? "orange" : "green";
-          notaDano += `<br>💔 ${danoFinal} de dano. PV: ${pvAtual} → <span style="color:${corPV}"><b>${novoPV}</b></span>`;
-          if (novoPV === 0) notaDano += "<br>💀 <b>Incapacitado!</b>";
+          notaDano += `<br>💔 ${danoFinal} de dano aplicado.`;
         }
       } else {
         notaDano += "<br>Nenhum dano aplicado.";
@@ -1512,9 +1518,9 @@ async function rolarSalvamentoCustom({ actor, cd, nomeItem, danoBase, tipoDano,
   });
 
   await ChatMessage.create({
-    content: `<div style="border-left:4px solid ${cor};padding:6px 10px;border-radius:0 4px 4px 0">
-      <div style="font-weight:bold;color:${cor}">${label} — ${actor.name}</div>
-      <div style="font-size:0.88em">${notaDano}</div>
+    content: `<div style="background:linear-gradient(180deg,#171b26 0%,#0f1420 100%);border:1px solid #2b3347;border-left:4px solid ${cor};padding:8px 11px;border-radius:6px;box-shadow:0 4px 10px rgba(0,0,0,0.22)">
+      <div style="font-weight:bold;color:${cor};margin-bottom:5px">${label} — ${actor.name}</div>
+      <div style="font-size:0.88em;color:#d7dcea;line-height:1.4">${notaDano}</div>
     </div>`,
     speaker: ChatMessage.getSpeaker({ actor }),
   });
@@ -1585,64 +1591,164 @@ const CONDICOES_MAP = {
   "sobrecarregado":"sobrecarregado",
 };
 
-// Detecta condições com contexto — distingue "aplica X" de "não fica X" ou "como X"
-function detectarCondicoesContexto(nomeItem, descricao, txtResistencia) {
-  // Limpar HTML, links @uuid[...]{texto} → manter só o texto interno, e normalizar espaços
-  const texto = descricao
-    .replace(/@uuid\[[^\]]*\]\{([^}]*)\}/gi, "$1")  // @uuid[...]{abalado} → abalado
+function _stripT20Text(texto) {
+  return String(texto ?? "")
+    // Foundry/T20 costuma renderizar condições como @UUID[...]{Atordoado}; manter apenas o rótulo.
+    .replace(/@(?:UUID|Compendium|Actor|Item|JournalEntry|Scene|Token)\[[^\]]*\]\{([^}]*)\}/gi, "$1")
+    .replace(/<script[^>]*>.*?<\/script>/gis, " ")
+    .replace(/<style[^>]*>.*?<\/style>/gis, " ")
     .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&aacute;/gi, "á").replace(/&eacute;/gi, "é").replace(/&iacute;/gi, "í").replace(/&oacute;/gi, "ó").replace(/&uacute;/gi, "ú")
+    .replace(/&atilde;/gi, "ã").replace(/&otilde;/gi, "õ").replace(/&ccedil;/gi, "ç")
+    .replace(/&Aacute;/g, "Á").replace(/&Eacute;/g, "É").replace(/&Iacute;/g, "Í").replace(/&Oacute;/g, "Ó").replace(/&Uacute;/g, "Ú")
+    .replace(/&Atilde;/g, "Ã").replace(/&Otilde;/g, "Õ").replace(/&Ccedil;/g, "Ç")
+    .replace(/&[^;]+;/g, " ")
     .replace(/\s+/g, " ")
-    .toLowerCase();
+    .trim();
+}
+
+function _normalizarT20(texto) {
+  return _stripT20Text(texto)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[“”„]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[–—]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function _escapeRegexT20(texto) {
+  return String(texto).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function _temTermoInteiro(textoNorm, termoNorm) {
+  // Evita falso positivo por substring: "cego" não deve casar dentro de "morcegos".
+  const re = new RegExp(`(^|[^a-z0-9_])${_escapeRegexT20(termoNorm)}(?=$|[^a-z0-9_])`, "i");
+  return re.test(textoNorm);
+}
+
+function _trechosComTermo(textoNorm, termoNorm) {
+  const re = new RegExp(`(^|[^a-z0-9_])${_escapeRegexT20(termoNorm)}(?=$|[^a-z0-9_])`, "gi");
+  const out = [];
+  for (const m of textoNorm.matchAll(re)) {
+    const idx = Math.max(0, (m.index ?? 0) - 90);
+    out.push(textoNorm.slice(idx, Math.min(textoNorm.length, (m.index ?? 0) + termoNorm.length + 120)));
+  }
+  return out;
+}
+
+function _contextoNegativoCondicao(trecho) {
+  // Referências que citam a condição sem aplicá-la.
+  return [
+    /nao\s+(?:fica|ficara|ficam|ficarao|aplica|aplicara|causa|causara|recebe|recebera|sofre|sofrera)/,
+    /nao\s+(?:e|eh)\s+afetad[oa]s?/,
+    /sem\s+(?:ficar|aplicar|causar|receber|sofrer)/,
+    /evita\s+(?:a\s+)?(?:condicao|essa\s+condicao|o\s+efeito)/,
+    /impede\s+(?:a\s+)?(?:condicao|esse\s+efeito)/,
+    /imune\s+a/,
+    /como\s+se\s+(?:estivesse|ficasse|fosse)/,
+    /conta\s+como/,
+    /considerad[oa]\s+como/,
+    /nao\s+acumula/,
+  ].some(re => re.test(trecho));
+}
+
+function _condicoesNoTexto(texto, { exigirAplicacao = false } = {}) {
+  const textoNorm = _normalizarT20(texto);
+  const encontrados = new Set();
+  if (!textoNorm) return encontrados;
+
+  const gatilhosAplicacao = [
+    /(?:fica|ficam|ficara|ficarao|ficou)\s+$/,
+    /(?:deixa|deixam|deixando|torna|tornam|tornando|causa|causam|causando|aplica|aplicam|aplicando)\s+$/,
+    /(?:alvo|criatura|inimigo|vitima|personagem|voce|ele|ela)\s+(?:fica|ficam|ficara|recebe|sofre)\s+$/,
+    /(?:falha\s+aplica|sucesso\s+aplica)\s*:?\s*$/,
+  ];
+
+  for (const [chave, id] of Object.entries(CONDICOES_MAP)) {
+    const termo = _normalizarT20(chave);
+    if (!_temTermoInteiro(textoNorm, termo)) continue;
+
+    const trechos = _trechosComTermo(textoNorm, termo);
+    const valido = trechos.some(trecho => {
+      if (_contextoNegativoCondicao(trecho)) return false;
+      if (!exigirAplicacao) return true;
+
+      const pos = trecho.search(new RegExp(`(^|[^a-z0-9_])${_escapeRegexT20(termo)}(?=$|[^a-z0-9_])`, "i"));
+      const antes = pos >= 0 ? trecho.slice(Math.max(0, pos - 70), pos + 1) : trecho;
+      return gatilhosAplicacao.some(re => re.test(antes));
+    });
+
+    if (valido) encontrados.add(id);
+  }
+  return encontrados;
+}
+
+// Detecta condições com contexto — distingue aplicação real de mera citação.
+function detectarCondicoesContexto(nomeItem, descricao, txtResistencia) {
+  const texto = _normalizarT20(descricao);
+  const resistencia = _normalizarT20(txtResistencia);
 
   const aoFalhar = new Set();
   const aoPassar = new Set();
 
-  // Padrões de negação — se a condição aparece aqui, IGNORAR
-  const negacoes = [
-    /não.{0,20}(fica|ficará|aplica|causa|recebe)/,
-    /sem.{0,10}(ficar|aplicar)/,
-    /evita.{0,20}/,
-    /impede.{0,20}/,
-    /como se.{0,30}/,        // "como se estivesse X" = referência
-    /não.{0,5}irá/,
-    /não acumul/,
-    /deixá-lo/,              // "não irá deixá-lo exausto"
-  ];
-
-  // Detectar blocos de texto separados por "se falhar" / "se passar"
-  // Padrões: "se falhar... fica X", "falhar na resistência... X", "se passar... Y"
-  // Captura tudo após o marcador de falha/sucesso até o fim do trecho relevante
-  const blocoFalha   = texto.match(/(?:se falhar|falhar na resist[eê]ncia|ao falhar|em caso de falha)([^]*?)(?=se passar|se resistir|passar na resist|$)/i)?.[1]?.trim() ?? "";
-  const blocoSucesso = texto.match(/(?:se passar|passar na resist[eê]ncia|ao passar|em caso de sucesso|se resistir)([^]*?)(?=se falhar|ao falhar|$)/i)?.[1]?.trim() ?? "";
-
-  // Se não achou blocos separados, tudo vai para aoFalhar (comportamento padrão)
-  const textoPrincipal = blocoFalha || texto;
-
-  for (const [chave, id] of Object.entries(CONDICOES_MAP)) {
-    // Verificar negações — se a condição aparece num contexto negativo, pular
-    const regexCondicao = new RegExp(`.{0,40}${chave}.{0,40}`, "gi");
-    const ocorrencias = [...texto.matchAll(regexCondicao)].map(m => m[0]);
-    const eNegada = ocorrencias.some(trecho =>
-      negacoes.some(neg => neg.test(trecho))
-    );
-    if (eNegada) continue;
-
-    // Verificar no bloco de falha
-    if (blocoFalha && blocoFalha.includes(chave)) {
-      aoFalhar.add(id);
-    }
-    // Verificar no bloco de sucesso
-    if (blocoSucesso && blocoSucesso.includes(chave)) {
-      aoPassar.add(id);
-    }
-    // Se não há blocos separados mas a condição está no texto geral
-    if (!blocoFalha && !blocoSucesso && texto.includes(chave)) {
-      aoFalhar.add(id);
-    }
+  // 1) Formato mais confiável: cards/effects explícitos, ex. "Adaga Mental (Atordoado)".
+  // Esses rótulos normalmente vêm dos Efeitos Temporários do item e indicam a condição aplicada na falha.
+  const rotuloEfeito = new RegExp(`${_escapeRegexT20(_normalizarT20(nomeItem))}\\s*\\(([^)]+)\\)`, "gi");
+  for (const m of texto.matchAll(rotuloEfeito)) {
+    for (const id of _condicoesNoTexto(m[1])) aoFalhar.add(id);
   }
 
-  // Também verificar no txt de resistência (ex: "Reflexos reduz à metade e evita a condição")
-  // Se diz "evita a condição", sucesso não aplica nada (já é o padrão)
+  // 2) Separação por blocos de sucesso/falha. Inclui "se o alvo falhar" e variações.
+  const marcadorFalha = /(?:se\s+(?:o\s+alvo|a\s+criatura|ele|ela|voce)?\s*falhar|falhar\s+n[oa]\s+teste\s+de\s+resistencia|falhar\s+na\s+resistencia|ao\s+falhar|em\s+caso\s+de\s+falha)/i;
+  const marcadorSucesso = /(?:se\s+(?:o\s+alvo|a\s+criatura|ele|ela|voce)?\s*passar|passar\s+n[oa]\s+teste\s+de\s+resistencia|passar\s+na\s+resistencia|ao\s+passar|em\s+caso\s+de\s+sucesso|se\s+resistir)/i;
+
+  const idxFalha = texto.search(marcadorFalha);
+  const idxSucesso = texto.search(marcadorSucesso);
+
+  let blocoFalha = "";
+  let blocoSucesso = "";
+
+  if (idxFalha >= 0) {
+    const fim = idxSucesso >= 0 && idxSucesso > idxFalha ? idxSucesso : texto.length;
+    blocoFalha = texto.slice(idxFalha, fim);
+  }
+  if (idxSucesso >= 0) {
+    const fim = idxFalha >= 0 && idxFalha > idxSucesso ? idxFalha : texto.length;
+    blocoSucesso = texto.slice(idxSucesso, fim);
+  }
+
+  for (const id of _condicoesNoTexto(blocoFalha, { exigirAplicacao: false })) aoFalhar.add(id);
+
+  // Só considera condição em sucesso se houver aplicação explícita; textos como
+  // "se passar, evita a condição" não devem adicionar nada.
+  for (const id of _condicoesNoTexto(blocoSucesso, { exigirAplicacao: true })) aoPassar.add(id);
+
+  // 3) Se há apenas bloco de sucesso, o texto anterior costuma descrever o efeito da falha.
+  // Ex.: "sofre dano e fica Atordoado. Se passar, sofre metade e evita a condição".
+  // Exigimos verbo de aplicação para evitar falsos positivos como "morcegos" -> "cego".
+  if (idxSucesso >= 0) {
+    const antesDoSucesso = texto.slice(0, idxSucesso);
+    for (const id of _condicoesNoTexto(antesDoSucesso, { exigirAplicacao: true })) aoFalhar.add(id);
+  }
+
+  // 4) Sem bloco explícito, exigir verbo de aplicação para evitar falsos positivos.
+  // Ex.: "morcegos" não casa com "cego"; e mera citação de imunidade/evitar é ignorada.
+  if (idxFalha < 0 && idxSucesso < 0) {
+    for (const id of _condicoesNoTexto(texto, { exigirAplicacao: true })) aoFalhar.add(id);
+  }
+
+  // 4) O campo de resistência pode dizer "evita a condição"; nesse caso, mantém falha apenas.
+  // Se algum sistema colocar explicitamente "falha aplica: X" no texto da resistência, capturamos.
+  if (/falha\s+aplica/.test(resistencia)) {
+    for (const id of _condicoesNoTexto(resistencia, { exigirAplicacao: false })) aoFalhar.add(id);
+  }
+  if (/sucesso\s+aplica/.test(resistencia)) {
+    for (const id of _condicoesNoTexto(resistencia, { exigirAplicacao: false })) aoPassar.add(id);
+  }
 
   return {
     aoFalhar: [...aoFalhar],
