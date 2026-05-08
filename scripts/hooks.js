@@ -720,7 +720,7 @@ function itemTemAreaOuTemplate(itemData = {}, message = null) {
     ""
   ).toLowerCase();
 
-  if (["cone", "circle", "square", "ray", "line", "rect", "rectangle", "sphere", "cylinder", "area"].includes(targetType)) {
+  if (["cone", "circle", "square", "line", "rect", "rectangle", "sphere", "cylinder", "area"].includes(targetType)) {
     return true;
   }
 
@@ -738,7 +738,7 @@ function itemTemAreaOuTemplate(itemData = {}, message = null) {
     message?.content,
   ].filter(Boolean).join(" ").toLowerCase();
 
-  return /\b(área|area|cone|linha|círculo|circulo|esfera|quadrado|cubo|cilindro|raio|explosão|explosao|emanação|emanacao|template|modelo)\b/i.test(texto);
+  return /\b(área|area|cone|linha|círculo|circulo|esfera|quadrado|cubo|cilindro|explosão|explosao|emanação|emanacao|template|modelo)\b/i.test(texto);
 }
 
 function numeroOuNull(valor) {
@@ -892,8 +892,17 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   if (!actorId) return;
 
   // T20 normalmente guarda os dados do item em flags.tormenta20.itemData.
-  // Algumas rolagens, porém, chegam apenas com o HTML do card; por isso há fallback por texto.
+  // Algumas rolagens de magia chegam apenas com o HTML do card; por isso há fallback por texto.
+  // Porém, mensagens que são APENAS testes de resistência dos alvos não devem gerar novo card.
   const itemData = message.flags?.tormenta20?.itemData ?? {};
+  const temRollD20 = message.rolls?.some(r => r.formula?.includes("d20")) ?? false;
+  const temItemResistencia = !!(itemData?.resistencia?.txt || itemData?.resistencia?.pericia);
+
+  if (temRollD20 && !temItemResistencia) {
+    // Ex.: "Reflexos contra Bola de Fogo (CD 23)".
+    // Essa mensagem é o teste do alvo, não o lançamento da magia.
+    return;
+  }
 
   const resistencia = extrairResistenciaDaMensagem(message, itemData);
   if (!resistencia?.txt && !resistencia?.pericia) return;
@@ -920,7 +929,18 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
     message.content?.match(/title="([^"]+)"/) ??
     message.content?.match(/<h[1-4][^>]*>(.*?)<\/h[1-4]>/i);
   const imgMatch  = message.content?.match(/img[^>]+src="([^"]+)"/);
-  const nomeItem  = itemData?.name ?? itemData?.nome ?? (nomeMatch?.[1] ? textoChatLimpo(nomeMatch[1]) : "Habilidade");
+  const nomeFallbackTexto = (() => {
+    const limpo = textoChatLimpo(message.content ?? "");
+    // Tenta capturar a primeira linha após o nome do conjurador e antes da escola/círculo.
+    const linhas = limpo.split(/(?=\b(?:Universal|Arcana|Divina)\b|\bExecução:|\bDano\b)/i)[0]
+      .split(/\s{2,}|\n/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    // Remove o alias do ator se aparecer no começo.
+    const semAtor = linhas.filter(l => l !== actor.name && !/^\d+\s*PM$/i.test(l));
+    return semAtor[0] || "";
+  })();
+  const nomeItem  = itemData?.name ?? itemData?.nome ?? (nomeMatch?.[1] ? textoChatLimpo(nomeMatch[1]) : nomeFallbackTexto || "Habilidade");
   const imgItem   = itemData?.img ?? imgMatch?.[1]  ?? "";
 
   // ── Cálculo de CD de magias ────────────────────────────────
@@ -933,11 +953,12 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
 
   // Dano da magia
   const rolls       = itemData?.rolls ?? [];
-  const tipoDano    = rolls[0]?.parts?.[0]?.[1] ?? "";
-  const formulaDano = rolls[0]?.parts?.[0]?.[0] ?? "";
-
   // Dano já rolado na mesma mensagem
   const rollDanoMagia = message.rolls?.find(r => !r.formula?.includes("d20"));
+
+  const tipoDano    = rolls[0]?.parts?.[0]?.[1] ?? "";
+  const formulaDano = rolls[0]?.parts?.[0]?.[0] ?? rollDanoMagia?.formula ?? "";
+
   const danoRolado = rollDanoMagia?.total ?? null;
 
   // Detectar condições por contexto textual.
@@ -977,7 +998,9 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
     };
     ui.notifications.info(`🎯 ${nomeItem} — posicione o template de área. O card de resistência será gerado automaticamente.`);
   } else {
-    // Sem área: gera o card normal (alvos selecionados manualmente)
+    // Sem área: gera o card normal (alvos selecionados manualmente).
+    // Também limpa qualquer salvamento pendente antigo para evitar pedido indevido de template.
+    _salvamentoPendente = null;
     await criarCartaoSalvamento({
       nomeItem,
       imgItem,
