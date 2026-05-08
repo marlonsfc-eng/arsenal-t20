@@ -438,36 +438,35 @@ async function criarMensagemGM(totalAtaque, dadosAlvos, danoPorTipo, danoTotal) 
     let danoPerda = 0; // perda de PV (reduz pvMax também)
 
     if (temDano && a.acertou) {
-      const isCrit = a.possivelCritico;
-
+      // O sistema base de Tormenta20 já entrega o dano crítico corretamente na rolagem.
+      // O Arsenal T20 não deve multiplicar o dano novamente; apenas aplica RD, imunidade
+      // e vulnerabilidade sobre o valor já rolado pelo sistema.
       for (const [tipo, valor] of Object.entries(danoPorTipo)) {
         if (isNaN(valor) || valor === null) continue;
 
-        const tipoNorm  = tipo === "perfuração" ? "perfuracao" : tipo;
-        const valorCrit = isCrit ? valor * 2 : valor;
-        const ePerda    = tipoNorm === "perda";
+        const tipoNorm = tipo === "perfuração" ? "perfuracao" : tipo;
+        const ePerda   = tipoNorm === "perda";
 
         if (ePerda) {
-          // Perda de PV não sofre RD nem resistências — aplica direto
-          danoPerda += valorCrit;
+          // Perda de PV não sofre RD nem resistências — aplica direto.
+          danoPerda += valor;
           linhasDano.push(`
             <div style="font-size:0.82em;color:#c0392b;padding:2px 0">
-              perda de PV: ${valor}${isCrit ? " ×2" : ""} → <b>${valorCrit}</b> (reduz PV máx)
+              perda de PV: ${valor} → <b>${valor}</b> (reduz PV máx)
             </div>`);
           continue;
         }
 
-        const { dano, notas } = calcularDanoComResistencias(valorCrit, tipoNorm, a.tracos);
+        const { dano, notas } = calcularDanoComResistencias(valor, tipoNorm, a.tracos);
         danoFinalTotal += dano;
 
-        const notaStr  = notas.length ? ` (${notas.join(", ")})` : "";
-        const critStr  = isCrit ? ` ×2` : "";
+        const notaStr   = notas.length ? ` (${notas.join(", ")})` : "";
         const tipoLabel = tipo !== "sem_tipo" ? tipo : "sem tipo específico";
-        const corLinha = dano === 0 ? "#666" : dano < valorCrit ? "#e67e22" : "#ccc";
+        const corLinha  = dano === 0 ? "#666" : dano < valor ? "#e67e22" : "#ccc";
 
         linhasDano.push(`
           <div style="font-size:0.82em;color:${corLinha};padding:2px 0">
-            ${tipoLabel}: ${valor}${critStr} → <b>${dano}</b>${notaStr}
+            ${tipoLabel}: ${valor} → <b>${dano}</b>${notaStr}
           </div>`);
       }
 
@@ -620,6 +619,149 @@ const SALV_MAP = {
   vontade:    { label: "Vontade",    atributo: "sab", pericia: "vont" },
 };
 
+function numeroOuNull(valor) {
+  if (valor === undefined || valor === null || valor === "") return null;
+  if (typeof valor === "number" && Number.isFinite(valor)) return valor;
+  if (typeof valor === "string") {
+    const normalizado = valor.trim().replace(",", ".");
+    const direto = Number(normalizado);
+    if (Number.isFinite(direto)) return direto;
+    const match = normalizado.match(/[-+]?\d+(?:\.\d+)?/);
+    if (match) {
+      const parsed = Number(match[0]);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
+function obterNumeroEmCaminhos(obj, caminhos) {
+  let maior = null;
+  for (const caminho of caminhos) {
+    const valor = foundry.utils.getProperty(obj, caminho);
+    const num = numeroOuNull(valor);
+    if (num === null) continue;
+    if (maior === null || num > maior) maior = num;
+  }
+  return maior;
+}
+
+function bonusCDPorDescricao(descricao, multiplicador = 1) {
+  const texto = (descricao ?? "").replace(/<[^>]+>/g, " ");
+  const regexes = [
+    /(?:\+|mais\s+)(\d+)\s+(?:na|à|nas|às|em)\s+CD(?:s)?(?:\s+de\s+magias?)?/i,
+    /CD(?:s)?\s+(?:de\s+magias?\s*)?(?:\+|aumenta\s+em\s+)(\d+)/i,
+    /aumenta\s+a\s+CD(?:s)?(?:\s+de\s+magias?)?\s+em\s+(\d+)/i,
+    /CD(?:s)?\s+de\s+suas\s+magias\s+aumenta(?:m)?\s+em\s+\+?(\d+)/i,
+  ];
+
+  for (const regex of regexes) {
+    const m = texto.match(regex);
+    if (m) return (parseInt(m[1]) || 0) * multiplicador;
+  }
+  return 0;
+}
+
+function bonusCDPorEfeitosAtivos(actor) {
+  let bonus = 0;
+  const efeitos = actor?.effects?.contents ?? actor?.effects ?? [];
+
+  for (const efeito of efeitos) {
+    if (efeito?.disabled) continue;
+    for (const change of (efeito?.changes ?? [])) {
+      const key = String(change.key ?? "").toLowerCase();
+      const value = numeroOuNull(change.value);
+      if (value === null) continue;
+
+      // Aceita chaves antigas data.* e novas system.*. O sistema T20 usa efeitos passivos
+      // transferidos para o ator; dependendo da versão, o campo de CD pode aparecer com nomes
+      // diferentes. Limitamos o match a chaves claramente ligadas à CD de magia/resistência.
+      const pareceCD =
+        /(^|\.)(cd|cds|dc|cdmagia|cdmagias|spellcd)(\.|$)/i.test(key) ||
+        (key.includes("mag") && key.includes("cd")) ||
+        (key.includes("resist") && key.includes("cd"));
+
+      if (!pareceCD) continue;
+
+      const modoAdicionar = change.mode === undefined ||
+        change.mode === null ||
+        change.mode === globalThis.CONST?.ACTIVE_EFFECT_MODES?.ADD ||
+        change.mode === 2;
+
+      if (modoAdicionar) bonus += value;
+    }
+  }
+
+  return bonus;
+}
+
+function calcularCDMagiaAtor(actor, itemData, message) {
+  const atribConjuracao =
+    itemData?.cd?.atributo ??
+    itemData?.resistencia?.atributo ??
+    actor.system?.attributes?.conjuracao ??
+    actor.system?.conjuracao ??
+    "int";
+
+  const valorAtrib = numeroOuNull(actor.system?.atributos?.[atribConjuracao]?.value) ?? 0;
+  const nivel =
+    numeroOuNull(actor.system?.attributes?.nivel?.value) ??
+    numeroOuNull(actor.system?.nivel?.value) ??
+    numeroOuNull(actor.system?.nivel) ??
+    0;
+  const metadeNivel = Math.floor(nivel / 2);
+
+  // Cálculo-base de Tormenta20: 10 + metade do nível + atributo de conjuração.
+  let bonusCD = 0;
+
+  const onUseEffects = message.flags?.tormenta20?.onUseEffects ?? [];
+  for (const efeito of onUseEffects) {
+    const multiplicador = parseInt(efeito.qty) || 1;
+    bonusCD += bonusCDPorDescricao(efeito.description ?? "", multiplicador);
+  }
+
+  // Mantém compatibilidade com bônus escritos na descrição de poderes/itens.
+  for (const item of actor.items ?? []) {
+    const tipo = item.type ?? "";
+    if (!["feat", "power", "feature", "habilidade", "poder"].includes(tipo)) continue;
+    bonusCD += bonusCDPorDescricao(item.system?.description?.value ?? "");
+  }
+
+  const cdCalculada = 10 + metadeNivel + valorAtrib + bonusCD;
+
+  // Quando o próprio sistema T20 já preparou a CD total no actor.system, preferimos esse valor.
+  // Isso captura bônus passivos transferidos por Active Effects que já aparecem na ficha.
+  const cdSistema = obterNumeroEmCaminhos(actor, [
+    "system.attributes.cd.value",
+    "system.attributes.cd.final",
+    "system.attributes.cd.total",
+    "system.attributes.cdMagia.value",
+    "system.attributes.cdMagia.final",
+    "system.attributes.cdMagias.value",
+    "system.attributes.cdMagias.final",
+    "system.attributes.magias.cd.value",
+    "system.attributes.magias.cd.final",
+    "system.magias.cd.value",
+    "system.magias.cd.final",
+    "system.cdMagia.value",
+    "system.cdMagia.final",
+    "system.cdMagias.value",
+    "system.cdMagias.final",
+    "system.cd.value",
+    "system.cd.final",
+  ]);
+
+  const cdComEfeitos = cdCalculada + bonusCDPorEfeitosAtivos(actor);
+  const cd = Math.max(cdCalculada, cdComEfeitos, cdSistema ?? -Infinity);
+
+  console.log(
+    `Arsenal T20 | CD | nivel=${nivel} metade=${metadeNivel} atrib=${atribConjuracao}(${valorAtrib}) ` +
+    `bonusDescr=${bonusCD} cdSistema=${cdSistema ?? "n/a"} → CD=${cd}`
+  );
+
+  return cd;
+}
+
 Hooks.on("createChatMessage", async (message, options, userId) => {
   if (!cfg("autoSalvamento")) return;
   if (userId !== game.userId) return;
@@ -658,53 +800,10 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   const imgItem   = imgMatch?.[1]  ?? "";
 
   // ── Cálculo de CD de magias ────────────────────────────────
-  const atribConjuracao = actor.system?.attributes?.conjuracao ?? "int";
-  const valorAtrib      = actor.system?.atributos?.[atribConjuracao]?.value ?? 0;
-
-  // Nível do personagem
-  const nivel       = actor.system?.attributes?.nivel?.value ?? 0;
-  const metadeNivel = Math.floor(nivel / 2);
-
-  // Base: 10 + metade do nível
-  const cdBaseCalc = 10 + metadeNivel;
-
-  // Bônus dos efeitos ativos na própria mensagem (ex: onUseEffects do item)
-  const onUseEffects = message.flags?.tormenta20?.onUseEffects ?? [];
-  let bonusCD = 0;
-  for (const efeito of onUseEffects) {
-    const desc = efeito.description ?? "";
-    const match = desc.match(/\+(\d+)\s+na\s+CD/i);
-    if (match) bonusCD += parseInt(match[1]) * (parseInt(efeito.qty) || 1);
-  }
-
-  // Bônus passivos dos itens/poderes do ator
-  // Padrões reconhecidos nos itens:
-  //   "+N na CD", "+N à CD", "+N nas CDs", "+N em testes de resistência"
-  //   "aumenta a CD em N", "CD de magias +N"
-  const REGEX_CD_ITEM = [
-    /[+](\d+)\s+(?:na|à|nas|em)\s+CD/i,
-    /CD\s+(?:de\s+magias?\s*)?[+](\d+)/i,
-    /aumenta\s+a\s+CD\s+em\s+(\d+)/i,
-    /[+](\d+)\s+(?:na|à)\s+cd\s+de\s+magias/i,
-  ];
-
-  for (const item of actor.items) {
-    // Só considera poderes/habilidades passivos ou que não precisam de ativação
-    const tipo = item.type ?? "";
-    if (!["feat", "power", "feature", "habilidade", "poder"].includes(tipo)) continue;
-
-    const desc = (item.system?.description?.value ?? "").replace(/<[^>]+>/g, " ");
-    for (const regex of REGEX_CD_ITEM) {
-      const m = desc.match(regex);
-      if (m) {
-        bonusCD += parseInt(m[1]);
-        break; // um bônus por item
-      }
-    }
-  }
-
-  const cd = cdBaseCalc + valorAtrib + bonusCD;
-  console.log(`Arsenal T20 | CD | nivel=${nivel} metade=${metadeNivel} atrib=${atribConjuracao}(${valorAtrib}) bonusCD=${bonusCD} → CD=${cd}`);
+  // Preferimos a CD final preparada pelo sistema T20 quando disponível, pois ela já inclui
+  // bônus passivos transferidos para a ficha. Se o campo não existir, usamos o cálculo-base
+  // com fallbacks para descrições e Active Effects.
+  const cd = calcularCDMagiaAtor(actor, itemData, message);
 
   // Dano da magia
   const rolls       = itemData?.rolls ?? [];
