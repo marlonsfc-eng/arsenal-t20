@@ -49,10 +49,20 @@ Hooks.once("ready", () => {
     default: true,
   });
 
+  game.settings.register(MOD, "autoCura", {
+    name: "Botão de Cura",
+    hint: "Detecta rolagens de cura e cria um card com botão para aplicar a recuperação de PV ao alvo selecionado.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+  });
+
   const ativas = [];
   if (game.settings.get(MOD, "autoAtaque"))      ativas.push("Ataque");
   if (game.settings.get(MOD, "autoSalvamento"))  ativas.push("Salvamento");
   if (game.settings.get(MOD, "autoCondicoes"))   ativas.push("Condições");
+  if (game.settings.get(MOD, "autoCura"))        ativas.push("Cura");
 
   console.log(`Arsenal T20 | v1.6 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
   if (game.user.isGM) ui.notifications.info("⚔️ Arsenal T20 ativo!");
@@ -1539,6 +1549,190 @@ async function rolarSalvamentoCustom({ actor, cd, nomeItem, danoBase, tipoDano,
     }
   }
 }
+
+
+// ============================================================
+// CURA - Detecta rolagens de cura e cria botão para aplicar PV
+// ============================================================
+
+function ehRolagemDeCura(message, roll) {
+  const itemData = message.flags?.tormenta20?.itemData ?? {};
+  const textoBusca = [
+    itemData?.name,
+    itemData?.nome,
+    itemData?.type,
+    itemData?.tipo,
+    itemData?.description?.value,
+    itemData?.system?.description?.value,
+    message.flavor,
+    message.content,
+    roll?.formula,
+    ...(itemData?.rolls ?? []).flatMap(r => [
+      r?.name,
+      r?.label,
+      r?.type,
+      r?.parts?.map?.(p => p?.[1])?.join(" ")
+    ])
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  // Padrões comuns no sistema T20: campo/label "Cura", magia "Curar Ferimentos",
+  // descrições como "recupera X pontos de vida" etc.
+  const temIndicadorCura =
+    /\bcura\b/i.test(textoBusca) ||
+    /\bcurar\b/i.test(textoBusca) ||
+    /\bcurativo\b/i.test(textoBusca) ||
+    /\brecupera(?:r)?\b[^.]{0,80}\b(?:pv|pontos?\s+de\s+vida|vida)\b/i.test(textoBusca) ||
+    /\brecupera(?:r)?\s+\d*d?\d+/i.test(textoBusca);
+
+  if (!temIndicadorCura) return false;
+
+  // Evita confundir descrições negativas ou efeitos que impedem cura.
+  if (/\bn[aã]o\s+pode\s+recuperar\s+(?:pv|pontos?\s+de\s+vida|vida)\b/i.test(textoBusca)) return false;
+  if (/\bimpede\s+(?:a\s+)?cura\b/i.test(textoBusca)) return false;
+
+  return true;
+}
+
+function escolherAlvoCura() {
+  // Preferência: alvo selecionado com T. Se não houver, token controlado. Se não houver, personagem do usuário.
+  return Array.from(game.user.targets ?? [])[0] ??
+    canvas.tokens?.controlled?.[0] ??
+    null;
+}
+
+function htmlCartaoCura({ nomeItem, imgItem, nomeConjurador, valorCura }) {
+  return `
+    <div class="t20-card t20-cura-card" style="
+      background:linear-gradient(180deg,#e8f7df 0%,#cdeec2 100%);
+      border:1px solid #7fbf72;border-top:3px solid #3f9f58;
+      box-shadow:0 6px 14px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.65);
+      border-radius:8px;padding:12px;color:#1f3523;font-family:'Palatino Linotype',serif;">
+      <div style="display:flex;align-items:center;gap:10px;
+        border-bottom:1px solid rgba(63,159,88,0.28);padding-bottom:8px;margin-bottom:10px">
+        ${imgItem ? `<img src="${imgItem}" style="width:36px;height:36px;border-radius:6px;border:1px solid rgba(63,159,88,0.55);object-fit:cover;box-shadow:0 2px 6px rgba(0,0,0,0.20)"/>` : ""}
+        <div style="flex:1">
+          <div style="color:#25753a;font-weight:bold;font-size:1.05em">✚ ${nomeItem}</div>
+          <div style="font-size:0.78em;color:#55735b">por ${nomeConjurador}</div>
+        </div>
+        <div style="text-align:center;background:rgba(255,255,255,0.45);padding:5px 9px;border-radius:6px;border:1px solid rgba(63,159,88,0.18)">
+          <div style="font-size:0.68em;color:#55735b;text-transform:uppercase;letter-spacing:0.05em">Cura</div>
+          <div style="font-size:1.35em;color:#1f8f45;font-weight:bold">${valorCura}</div>
+        </div>
+      </div>
+
+      <div style="font-size:0.86em;color:#304f36;margin-bottom:12px;line-height:1.45">
+        🌿 Recupera <b>${valorCura} PV</b> do alvo escolhido.
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <button class="t20-aplicar-cura"
+          data-cura="${valorCura}"
+          data-item="${nomeItem}"
+          title="Aplica a cura ao alvo selecionado ou ao token controlado"
+          style="flex:1;padding:8px 8px;border-radius:6px;cursor:pointer;font-size:0.86em;
+            background:linear-gradient(180deg,#3fa35b,#2f7f47);
+            border:1px solid #56bd75;color:#fff;font-weight:bold;
+            box-shadow:0 2px 6px rgba(0,0,0,0.22)">
+          ✚ Aplicar ${valorCura} de Cura
+        </button>
+      </div>
+    </div>`;
+}
+
+async function criarCartaoCura(message, roll) {
+  if (!cfg("autoCura")) return;
+  if (!roll || !ehRolagemDeCura(message, roll)) return;
+
+  // Evita duplicar caso o próprio card de cura do Arsenal já tenha sido renderizado.
+  if (message.flags?.["arsenal-t20"]?.tipo === "cura") return;
+
+  const itemData = message.flags?.tormenta20?.itemData ?? {};
+  const actor = game.actors.get(message.speaker?.actor);
+
+  const nomeItem =
+    itemData?.name ??
+    itemData?.nome ??
+    message.flavor?.replace(/<[^>]+>/g, " ")?.trim() ??
+    "Cura";
+
+  const imgItem =
+    itemData?.img ??
+    itemData?.image ??
+    itemData?.system?.img ??
+    message.content?.match(/img[^>]+src="([^"]+)"/)?.[1] ??
+    "";
+
+  const nomeConjurador = actor?.name ?? message.speaker?.alias ?? "Conjurador";
+  const valorCura = Number(roll.total) || 0;
+  if (valorCura <= 0) return;
+
+  await ChatMessage.create({
+    content: htmlCartaoCura({ nomeItem, imgItem, nomeConjurador, valorCura }),
+    speaker: message.speaker,
+    flags: { "arsenal-t20": { tipo: "cura", origem: message.id } }
+  });
+}
+
+async function aplicarCura(btn) {
+  const cura = parseInt(btn.dataset.cura) || 0;
+  if (cura <= 0) return;
+
+  const token = escolherAlvoCura();
+  const actor = token?.actor ?? game.user.character;
+  if (!actor) return ui.notifications.warn("Selecione um alvo ou token para receber a cura.");
+
+  const pvPath = "system.attributes.pv.value";
+  const pvMaxPath = "system.attributes.pv.max";
+
+  const pvAtual = foundry.utils.getProperty(actor, pvPath);
+  const pvMax = foundry.utils.getProperty(actor, pvMaxPath) ?? pvAtual;
+
+  if (pvAtual === undefined) return ui.notifications.warn("PV não encontrado na ficha do alvo.");
+
+  const novoPV = Math.min(pvMax, pvAtual + cura);
+  const curaEfetiva = Math.max(0, novoPV - pvAtual);
+
+  await actor.update({ [pvPath]: novoPV });
+
+  await ChatMessage.create({
+    content: `
+      <div style="background:linear-gradient(180deg,#e8f7df 0%,#cdeec2 100%);
+        border:1px solid #7fbf72;border-left:4px solid #3f9f58;
+        padding:8px 11px;border-radius:6px;color:#1f3523;
+        box-shadow:0 4px 10px rgba(0,0,0,0.18)">
+        <div style="font-weight:bold;color:#25753a;margin-bottom:5px">✚ Cura aplicada — ${actor.name}</div>
+        <div style="font-size:0.9em;line-height:1.4">
+          Recuperou <b>${curaEfetiva}</b> PV${curaEfetiva < cura ? ` <span style="color:#55735b">(limitado pelo PV máximo)</span>` : ""}.
+        </div>
+      </div>`,
+    speaker: ChatMessage.getSpeaker({ actor }),
+  });
+
+  btn.disabled = true;
+  btn.style.opacity = "0.55";
+}
+
+// Listener global persistente para botões de cura
+Hooks.on("renderChatMessageHTML", (message, html) => {
+  html.querySelectorAll(".t20-aplicar-cura").forEach(btn => {
+    if (btn.dataset.listenerAdded) return;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", () => aplicarCura(btn));
+  });
+});
+
+// Detecta mensagens de cura criadas pelo sistema T20
+Hooks.on("createChatMessage", async (message, options, userId) => {
+  if (!cfg("autoCura")) return;
+  if (userId !== game.userId) return;
+  if (!message.rolls?.length) return;
+
+  // Não processa mensagens que tenham ataque d20 para evitar colisão com automação de ataque/salvamento.
+  const rollCura = message.rolls.find(r => !r.formula?.includes("d20") && ehRolagemDeCura(message, r));
+  if (!rollCura) return;
+
+  await criarCartaoCura(message, rollCura);
+});
 
 // ============================================================
 // CONDIÇÕES AUTOMÁTICAS
