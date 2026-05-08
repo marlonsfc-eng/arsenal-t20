@@ -814,15 +814,8 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   const rollDanoMagia = message.rolls?.find(r => !r.formula?.includes("d20"));
   const danoRolado = rollDanoMagia?.total ?? null;
 
-  // Detectar condições por contexto textual.
-  // Usa a descrição do item, o conteúdo final do chat e efeitos temporários/onUse,
-  // pois algumas condições do sistema T20 aparecem apenas como link/efeito no card renderizado.
-  const descricaoTexto = [
-    itemData?.description?.value ?? "",
-    message.content ?? "",
-    ...(message.flags?.tormenta20?.onUseEffects ?? []).map(e => `${e?.label ?? e?.name ?? ""} ${e?.description ?? ""}`),
-    ...(itemData?.effects ?? []).map(e => `${e?.label ?? e?.name ?? ""} ${e?.description ?? e?.system?.description?.value ?? ""}`),
-  ].filter(Boolean).join(" ");
+  // Detectar condições via IA
+  const descricaoTexto = itemData?.description?.value ?? "";
   const condicoesIA = detectarCondicoesContexto(nomeItem, descricaoTexto, resistencia.txt ?? "");
   const condicoesAoFalhar = condicoesIA.aoFalhar ?? [];
   const condicoesAoPassar = condicoesIA.aoPassar ?? [];
@@ -1592,156 +1585,64 @@ const CONDICOES_MAP = {
   "sobrecarregado":"sobrecarregado",
 };
 
-function _stripT20Text(texto) {
-  return String(texto ?? "")
-    // Foundry/T20 costuma renderizar condições como @UUID[...]{Atordoado}; manter apenas o rótulo.
-    .replace(/@(?:UUID|Compendium|Actor|Item|JournalEntry|Scene|Token)\[[^\]]*\]\{([^}]*)\}/gi, "$1")
-    .replace(/<script[^>]*>.*?<\/script>/gis, " ")
-    .replace(/<style[^>]*>.*?<\/style>/gis, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&aacute;/gi, "á").replace(/&eacute;/gi, "é").replace(/&iacute;/gi, "í").replace(/&oacute;/gi, "ó").replace(/&uacute;/gi, "ú")
-    .replace(/&atilde;/gi, "ã").replace(/&otilde;/gi, "õ").replace(/&ccedil;/gi, "ç")
-    .replace(/&Aacute;/g, "Á").replace(/&Eacute;/g, "É").replace(/&Iacute;/g, "Í").replace(/&Oacute;/g, "Ó").replace(/&Uacute;/g, "Ú")
-    .replace(/&Atilde;/g, "Ã").replace(/&Otilde;/g, "Õ").replace(/&Ccedil;/g, "Ç")
-    .replace(/&[^;]+;/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function _normalizarT20(texto) {
-  return _stripT20Text(texto)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[“”„]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/[–—]/g, "-")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function _escapeRegexT20(texto) {
-  return String(texto).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function _temTermoInteiro(textoNorm, termoNorm) {
-  // Evita falso positivo por substring: "cego" não deve casar dentro de "morcegos".
-  const re = new RegExp(`(^|[^a-z0-9_])${_escapeRegexT20(termoNorm)}(?=$|[^a-z0-9_])`, "i");
-  return re.test(textoNorm);
-}
-
-function _trechosComTermo(textoNorm, termoNorm) {
-  const re = new RegExp(`(^|[^a-z0-9_])${_escapeRegexT20(termoNorm)}(?=$|[^a-z0-9_])`, "gi");
-  const out = [];
-  for (const m of textoNorm.matchAll(re)) {
-    const idx = Math.max(0, (m.index ?? 0) - 90);
-    out.push(textoNorm.slice(idx, Math.min(textoNorm.length, (m.index ?? 0) + termoNorm.length + 120)));
-  }
-  return out;
-}
-
-function _contextoNegativoCondicao(trecho) {
-  // Referências que citam a condição sem aplicá-la.
-  return [
-    /nao\s+(?:fica|ficara|ficam|ficarao|aplica|aplicara|causa|causara|recebe|recebera|sofre|sofrera)/,
-    /nao\s+(?:e|eh)\s+afetad[oa]s?/,
-    /sem\s+(?:ficar|aplicar|causar|receber|sofrer)/,
-    /evita\s+(?:a\s+)?(?:condicao|essa\s+condicao|o\s+efeito)/,
-    /impede\s+(?:a\s+)?(?:condicao|esse\s+efeito)/,
-    /imune\s+a/,
-    /como\s+se\s+(?:estivesse|ficasse|fosse)/,
-    /conta\s+como/,
-    /considerad[oa]\s+como/,
-    /nao\s+acumula/,
-  ].some(re => re.test(trecho));
-}
-
-function _condicoesNoTexto(texto, { exigirAplicacao = false } = {}) {
-  const textoNorm = _normalizarT20(texto);
-  const encontrados = new Set();
-  if (!textoNorm) return encontrados;
-
-  const gatilhosAplicacao = [
-    /(?:fica|ficam|ficara|ficarao|ficou)\s+$/,
-    /(?:deixa|deixam|deixando|torna|tornam|tornando|causa|causam|causando|aplica|aplicam|aplicando)\s+$/,
-    /(?:alvo|criatura|inimigo|vitima|personagem|voce|ele|ela)\s+(?:fica|ficam|ficara|recebe|sofre)\s+$/,
-    /(?:falha\s+aplica|sucesso\s+aplica)\s*:?\s*$/,
-  ];
-
-  for (const [chave, id] of Object.entries(CONDICOES_MAP)) {
-    const termo = _normalizarT20(chave);
-    if (!_temTermoInteiro(textoNorm, termo)) continue;
-
-    const trechos = _trechosComTermo(textoNorm, termo);
-    const valido = trechos.some(trecho => {
-      if (_contextoNegativoCondicao(trecho)) return false;
-      if (!exigirAplicacao) return true;
-
-      const pos = trecho.search(new RegExp(`(^|[^a-z0-9_])${_escapeRegexT20(termo)}(?=$|[^a-z0-9_])`, "i"));
-      const antes = pos >= 0 ? trecho.slice(Math.max(0, pos - 70), pos + 1) : trecho;
-      return gatilhosAplicacao.some(re => re.test(antes));
-    });
-
-    if (valido) encontrados.add(id);
-  }
-  return encontrados;
-}
-
-// Detecta condições com contexto — distingue aplicação real de mera citação.
+// Detecta condições com contexto — distingue "aplica X" de "não fica X" ou "como X"
 function detectarCondicoesContexto(nomeItem, descricao, txtResistencia) {
-  const texto = _normalizarT20(descricao);
-  const resistencia = _normalizarT20(txtResistencia);
+  // Limpar HTML, links @uuid[...]{texto} → manter só o texto interno, e normalizar espaços
+  const texto = descricao
+    .replace(/@uuid\[[^\]]*\]\{([^}]*)\}/gi, "$1")  // @uuid[...]{abalado} → abalado
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 
   const aoFalhar = new Set();
   const aoPassar = new Set();
 
-  // 1) Formato mais confiável: cards/effects explícitos, ex. "Adaga Mental (Atordoado)".
-  // Esses rótulos normalmente vêm dos Efeitos Temporários do item e indicam a condição aplicada na falha.
-  const rotuloEfeito = new RegExp(`${_escapeRegexT20(_normalizarT20(nomeItem))}\\s*\\(([^)]+)\\)`, "gi");
-  for (const m of texto.matchAll(rotuloEfeito)) {
-    for (const id of _condicoesNoTexto(m[1])) aoFalhar.add(id);
+  // Padrões de negação — se a condição aparece aqui, IGNORAR
+  const negacoes = [
+    /não.{0,20}(fica|ficará|aplica|causa|recebe)/,
+    /sem.{0,10}(ficar|aplicar)/,
+    /evita.{0,20}/,
+    /impede.{0,20}/,
+    /como se.{0,30}/,        // "como se estivesse X" = referência
+    /não.{0,5}irá/,
+    /não acumul/,
+    /deixá-lo/,              // "não irá deixá-lo exausto"
+  ];
+
+  // Detectar blocos de texto separados por "se falhar" / "se passar"
+  // Padrões: "se falhar... fica X", "falhar na resistência... X", "se passar... Y"
+  // Captura tudo após o marcador de falha/sucesso até o fim do trecho relevante
+  const blocoFalha   = texto.match(/(?:se falhar|falhar na resist[eê]ncia|ao falhar|em caso de falha)([^]*?)(?=se passar|se resistir|passar na resist|$)/i)?.[1]?.trim() ?? "";
+  const blocoSucesso = texto.match(/(?:se passar|passar na resist[eê]ncia|ao passar|em caso de sucesso|se resistir)([^]*?)(?=se falhar|ao falhar|$)/i)?.[1]?.trim() ?? "";
+
+  // Se não achou blocos separados, tudo vai para aoFalhar (comportamento padrão)
+  const textoPrincipal = blocoFalha || texto;
+
+  for (const [chave, id] of Object.entries(CONDICOES_MAP)) {
+    // Verificar negações — se a condição aparece num contexto negativo, pular
+    const regexCondicao = new RegExp(`.{0,40}${chave}.{0,40}`, "gi");
+    const ocorrencias = [...texto.matchAll(regexCondicao)].map(m => m[0]);
+    const eNegada = ocorrencias.some(trecho =>
+      negacoes.some(neg => neg.test(trecho))
+    );
+    if (eNegada) continue;
+
+    // Verificar no bloco de falha
+    if (blocoFalha && blocoFalha.includes(chave)) {
+      aoFalhar.add(id);
+    }
+    // Verificar no bloco de sucesso
+    if (blocoSucesso && blocoSucesso.includes(chave)) {
+      aoPassar.add(id);
+    }
+    // Se não há blocos separados mas a condição está no texto geral
+    if (!blocoFalha && !blocoSucesso && texto.includes(chave)) {
+      aoFalhar.add(id);
+    }
   }
 
-  // 2) Separação por blocos de sucesso/falha. Inclui "se o alvo falhar" e variações.
-  const marcadorFalha = /(?:se\s+(?:o\s+alvo|a\s+criatura|ele|ela|voce)?\s*falhar|falhar\s+n[oa]\s+teste\s+de\s+resistencia|falhar\s+na\s+resistencia|ao\s+falhar|em\s+caso\s+de\s+falha)/i;
-  const marcadorSucesso = /(?:se\s+(?:o\s+alvo|a\s+criatura|ele|ela|voce)?\s*passar|passar\s+n[oa]\s+teste\s+de\s+resistencia|passar\s+na\s+resistencia|ao\s+passar|em\s+caso\s+de\s+sucesso|se\s+resistir)/i;
-
-  const idxFalha = texto.search(marcadorFalha);
-  const idxSucesso = texto.search(marcadorSucesso);
-
-  let blocoFalha = "";
-  let blocoSucesso = "";
-
-  if (idxFalha >= 0) {
-    const fim = idxSucesso >= 0 && idxSucesso > idxFalha ? idxSucesso : texto.length;
-    blocoFalha = texto.slice(idxFalha, fim);
-  }
-  if (idxSucesso >= 0) {
-    const fim = idxFalha >= 0 && idxFalha > idxSucesso ? idxFalha : texto.length;
-    blocoSucesso = texto.slice(idxSucesso, fim);
-  }
-
-  for (const id of _condicoesNoTexto(blocoFalha, { exigirAplicacao: false })) aoFalhar.add(id);
-
-  // Só considera condição em sucesso se houver aplicação explícita; textos como
-  // "se passar, evita a condição" não devem adicionar nada.
-  for (const id of _condicoesNoTexto(blocoSucesso, { exigirAplicacao: true })) aoPassar.add(id);
-
-  // 3) Sem bloco explícito, exigir verbo de aplicação para evitar falsos positivos.
-  // Ex.: "morcegos" não casa com "cego"; e mera citação de imunidade/evitar é ignorada.
-  if (idxFalha < 0 && idxSucesso < 0) {
-    for (const id of _condicoesNoTexto(texto, { exigirAplicacao: true })) aoFalhar.add(id);
-  }
-
-  // 4) O campo de resistência pode dizer "evita a condição"; nesse caso, mantém falha apenas.
-  // Se algum sistema colocar explicitamente "falha aplica: X" no texto da resistência, capturamos.
-  if (/falha\s+aplica/.test(resistencia)) {
-    for (const id of _condicoesNoTexto(resistencia, { exigirAplicacao: false })) aoFalhar.add(id);
-  }
-  if (/sucesso\s+aplica/.test(resistencia)) {
-    for (const id of _condicoesNoTexto(resistencia, { exigirAplicacao: false })) aoPassar.add(id);
-  }
+  // Também verificar no txt de resistência (ex: "Reflexos reduz à metade e evita a condição")
+  // Se diz "evita a condição", sucesso não aplica nada (já é o padrão)
 
   return {
     aoFalhar: [...aoFalhar],
