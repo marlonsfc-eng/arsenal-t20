@@ -76,6 +76,29 @@ Hooks.once("ready", () => {
     default: true,
   });
 
+  game.settings.register(MOD, "pmControlMode", {
+    name: "Controle de PM",
+    hint: "Define como o Arsenal T20 deve lidar com custos de PM ao lançar magias: desligado, card manual para o GM ou gasto automático.",
+    scope: "world",
+    config: true,
+    type: String,
+    choices: {
+      off: "Desligado",
+      manual: "Controlar manualmente com card",
+      auto: "Gastar PM automaticamente"
+    },
+    default: "manual",
+  });
+
+  game.settings.register(MOD, "sustentadasAtivas", {
+    name: "Magias Sustentadas Ativas",
+    hint: "Registro interno do Arsenal T20 para controle de magias sustentadas.",
+    scope: "world",
+    config: false,
+    type: Object,
+    default: {},
+  });
+
   const ativas = [];
   if (game.settings.get(MOD, "autoAtaque"))      ativas.push("Ataque");
   if (game.settings.get(MOD, "autoSalvamento"))  ativas.push("Salvamento");
@@ -598,6 +621,15 @@ Hooks.once("ready", () => {
       const msg = game.messages.get(data.messageId);
       if (msg && typeof data.content === "string") {
         await msg.update({ content: data.content });
+      }
+    }
+    if (data.tipo === "registrarSustentada") {
+      const actor = await resolverActorParaAutomacao(data);
+      if (actor) {
+        await t20RegistrarSustentada(actor, data.itemData ?? {}, {
+          content: data.content ?? "",
+          id: data.messageId ?? null,
+        });
       }
     }
   });
@@ -1470,33 +1502,6 @@ function htmlCartaoMagiaConsolidado({ nomeItem, imgItem, nomeConjurador,
         ${linhasAlvos}
       </div>
 
-      <div style="margin-top:10px;padding-top:9px;border-top:1px solid rgba(201,162,39,0.18)">
-        <div style="font-size:0.74em;color:#8f97aa;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">
-          Ações em grupo
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px">
-          <button class="t20-grupo-dano"
-            data-valor="${danoRolado ?? 0}" data-modo="total" data-tipo-dano="${tipoDano}"
-            style="padding:7px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#8a2f38,#6b2028);border:1px solid #b94a58;color:#fff;font-weight:bold;font-size:0.8em">
-            💔 Dano em todos
-          </button>
-          <button class="t20-grupo-dano"
-            data-valor="${danoRolado ?? 0}" data-modo="metade" data-tipo-dano="${tipoDano}"
-            style="padding:7px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#334765,#25344d);border:1px solid #47638c;color:#eef3ff;font-weight:bold;font-size:0.8em">
-            🛡️ Metade em todos
-          </button>
-          <button class="t20-grupo-cond-falha"
-            data-condicoes="${condicoesAoFalhar.join(',')}"
-            style="padding:7px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#6d3b86,#4c2a63);border:1px solid #8f5db0;color:#fff;font-weight:bold;font-size:0.8em">
-            🔮 Condição nos que falharam
-          </button>
-          <button class="t20-grupo-remover-cond"
-            data-condicoes="${[...new Set([...condicoesAoFalhar, ...condicoesAoPassar])].join(',')}"
-            style="padding:7px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#4b5568,#374151);border:1px solid #687387;color:#fff;font-weight:bold;font-size:0.8em">
-            🧹 Remover condições
-          </button>
-        </div>
-      </div>
     </div>`;
 }
 
@@ -2464,6 +2469,46 @@ async function aplicarCondicoes(actor, condicoes, nomeItem) {
 
 
 
+
+function t20PMModoControle() {
+  try {
+    return game.settings.get("arsenal-t20", "pmControlMode") ?? "manual";
+  } catch {
+    try {
+      return game.settings.get("arsenal-t20", "autoPMCard") ? "manual" : "off";
+    } catch {
+      return "manual";
+    }
+  }
+}
+
+function t20GetSustentadas() {
+  try {
+    return game.settings.get("arsenal-t20", "sustentadasAtivas") ?? {};
+  } catch {
+    return {};
+  }
+}
+
+async function t20SetSustentadas(data) {
+  await game.settings.set("arsenal-t20", "sustentadasAtivas", data ?? {});
+}
+
+function t20ActorKey(actor) {
+  return actor?.uuid ?? actor?.id ?? actor?.name ?? "desconhecido";
+}
+
+function t20TextoLimpoLocal(html) {
+  try {
+    const div = document.createElement("div");
+    div.innerHTML = html ?? "";
+    return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
+  } catch {
+    return String(html ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+}
+
+
 // ============================================================
 // AÇÕES EM GRUPO, EFEITOS CONTÍNUOS, SUSTENTADAS E PM
 // ============================================================
@@ -2740,13 +2785,93 @@ Hooks.on("updateCombat", async (combat, changed) => {
 
 // ── Painel de magias sustentadas ─────────────────────────────
 
+function t20ItemEhSustentado(itemData = {}, message = null) {
+  const texto = [
+    itemData?.duration,
+    itemData?.duracao,
+    itemData?.duração,
+    itemData?.system?.duration,
+    itemData?.system?.duracao,
+    itemData?.system?.duração,
+    itemData?.description?.value,
+    message?.content,
+  ].filter(Boolean).join(" ").toLowerCase().replace(/<[^>]+>/g, " ");
+
+  return /\bdura[cç][aã]o\s*:?\s*sustentad[ao]\b/i.test(texto) ||
+    /\bsustentad[ao]\b/i.test(texto);
+}
+
 function t20EfeitosSustentados(actor) {
-  return Array.from(actor?.effects ?? []).filter(e => {
+  const registros = t20GetSustentadas();
+  const key = t20ActorKey(actor);
+  const porRegistro = Array.isArray(registros[key]) ? registros[key] : [];
+
+  const porEfeito = Array.from(actor?.effects ?? []).filter(e => {
     const nome = String(e.name ?? e.label ?? "").toLowerCase();
     const desc = String(e.description ?? e.system?.description?.value ?? "").toLowerCase();
     const dur = String(e.duration?.type ?? e.duration?.label ?? "").toLowerCase();
     return nome.includes("sustentad") || desc.includes("sustentad") || dur.includes("sustentad");
-  });
+  }).map(e => ({
+    id: e.id,
+    uuid: e.uuid,
+    nome: e.name ?? e.label ?? "Efeito sustentado",
+    img: e.icon ?? "",
+    origem: "effect",
+    custoPM: 1,
+  }));
+
+  return [...porRegistro, ...porEfeito];
+}
+
+async function t20RegistrarSustentada(actor, itemData = {}, message = null) {
+  if (!game.user.isGM) return;
+  if (!actor || !t20ItemEhSustentado(itemData, message)) return;
+
+  const nomeFallback = (() => {
+    const html = message?.content ?? "";
+    const title = html.match(/title="([^"]+)"/)?.[1];
+    if (title) return title;
+    const limpo = t20TextoLimpoLocal(html);
+    const m = limpo.match(/([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ'’\- ]{2,60})\s+(?:Universal|Arcana|Divina)\b/);
+    return m?.[1]?.trim() ?? "";
+  })();
+  const nome = (itemData?.name ?? itemData?.nome ?? nomeFallback) || "Magia sustentada";
+  const img = itemData?.img ?? message?.content?.match(/img[^>]+src="([^"]+)"/)?.[1] ?? "";
+  const key = t20ActorKey(actor);
+  const registros = t20GetSustentadas();
+  const lista = Array.isArray(registros[key]) ? registros[key] : [];
+
+  const existe = lista.some(r => r.nome === nome);
+  if (!existe) {
+    lista.push({
+      id: foundry.utils.randomID?.() ?? `${Date.now()}`,
+      nome,
+      img,
+      actorUuid: actor.uuid,
+      actorId: actor.id,
+      custoPM: 1,
+      origem: "registro",
+      criadoEm: Date.now(),
+    });
+    registros[key] = lista;
+    await t20SetSustentadas(registros);
+
+    await ChatMessage.create({
+      whisper: ChatMessage.getWhisperRecipients("GM"),
+      content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #c9a227;padding:8px 11px;border-radius:6px;color:#d7dcea">
+        🪄 <b>${nome}</b> registrada como magia sustentada de <b>${actor.name}</b>.
+      </div>`
+    });
+  }
+}
+
+async function t20RemoverSustentada(actor, registroId) {
+  if (!actor) return;
+  const key = t20ActorKey(actor);
+  const registros = t20GetSustentadas();
+  const lista = Array.isArray(registros[key]) ? registros[key] : [];
+  registros[key] = lista.filter(r => r.id !== registroId);
+  await t20SetSustentadas(registros);
 }
 
 class ArsenalSustentadasPanel extends Application {
@@ -2754,7 +2879,7 @@ class ArsenalSustentadasPanel extends Application {
     return foundry.utils.mergeObject(super.defaultOptions, {
       id: "arsenal-sustentadas-panel",
       title: "🪄 Magias Sustentadas — Arsenal T20",
-      width: 420,
+      width: 460,
       height: "auto",
       resizable: true,
     });
@@ -2784,16 +2909,21 @@ class ArsenalSustentadasPanel extends Application {
           <h3 style="margin:0 0 8px;color:#d9b85f">${actor.name}</h3>
           ${efeitos.length ? efeitos.map(e => `
             <div style="display:flex;align-items:center;gap:8px;margin:6px 0;padding:6px;background:rgba(255,255,255,0.04);border-radius:6px">
-              ${e.icon ? `<img src="${e.icon}" style="width:24px;height:24px;border:none">` : ""}
+              ${e.img ? `<img src="${e.img}" style="width:24px;height:24px;border:none">` : e.icon ? `<img src="${e.icon}" style="width:24px;height:24px;border:none">` : ""}
               <div style="flex:1">
-                <b>${e.name ?? e.label}</b>
-                <div style="font-size:0.8em;color:#9ca3af">Custo sugerido: 1 PM/rodada</div>
+                <b>${e.nome ?? e.name ?? e.label}</b>
+                <div style="font-size:0.8em;color:#9ca3af">Custo sugerido: ${e.custoPM ?? 1} PM/rodada · ${e.origem === "registro" ? "registrada pelo Arsenal" : "efeito ativo"}</div>
               </div>
-              <button class="t20-sustentar-pm" data-actor="${actor.uuid}" style="padding:4px 8px">Pagar 1 PM</button>
-              <button class="t20-encerrar-efeito" data-effect="${e.uuid}" style="padding:4px 8px">Encerrar</button>
-            </div>`).join("") : `<div style="color:#9ca3af">Nenhum efeito sustentado detectado.</div>`}
+              <button class="t20-sustentar-pm" data-actor="${actor.uuid}" data-pm="${e.custoPM ?? 1}" style="padding:4px 8px">Pagar PM</button>
+              ${e.origem === "registro"
+                ? `<button class="t20-remover-sustentada" data-actor="${actor.uuid}" data-registro="${e.id}" style="padding:4px 8px">Remover</button>`
+                : `<button class="t20-encerrar-efeito" data-effect="${e.uuid}" style="padding:4px 8px">Encerrar</button>`}
+            </div>`).join("") : `<div style="color:#9ca3af">Nenhuma magia sustentada registrada/detectada.</div>`}
         </div>`;
       }).join("")}
+      <div style="font-size:0.82em;color:#9ca3af;margin-top:8px">
+        Magias com <b>Duração: Sustentada</b> são registradas automaticamente quando lançadas. Se algo não aparecer, selecione o token e relance a magia.
+      </div>
     </div>`;
   }
 
@@ -2801,14 +2931,20 @@ class ArsenalSustentadasPanel extends Application {
     super.activateListeners(html);
     html.find(".t20-sustentar-pm").on("click", async ev => {
       const actor = await fromUuid(ev.currentTarget.dataset.actor);
+      const pm = parseInt(ev.currentTarget.dataset.pm) || 1;
       if (actor) {
-        await t20AplicarPMDireto(actor, 1);
-        ui.notifications.info(`${actor.name}: 1 PM gasto para sustentar.`);
+        await t20AplicarPMDireto(actor, pm);
+        ui.notifications.info(`${actor.name}: ${pm} PM gasto(s) para sustentar.`);
       }
     });
     html.find(".t20-encerrar-efeito").on("click", async ev => {
       const ef = await fromUuid(ev.currentTarget.dataset.effect);
       await ef?.delete?.();
+      this.render();
+    });
+    html.find(".t20-remover-sustentada").on("click", async ev => {
+      const actor = await fromUuid(ev.currentTarget.dataset.actor);
+      await t20RemoverSustentada(actor, ev.currentTarget.dataset.registro);
       this.render();
     });
   }
@@ -2847,6 +2983,30 @@ Hooks.on("getSceneControlButtons", (controls) => {
         order: 101,
       };
     }
+  }
+});
+
+Hooks.on("createChatMessage", async (message, options, userId) => {
+  if (userId !== game.userId) return;
+
+  const itemData = message.flags?.tormenta20?.itemData ?? {};
+  const actor = game.actors.get(message.speaker?.actor);
+  if (!actor) return;
+  if (!t20ItemEhSustentado(itemData, message)) return;
+
+  if (game.user.isGM) {
+    await t20RegistrarSustentada(actor, itemData, message);
+  } else {
+    game.socket.emit("module.arsenal-t20", {
+      tipo: "registrarSustentada",
+      actorId: actor.id,
+      actorUuid: actor.uuid,
+      tokenId: canvas.tokens?.controlled?.[0]?.id,
+      sceneId: canvas.scene?.id,
+      itemData,
+      content: message.content ?? "",
+      messageId: message.id,
+    });
   }
 });
 
@@ -2907,7 +3067,8 @@ function t20HtmlCardPM({ actor, nomeItem, custo }) {
 }
 
 async function t20CriarCardPM(message) {
-  if (!cfg("autoPMCard")) return;
+  const modo = t20PMModoControle();
+  if (modo === "off") return;
   if (message.flags?.["arsenal-t20"]?.tipo === "pm") return;
 
   const itemData = message.flags?.tormenta20?.itemData;
@@ -2920,6 +3081,20 @@ async function t20CriarCardPM(message) {
   const custo = t20ExtrairCustoPM(itemData, message);
   if (!custo.total) return;
 
+  if (modo === "auto") {
+    await t20AplicarPMDireto(actor, custo.total);
+    await ChatMessage.create({
+      whisper: ChatMessage.getWhisperRecipients("GM"),
+      content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #a78bfa;padding:8px 11px;border-radius:6px;color:#d7dcea">
+        🔷 <b>${actor.name}</b> gastou <b>${custo.total} PM</b> automaticamente por <b>${nomeItem}</b>.
+        <br><span style="font-size:0.85em;color:#9ca3af">Custo base: ${custo.base}${custo.extra ? ` · aprimoramentos: +${custo.extra}` : ""}</span>
+      </div>`,
+      flags: { "arsenal-t20": { tipo: "pm", origem: message.id, auto: true } }
+    });
+    return;
+  }
+
+  // manual
   await ChatMessage.create({
     content: t20HtmlCardPM({ actor, nomeItem, custo }),
     speaker: message.speaker,
@@ -2947,7 +3122,7 @@ async function t20ReverterPMBotao(btn) {
 }
 
 Hooks.on("createChatMessage", async (message, options, userId) => {
-  if (!cfg("autoPMCard")) return;
+  if (t20PMModoControle() === "off") return;
   if (userId !== game.userId) return;
   await t20CriarCardPM(message);
 });
