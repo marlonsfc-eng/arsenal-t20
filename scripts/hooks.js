@@ -2763,10 +2763,20 @@ async function t20ProcessarEfeitosContinuos(actor) {
     const custoSustentadas = sustentadas.length; // Em Tormenta20, cada magia sustentada custa sempre 1 PM por turno.
     const resultadoPM = await t20AplicarPMDireto(actor, custoSustentadas);
 
+    const nomesSustentadas = sustentadas
+      .map(e => e.nome ?? e.name ?? e.label ?? "efeito sustentado")
+      .filter(Boolean);
+
+    const nomesTexto = nomesSustentadas.length === 1
+      ? `<b>${nomesSustentadas[0]}</b>`
+      : nomesSustentadas.length === 2
+        ? `<b>${nomesSustentadas[0]}</b> e <b>${nomesSustentadas[1]}</b>`
+        : `<b>${nomesSustentadas.slice(0, -1).join("</b>, <b>")}</b> e <b>${nomesSustentadas.at(-1)}</b>`;
+
     if (resultadoPM) {
-      linhas.push(`🪄 Sustentação: gastou <b>${custoSustentadas} PM</b> para manter <b>${sustentadas.length}</b> magia(s)/efeito(s) sustentado(s).`);
+      linhas.push(`🪄 Sustentação: gastou <b>${custoSustentadas} PM</b> para manter ${nomesTexto} sustentado(s).`);
     } else {
-      linhas.push(`🪄 Possui <b>${sustentadas.length}</b> magia(s)/efeito(s) sustentado(s), mas o Arsenal não encontrou o campo de PM para aplicar o custo.`);
+      linhas.push(`🪄 Sustentação: ${nomesTexto} está/estão sustentado(s), mas o Arsenal não encontrou o campo de PM para aplicar o custo.`);
     }
   }
 
