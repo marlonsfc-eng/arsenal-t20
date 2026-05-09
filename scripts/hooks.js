@@ -2760,7 +2760,14 @@ async function t20ProcessarEfeitosContinuos(actor) {
 
   const sustentadas = t20EfeitosSustentados(actor);
   if (sustentadas.length) {
-    linhas.push(`🪄 Possui <b>${sustentadas.length}</b> magia(s)/efeito(s) sustentado(s). Verifique custo/manutenção.`);
+    const custoSustentadas = sustentadas.length; // Em Tormenta20, cada magia sustentada custa sempre 1 PM por turno.
+    const resultadoPM = await t20AplicarPMDireto(actor, custoSustentadas);
+
+    if (resultadoPM) {
+      linhas.push(`🪄 Sustentação: gastou <b>${custoSustentadas} PM</b> para manter <b>${sustentadas.length}</b> magia(s)/efeito(s) sustentado(s).`);
+    } else {
+      linhas.push(`🪄 Possui <b>${sustentadas.length}</b> magia(s)/efeito(s) sustentado(s), mas o Arsenal não encontrou o campo de PM para aplicar o custo.`);
+    }
   }
 
   if (!linhas.length) return;
@@ -2912,9 +2919,9 @@ class ArsenalSustentadasPanel extends Application {
               ${e.img ? `<img src="${e.img}" style="width:24px;height:24px;border:none">` : e.icon ? `<img src="${e.icon}" style="width:24px;height:24px;border:none">` : ""}
               <div style="flex:1">
                 <b>${e.nome ?? e.name ?? e.label}</b>
-                <div style="font-size:0.8em;color:#9ca3af">Custo sugerido: ${e.custoPM ?? 1} PM/rodada · ${e.origem === "registro" ? "registrada pelo Arsenal" : "efeito ativo"}</div>
+                <div style="font-size:0.8em;color:#9ca3af">Custo automático: ${e.custoPM ?? 1} PM/turno · ${e.origem === "registro" ? "registrada pelo Arsenal" : "efeito ativo"}</div>
               </div>
-              <button class="t20-sustentar-pm" data-actor="${actor.uuid}" data-pm="${e.custoPM ?? 1}" style="padding:4px 8px">Pagar PM</button>
+              <button class="t20-sustentar-pm" data-actor="${actor.uuid}" data-pm="${e.custoPM ?? 1}" style="padding:4px 8px">Pagar PM manualmente</button>
               ${e.origem === "registro"
                 ? `<button class="t20-remover-sustentada" data-actor="${actor.uuid}" data-registro="${e.id}" style="padding:4px 8px">Remover</button>`
                 : `<button class="t20-encerrar-efeito" data-effect="${e.uuid}" style="padding:4px 8px">Encerrar</button>`}
@@ -3013,6 +3020,11 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
 // ── Card de controle de PM ───────────────────────────────────
 
 function t20ExtrairCustoPM(itemData = {}, message = null) {
+  const numeroPM = (valor) => {
+    const m = String(valor ?? "").match(/\b(\d+)\s*(?:PM)?\b/i);
+    return m ? parseInt(m[1]) || 0 : 0;
+  };
+
   const bruto =
     itemData?.pm ??
     itemData?.custo ??
@@ -3024,23 +3036,41 @@ function t20ExtrairCustoPM(itemData = {}, message = null) {
     itemData?.system?.activation?.cost ??
     null;
 
-  let base = Number(String(bruto ?? "").match(/\d+/)?.[0] ?? 0);
+  const custoEstruturado = numeroPM(bruto);
 
-  const texto = [
-    itemData?.description?.value,
-    message?.content,
-    ...(message?.flags?.tormenta20?.onUseEffects ?? []).map(e => `${e?.label ?? e?.name ?? ""} ${e?.description ?? ""}`),
-  ].filter(Boolean).join(" ").replace(/<[^>]+>/g, " ");
+  // O card renderizado pelo sistema T20 já mostra o custo FINAL da magia,
+  // incluindo aprimoramentos selecionados. Ex.: Adaga Mental com +2 PM aparece como "3 PM".
+  // Portanto, quando esse valor existe, ele deve ser usado como total final,
+  // sem somar novamente os textos de aprimoramento da descrição.
+  const textoCard = t20TextoLimpoLocal(message?.content ?? "");
+  const custoCardMatch = textoCard.match(/\b(\d+)\s*PM\b/i);
+  const custoCard = custoCardMatch ? parseInt(custoCardMatch[1]) || 0 : 0;
 
-  const custoCard = texto.match(/\b(\d+)\s*PM\b/i);
-  if (!base && custoCard) base = parseInt(custoCard[1]) || 0;
+  const totalFinal = custoCard || custoEstruturado;
 
-  let extra = 0;
-  const re = /[+]\s*(\d+)\s*PM/gi;
-  let m;
-  while ((m = re.exec(texto)) !== null) extra += parseInt(m[1]) || 0;
+  // Mantemos uma tentativa de identificar extras apenas para exibição quando ela não
+  // causará dupla contagem. Os textos "+2 PM" na descrição são opções da magia,
+  // não necessariamente custos adicionais a somar ao card.
+  let extraSelecionado = 0;
+  const onUseEffects = message?.flags?.tormenta20?.onUseEffects ?? [];
+  for (const efeito of onUseEffects) {
+    const textoEf = `${efeito?.label ?? efeito?.name ?? ""} ${efeito?.description ?? ""}`;
+    const m = textoEf.match(/[+]\s*(\d+)\s*PM/i);
+    if (m) extraSelecionado += (parseInt(m[1]) || 0) * (parseInt(efeito?.qty) || 1);
+  }
 
-  return { base, extra, total: base + extra };
+  // Se o sistema já informou o total final, não somamos extra.
+  // Apenas estimamos o custo base para fins visuais quando possível.
+  const baseEstimado = totalFinal && extraSelecionado && totalFinal > extraSelecionado
+    ? totalFinal - extraSelecionado
+    : totalFinal;
+
+  return {
+    base: baseEstimado,
+    extra: extraSelecionado && totalFinal > extraSelecionado ? extraSelecionado : 0,
+    total: totalFinal,
+    fonte: custoCard ? "card" : custoEstruturado ? "sistema" : "indefinido",
+  };
 }
 
 function t20HtmlCardPM({ actor, nomeItem, custo }) {
@@ -3056,7 +3086,7 @@ function t20HtmlCardPM({ actor, nomeItem, custo }) {
       </div>
     </div>
     <div style="font-size:0.88em;margin-bottom:10px;color:#ddd6fe">
-      Custo base: <b>${custo.base}</b> PM${custo.extra ? `<br>Aprimoramentos detectados: <b>+${custo.extra}</b> PM` : ""}<br>
+      ${custo.extra ? `Custo base estimado: <b>${custo.base}</b> PM<br>Aprimoramentos detectados: <b>+${custo.extra}</b> PM<br>` : `Custo detectado: <b>${custo.total}</b> PM<br>`}
       Custo total: <b>${custo.total}</b> PM
     </div>
     <div style="display:flex;gap:8px">
@@ -3087,7 +3117,7 @@ async function t20CriarCardPM(message) {
       whisper: ChatMessage.getWhisperRecipients("GM"),
       content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #a78bfa;padding:8px 11px;border-radius:6px;color:#d7dcea">
         🔷 <b>${actor.name}</b> gastou <b>${custo.total} PM</b> automaticamente por <b>${nomeItem}</b>.
-        <br><span style="font-size:0.85em;color:#9ca3af">Custo base: ${custo.base}${custo.extra ? ` · aprimoramentos: +${custo.extra}` : ""}</span>
+        <br><span style="font-size:0.85em;color:#9ca3af">${custo.extra ? `Base estimada: ${custo.base} · aprimoramentos: +${custo.extra}` : `Custo detectado: ${custo.total}`}</span>
       </div>`,
       flags: { "arsenal-t20": { tipo: "pm", origem: message.id, auto: true } }
     });
