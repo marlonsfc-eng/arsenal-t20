@@ -58,11 +58,31 @@ Hooks.once("ready", () => {
     default: true,
   });
 
+  game.settings.register(MOD, "autoEfeitosContinuos", {
+    name: "Efeitos Contínuos no Turno",
+    hint: "No avanço do combate, cria lembretes e aplica efeitos contínuos simples, como Sangrando e Em Chamas.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+  });
+
+  game.settings.register(MOD, "autoPMCard", {
+    name: "Card de Controle de PM",
+    hint: "Ao lançar uma magia, exibe um card de controle de custo em PM com botões de aplicar e reverter gasto.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+  });
+
   const ativas = [];
   if (game.settings.get(MOD, "autoAtaque"))      ativas.push("Ataque");
   if (game.settings.get(MOD, "autoSalvamento"))  ativas.push("Salvamento");
   if (game.settings.get(MOD, "autoCondicoes"))   ativas.push("Condições");
   if (game.settings.get(MOD, "autoCura"))        ativas.push("Cura");
+  if (game.settings.get(MOD, "autoEfeitosContinuos")) ativas.push("Efeitos contínuos");
+  if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
 
   console.log(`Arsenal T20 | v1.6 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
   if (game.user.isGM) ui.notifications.info("⚔️ Arsenal T20 ativo!");
@@ -531,6 +551,10 @@ async function atualizarCardConsolidadoDoBotao(btn, sucesso, danoFinal) {
     if (inline) {
       inline.innerHTML = `${sucesso ? "✅ Sucesso" : "❌ Falha"}${danoFinal > 0 ? ` · ${danoFinal} dano aplicado` : ""}`;
       inline.style.color = sucesso ? "#7dd3a7" : "#ff8d8d";
+    }
+    if (row) {
+      row.dataset.resultado = sucesso ? "sucesso" : "falha";
+      row.dataset.danoAplicado = String(danoFinal || 0);
     }
 
     btn.disabled = true;
@@ -1444,6 +1468,34 @@ function htmlCartaoMagiaConsolidado({ nomeItem, imgItem, nomeConjurador,
           ${temAlvos ? "Alvos e testes" : "Teste manual"}
         </div>
         ${linhasAlvos}
+      </div>
+
+      <div style="margin-top:10px;padding-top:9px;border-top:1px solid rgba(201,162,39,0.18)">
+        <div style="font-size:0.74em;color:#8f97aa;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">
+          Ações em grupo
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px">
+          <button class="t20-grupo-dano"
+            data-valor="${danoRolado ?? 0}" data-modo="total" data-tipo-dano="${tipoDano}"
+            style="padding:7px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#8a2f38,#6b2028);border:1px solid #b94a58;color:#fff;font-weight:bold;font-size:0.8em">
+            💔 Dano em todos
+          </button>
+          <button class="t20-grupo-dano"
+            data-valor="${danoRolado ?? 0}" data-modo="metade" data-tipo-dano="${tipoDano}"
+            style="padding:7px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#334765,#25344d);border:1px solid #47638c;color:#eef3ff;font-weight:bold;font-size:0.8em">
+            🛡️ Metade em todos
+          </button>
+          <button class="t20-grupo-cond-falha"
+            data-condicoes="${condicoesAoFalhar.join(',')}"
+            style="padding:7px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#6d3b86,#4c2a63);border:1px solid #8f5db0;color:#fff;font-weight:bold;font-size:0.8em">
+            🔮 Condição nos que falharam
+          </button>
+          <button class="t20-grupo-remover-cond"
+            data-condicoes="${[...new Set([...condicoesAoFalhar, ...condicoesAoPassar])].join(',')}"
+            style="padding:7px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#4b5568,#374151);border:1px solid #687387;color:#fff;font-weight:bold;font-size:0.8em">
+            🧹 Remover condições
+          </button>
+        </div>
       </div>
     </div>`;
 }
@@ -2409,6 +2461,497 @@ async function aplicarCondicoes(actor, condicoes, nomeItem) {
     </div>`
   });
 }
+
+
+
+// ============================================================
+// AÇÕES EM GRUPO, EFEITOS CONTÍNUOS, SUSTENTADAS E PM
+// ============================================================
+
+function t20GetPVPaths() {
+  return {
+    pv: "system.attributes.pv.value",
+    pvMax: "system.attributes.pv.max",
+    pm: "system.attributes.pm.value",
+    pmMax: "system.attributes.pm.max",
+  };
+}
+
+async function t20ResolverActorPorTokenId(tokenId) {
+  const token = canvas.tokens?.get(tokenId);
+  return token?.actor ?? null;
+}
+
+function t20RowsDoCard(card) {
+  return Array.from(card?.querySelectorAll?.(".t20-alvo-row") ?? []);
+}
+
+async function t20AplicarDanoDireto(actor, valor) {
+  const { pv } = t20GetPVPaths();
+  const atual = foundry.utils.getProperty(actor, pv);
+  if (atual === undefined || atual === null) return null;
+  const novo = Math.max(0, Number(atual) - Math.max(0, valor));
+  await actor.update({ [pv]: novo });
+  return { antes: Number(atual), depois: novo };
+}
+
+async function t20AplicarCuraDireta(actor, valor) {
+  const { pv, pvMax } = t20GetPVPaths();
+  const atual = foundry.utils.getProperty(actor, pv);
+  const max = foundry.utils.getProperty(actor, pvMax) ?? atual;
+  if (atual === undefined || atual === null) return null;
+  const novo = Math.min(Number(max), Number(atual) + Math.max(0, valor));
+  await actor.update({ [pv]: novo });
+  return { antes: Number(atual), depois: novo };
+}
+
+async function t20AplicarPMDireto(actor, valor) {
+  const { pm } = t20GetPVPaths();
+  const atual = foundry.utils.getProperty(actor, pm);
+  if (atual === undefined || atual === null) return null;
+  const novo = Math.max(0, Number(atual) - Math.max(0, valor));
+  await actor.update({ [pm]: novo });
+  return { antes: Number(atual), depois: novo };
+}
+
+async function t20ReverterPMDireto(actor, valor) {
+  const { pm, pmMax } = t20GetPVPaths();
+  const atual = foundry.utils.getProperty(actor, pm);
+  const max = foundry.utils.getProperty(actor, pmMax) ?? atual + valor;
+  if (atual === undefined || atual === null) return null;
+  const novo = Math.min(Number(max), Number(atual) + Math.max(0, valor));
+  await actor.update({ [pm]: novo });
+  return { antes: Number(atual), depois: novo };
+}
+
+async function t20AplicarCondicoesDireto(actor, condicoes, nomeItem) {
+  const lista = (condicoes ?? []).filter(Boolean);
+  if (!lista.length || !actor) return;
+  if (game.user.isGM || actor.isOwner) {
+    await aplicarCondicoes(actor, lista, nomeItem ?? "Arsenal T20");
+  } else {
+    game.socket.emit("module.arsenal-t20", {
+      tipo: "aplicarCondicoes",
+      actorId: actor.id,
+      actorUuid: actor.uuid,
+      tokenId: actor.getActiveTokens?.()[0]?.id,
+      sceneId: canvas.scene?.id,
+      condicoes: lista,
+      nomeItem: nomeItem ?? "Arsenal T20",
+    });
+  }
+}
+
+async function t20RemoverCondicoesDireto(actor, condicoes) {
+  const lista = (condicoes ?? []).filter(Boolean);
+  if (!lista.length || !actor) return;
+
+  for (const id of lista) {
+    try {
+      if (actor.statuses?.has(id)) await actor.toggleStatusEffect(id);
+    } catch (e) {
+      console.warn(`Arsenal T20 | erro ao remover condição ${id}`, e);
+    }
+  }
+}
+
+async function t20AtualizarMensagemDoCard(btn) {
+  const msg = obterChatMessageDoBotao(btn);
+  const card = btn.closest(".t20-card");
+  if (!msg || !card) return;
+
+  const content = card.outerHTML;
+  if (game.user.isGM) await msg.update({ content });
+  else game.socket.emit("module.arsenal-t20", {
+    tipo: "atualizarCardConsolidado",
+    messageId: msg.id,
+    content,
+  });
+}
+
+async function t20GrupoDano(btn) {
+  const card = btn.closest(".t20-card");
+  const rows = t20RowsDoCard(card);
+  const base = parseInt(btn.dataset.valor) || 0;
+  const valor = btn.dataset.modo === "metade" ? Math.floor(base / 2) : base;
+  if (valor <= 0) return ui.notifications.warn("Nenhum dano rolado para aplicar.");
+
+  let aplicados = 0;
+  for (const row of rows) {
+    const tokenId = row.dataset.tokenRow;
+    const actor = await t20ResolverActorPorTokenId(tokenId);
+    if (!actor) continue;
+    await t20AplicarDanoDireto(actor, valor);
+    row.dataset.danoGrupo = String(valor);
+    const inline = row.querySelector(".t20-resultado-inline");
+    if (inline) {
+      inline.innerHTML = `💔 ${valor} dano aplicado em grupo`;
+      inline.style.color = "#ff8d8d";
+    }
+    aplicados++;
+  }
+
+  await t20AtualizarMensagemDoCard(btn);
+  ChatMessage.create({
+    content: `<div style="background:#171b26;border-left:4px solid #b94a58;padding:8px 11px;border-radius:6px;color:#d7dcea">
+      💔 <b>${valor}</b> de dano aplicado em <b>${aplicados}</b> alvo(s).
+    </div>`
+  });
+}
+
+async function t20GrupoCondFalha(btn) {
+  const card = btn.closest(".t20-card");
+  const rows = t20RowsDoCard(card);
+  const condicoes = (btn.dataset.condicoes ?? "").split(",").filter(Boolean);
+  if (!condicoes.length) return ui.notifications.warn("Nenhuma condição de falha detectada para este efeito.");
+
+  let aplicados = 0;
+  for (const row of rows) {
+    const falhou = row.dataset.resultado === "falha" || /falha/i.test(row.querySelector(".t20-resultado-inline")?.textContent ?? "");
+    if (!falhou) continue;
+    const actor = await t20ResolverActorPorTokenId(row.dataset.tokenRow);
+    if (!actor) continue;
+    await t20AplicarCondicoesDireto(actor, condicoes, "Efeito em grupo");
+    const inline = row.querySelector(".t20-resultado-inline");
+    if (inline) {
+      inline.innerHTML = `${inline.textContent || "❌ Falha"} · 🔮 condição aplicada`;
+      inline.style.color = "#ff8d8d";
+    }
+    aplicados++;
+  }
+
+  await t20AtualizarMensagemDoCard(btn);
+  ui.notifications.info(`Condição aplicada em ${aplicados} alvo(s) que falharam.`);
+}
+
+async function t20GrupoRemoverCond(btn) {
+  const card = btn.closest(".t20-card");
+  const rows = t20RowsDoCard(card);
+  const condicoes = (btn.dataset.condicoes ?? "").split(",").filter(Boolean);
+  if (!condicoes.length) return ui.notifications.warn("Nenhuma condição detectada para remover neste card.");
+
+  let removidos = 0;
+  for (const row of rows) {
+    const actor = await t20ResolverActorPorTokenId(row.dataset.tokenRow);
+    if (!actor) continue;
+    await t20RemoverCondicoesDireto(actor, condicoes);
+    removidos++;
+  }
+
+  await t20AtualizarMensagemDoCard(btn);
+  ui.notifications.info(`Condições removidas/tentadas em ${removidos} alvo(s).`);
+}
+
+// Listener dos botões globais do card consolidado
+Hooks.on("renderChatMessageHTML", (message, html) => {
+  html.querySelectorAll(".t20-grupo-dano").forEach(btn => {
+    btn.dataset.messageId = message.id;
+    if (btn.dataset.listenerAdded) return;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", () => t20GrupoDano(btn));
+  });
+
+  html.querySelectorAll(".t20-grupo-cond-falha").forEach(btn => {
+    btn.dataset.messageId = message.id;
+    if (btn.dataset.listenerAdded) return;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", () => t20GrupoCondFalha(btn));
+  });
+
+  html.querySelectorAll(".t20-grupo-remover-cond").forEach(btn => {
+    btn.dataset.messageId = message.id;
+    if (btn.dataset.listenerAdded) return;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", () => t20GrupoRemoverCond(btn));
+  });
+
+  html.querySelectorAll(".t20-pm-aplicar").forEach(btn => {
+    btn.dataset.messageId = message.id;
+    if (btn.dataset.listenerAdded) return;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", () => t20AplicarPMBotao(btn));
+  });
+
+  html.querySelectorAll(".t20-pm-reverter").forEach(btn => {
+    btn.dataset.messageId = message.id;
+    if (btn.dataset.listenerAdded) return;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", () => t20ReverterPMBotao(btn));
+  });
+});
+
+// ── Efeitos contínuos no avanço de turno ─────────────────────
+
+function t20ActorTemStatus(actor, nomes) {
+  const alvos = nomes.map(n => n.toLowerCase());
+  if ([...(actor.statuses ?? [])].some(s => alvos.includes(String(s).toLowerCase()))) return true;
+  return (actor.effects ?? []).some(e => {
+    const n = String(e.name ?? e.label ?? "").toLowerCase();
+    return alvos.some(a => n.includes(a));
+  });
+}
+
+async function t20ProcessarEfeitosContinuos(actor) {
+  if (!cfg("autoEfeitosContinuos")) return;
+  if (!game.user.isGM || !actor) return;
+
+  const linhas = [];
+
+  if (t20ActorTemStatus(actor, ["sangrando", "bleeding"])) {
+    const roll = await new Roll("1d6").evaluate();
+    await t20AplicarDanoDireto(actor, roll.total);
+    linhas.push(`🩸 Sangrando: sofreu <b>${roll.total}</b> dano.`);
+  }
+
+  if (t20ActorTemStatus(actor, ["emchamas", "em chamas", "burning"])) {
+    const roll = await new Roll("1d6").evaluate();
+    await t20AplicarDanoDireto(actor, roll.total);
+    linhas.push(`🔥 Em chamas: sofreu <b>${roll.total}</b> dano.`);
+  }
+
+  if (t20ActorTemStatus(actor, ["envenenado", "poisoned", "veneno"])) {
+    linhas.push(`☠️ Envenenado: verifique se há novo teste de resistência neste turno.`);
+  }
+
+  const sustentadas = t20EfeitosSustentados(actor);
+  if (sustentadas.length) {
+    linhas.push(`🪄 Possui <b>${sustentadas.length}</b> magia(s)/efeito(s) sustentado(s). Verifique custo/manutenção.`);
+  }
+
+  if (!linhas.length) return;
+
+  await ChatMessage.create({
+    whisper: ChatMessage.getWhisperRecipients("GM"),
+    content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #c9a227;padding:8px 11px;border-radius:6px;color:#d7dcea">
+      <b>⏱️ Início do turno — ${actor.name}</b><br>${linhas.join("<br>")}
+    </div>`
+  });
+}
+
+Hooks.on("updateCombat", async (combat, changed) => {
+  if (!cfg("autoEfeitosContinuos")) return;
+  if (!game.user.isGM) return;
+  if (!("turn" in changed) && !("round" in changed)) return;
+
+  const combatant = combat.combatant;
+  const actor = combatant?.actor;
+  await t20ProcessarEfeitosContinuos(actor);
+});
+
+// ── Painel de magias sustentadas ─────────────────────────────
+
+function t20EfeitosSustentados(actor) {
+  return Array.from(actor?.effects ?? []).filter(e => {
+    const nome = String(e.name ?? e.label ?? "").toLowerCase();
+    const desc = String(e.description ?? e.system?.description?.value ?? "").toLowerCase();
+    const dur = String(e.duration?.type ?? e.duration?.label ?? "").toLowerCase();
+    return nome.includes("sustentad") || desc.includes("sustentad") || dur.includes("sustentad");
+  });
+}
+
+class ArsenalSustentadasPanel extends Application {
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: "arsenal-sustentadas-panel",
+      title: "🪄 Magias Sustentadas — Arsenal T20",
+      width: 420,
+      height: "auto",
+      resizable: true,
+    });
+  }
+
+  async getData() { return {}; }
+  get template() { return null; }
+
+  async _renderInner() {
+    const div = document.createElement("div");
+    div.innerHTML = this._html();
+    return $(div);
+  }
+
+  _html() {
+    const tokens = canvas.tokens?.controlled ?? [];
+    const actors = tokens.length ? tokens.map(t => t.actor).filter(Boolean) : [game.user.character].filter(Boolean);
+
+    if (!actors.length) {
+      return `<div style="padding:12px">Selecione um token ou defina um personagem de usuário.</div>`;
+    }
+
+    return `<div style="padding:12px;background:#111827;color:#e5e7eb;font-family:serif">
+      ${actors.map(actor => {
+        const efeitos = t20EfeitosSustentados(actor);
+        return `<div style="margin-bottom:12px;padding:10px;border:1px solid #374151;border-radius:8px;background:#0f172a">
+          <h3 style="margin:0 0 8px;color:#d9b85f">${actor.name}</h3>
+          ${efeitos.length ? efeitos.map(e => `
+            <div style="display:flex;align-items:center;gap:8px;margin:6px 0;padding:6px;background:rgba(255,255,255,0.04);border-radius:6px">
+              ${e.icon ? `<img src="${e.icon}" style="width:24px;height:24px;border:none">` : ""}
+              <div style="flex:1">
+                <b>${e.name ?? e.label}</b>
+                <div style="font-size:0.8em;color:#9ca3af">Custo sugerido: 1 PM/rodada</div>
+              </div>
+              <button class="t20-sustentar-pm" data-actor="${actor.uuid}" style="padding:4px 8px">Pagar 1 PM</button>
+              <button class="t20-encerrar-efeito" data-effect="${e.uuid}" style="padding:4px 8px">Encerrar</button>
+            </div>`).join("") : `<div style="color:#9ca3af">Nenhum efeito sustentado detectado.</div>`}
+        </div>`;
+      }).join("")}
+    </div>`;
+  }
+
+  activateListeners(html) {
+    super.activateListeners(html);
+    html.find(".t20-sustentar-pm").on("click", async ev => {
+      const actor = await fromUuid(ev.currentTarget.dataset.actor);
+      if (actor) {
+        await t20AplicarPMDireto(actor, 1);
+        ui.notifications.info(`${actor.name}: 1 PM gasto para sustentar.`);
+      }
+    });
+    html.find(".t20-encerrar-efeito").on("click", async ev => {
+      const ef = await fromUuid(ev.currentTarget.dataset.effect);
+      await ef?.delete?.();
+      this.render();
+    });
+  }
+}
+
+let _arsenalSustentadasPanel = null;
+function abrirPainelSustentadas() {
+  if (_arsenalSustentadasPanel?.rendered) _arsenalSustentadasPanel.close();
+  else {
+    _arsenalSustentadasPanel = new ArsenalSustentadasPanel();
+    _arsenalSustentadasPanel.render(true);
+  }
+}
+
+Hooks.on("getSceneControlButtons", (controls) => {
+  if (Array.isArray(controls)) {
+    const tokens = controls.find(c => c.name === "token");
+    if (tokens) {
+      tokens.tools.push({
+        name: "arsenal-sustentadas",
+        title: "Magias Sustentadas — Arsenal T20",
+        icon: "fas fa-hourglass-half",
+        button: true,
+        onClick: () => abrirPainelSustentadas(),
+      });
+    }
+  } else {
+    const tokens = controls.token ?? controls.tokens;
+    if (tokens) {
+      tokens.tools["arsenal-sustentadas"] = {
+        name: "arsenal-sustentadas",
+        title: "Magias Sustentadas — Arsenal T20",
+        icon: "fas fa-hourglass-half",
+        button: true,
+        onChange: () => abrirPainelSustentadas(),
+        order: 101,
+      };
+    }
+  }
+});
+
+// ── Card de controle de PM ───────────────────────────────────
+
+function t20ExtrairCustoPM(itemData = {}, message = null) {
+  const bruto =
+    itemData?.pm ??
+    itemData?.custo ??
+    itemData?.custoPM ??
+    itemData?.system?.pm ??
+    itemData?.system?.custo ??
+    itemData?.system?.custoPM ??
+    itemData?.activation?.cost ??
+    itemData?.system?.activation?.cost ??
+    null;
+
+  let base = Number(String(bruto ?? "").match(/\d+/)?.[0] ?? 0);
+
+  const texto = [
+    itemData?.description?.value,
+    message?.content,
+    ...(message?.flags?.tormenta20?.onUseEffects ?? []).map(e => `${e?.label ?? e?.name ?? ""} ${e?.description ?? ""}`),
+  ].filter(Boolean).join(" ").replace(/<[^>]+>/g, " ");
+
+  const custoCard = texto.match(/\b(\d+)\s*PM\b/i);
+  if (!base && custoCard) base = parseInt(custoCard[1]) || 0;
+
+  let extra = 0;
+  const re = /[+]\s*(\d+)\s*PM/gi;
+  let m;
+  while ((m = re.exec(texto)) !== null) extra += parseInt(m[1]) || 0;
+
+  return { base, extra, total: base + extra };
+}
+
+function t20HtmlCardPM({ actor, nomeItem, custo }) {
+  return `<div class="t20-pm-card" style="background:linear-gradient(180deg,#1f1a2e,#15111f);border:1px solid #51416f;border-top:3px solid #a78bfa;border-radius:8px;padding:12px;color:#e9ddff;font-family:serif">
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;border-bottom:1px solid rgba(167,139,250,0.25);padding-bottom:8px;margin-bottom:8px">
+      <div>
+        <div style="color:#c4b5fd;font-weight:bold">🔷 Controle de PM — ${nomeItem}</div>
+        <div style="font-size:0.82em;color:#b9a7d9">por ${actor.name}</div>
+      </div>
+      <div style="text-align:center;background:rgba(0,0,0,0.22);padding:5px 10px;border-radius:6px">
+        <div style="font-size:0.68em;color:#b9a7d9">Custo</div>
+        <b style="font-size:1.25em;color:#fcd34d">${custo.total}</b>
+      </div>
+    </div>
+    <div style="font-size:0.88em;margin-bottom:10px;color:#ddd6fe">
+      Custo base: <b>${custo.base}</b> PM${custo.extra ? `<br>Aprimoramentos detectados: <b>+${custo.extra}</b> PM` : ""}<br>
+      Custo total: <b>${custo.total}</b> PM
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="t20-pm-aplicar" data-actor="${actor.uuid}" data-pm="${custo.total}" style="flex:1;padding:7px;border-radius:6px;background:#5b45a0;border:1px solid #7c65c7;color:white;font-weight:bold;cursor:pointer">Gastar PM</button>
+      <button class="t20-pm-reverter" data-actor="${actor.uuid}" data-pm="${custo.total}" style="flex:1;padding:7px;border-radius:6px;background:#334155;border:1px solid #64748b;color:white;font-weight:bold;cursor:pointer">Reverter gasto</button>
+    </div>
+  </div>`;
+}
+
+async function t20CriarCardPM(message) {
+  if (!cfg("autoPMCard")) return;
+  if (message.flags?.["arsenal-t20"]?.tipo === "pm") return;
+
+  const itemData = message.flags?.tormenta20?.itemData;
+  if (!itemData) return;
+
+  const actor = game.actors.get(message.speaker?.actor);
+  if (!actor) return;
+
+  const nomeItem = itemData.name ?? itemData.nome ?? "Magia";
+  const custo = t20ExtrairCustoPM(itemData, message);
+  if (!custo.total) return;
+
+  await ChatMessage.create({
+    content: t20HtmlCardPM({ actor, nomeItem, custo }),
+    speaker: message.speaker,
+    whisper: ChatMessage.getWhisperRecipients("GM"),
+    flags: { "arsenal-t20": { tipo: "pm", origem: message.id } }
+  });
+}
+
+async function t20AplicarPMBotao(btn) {
+  const actor = await fromUuid(btn.dataset.actor);
+  const pm = parseInt(btn.dataset.pm) || 0;
+  if (!actor || !pm) return;
+  await t20AplicarPMDireto(actor, pm);
+  btn.disabled = true;
+  btn.style.opacity = "0.55";
+  ui.notifications.info(`${actor.name}: ${pm} PM gastos.`);
+}
+
+async function t20ReverterPMBotao(btn) {
+  const actor = await fromUuid(btn.dataset.actor);
+  const pm = parseInt(btn.dataset.pm) || 0;
+  if (!actor || !pm) return;
+  await t20ReverterPMDireto(actor, pm);
+  ui.notifications.info(`${actor.name}: ${pm} PM revertidos.`);
+}
+
+Hooks.on("createChatMessage", async (message, options, userId) => {
+  if (!cfg("autoPMCard")) return;
+  if (userId !== game.userId) return;
+  await t20CriarCardPM(message);
+});
+
 
 // ============================================================
 // CURA ACELERADA
