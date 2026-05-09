@@ -629,13 +629,13 @@ Hooks.once("ready", () => {
         await t20RegistrarSustentada(actor, data.itemData ?? {}, {
           content: data.content ?? "",
           id: data.messageId ?? null,
-        });
+        }, { silent: !!data.silent });
       }
     }
     if (data.tipo === "removerSustentada") {
       const actor = await resolverActorParaAutomacao(data);
       if (actor) {
-        await t20RemoverSustentada(actor, data.registroId, data.nomeItem, data.solicitante);
+        await t20RemoverSustentada(actor, data.registroId, data.nomeItem, data.solicitante, { silent: !!data.silent });
       }
     }
   });
@@ -2895,7 +2895,7 @@ function t20EfeitosSustentados(actor) {
   return [...porRegistro, ...porEfeito];
 }
 
-async function t20RegistrarSustentada(actor, itemData = {}, message = null) {
+async function t20RegistrarSustentada(actor, itemData = {}, message = null, options = {}) {
   if (!actor || !t20ItemEhSustentado(itemData, message)) return;
 
   const nomeFallback = (() => {
@@ -2910,10 +2910,6 @@ async function t20RegistrarSustentada(actor, itemData = {}, message = null) {
   const nome = (itemData?.name ?? itemData?.nome ?? nomeFallback) || "Magia sustentada";
   const img = itemData?.img ?? message?.content?.match(/img[^>]+src="([^"]+)"/)?.[1] ?? "";
 
-  const lista = t20SustentadasActorFlag(actor);
-  const existe = lista.some(r => r.nome === nome);
-  if (existe) return;
-
   const novoRegistro = {
     id: foundry.utils.randomID?.() ?? `${Date.now()}`,
     nome,
@@ -2925,36 +2921,61 @@ async function t20RegistrarSustentada(actor, itemData = {}, message = null) {
     criadoEm: Date.now(),
   };
 
-  lista.push(novoRegistro);
+  // Registro no próprio ator, para o dono poder remover diretamente.
+  const lista = t20SustentadasActorFlag(actor);
+  const existeAtor = lista.some(r => r.nome === nome);
+  if (!existeAtor && (game.user.isGM || actor.isOwner)) {
+    lista.push(novoRegistro);
+    await t20SetSustentadasActorFlag(actor, lista);
+  }
 
-  // Agora o registro fica no próprio ator, para que o jogador dono consiga remover diretamente.
-  await t20SetSustentadasActorFlag(actor, lista);
+  // Espelho no world setting para o GM/automação sempre enxergar, inclusive quando o jogador lançou.
+  if (game.user.isGM) {
+    try {
+      const registros = t20GetSustentadas();
+      const key = t20ActorKey(actor);
+      const legado = Array.isArray(registros[key]) ? registros[key] : [];
+      if (!legado.some(r => r.nome === nome)) {
+        legado.push(novoRegistro);
+        registros[key] = legado;
+        await t20SetSustentadas(registros);
+      }
+    } catch (e) {
+      console.warn("Arsenal T20 | não foi possível espelhar sustentada no world setting", e);
+    }
+  }
 
-  await ChatMessage.create({
-    whisper: ChatMessage.getWhisperRecipients("GM"),
-    content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #c9a227;padding:8px 11px;border-radius:6px;color:#d7dcea">
-      🪄 <b>${nome}</b> registrada como magia sustentada de <b>${actor.name}</b>.
-    </div>`
-  });
+  if (!options.silent && !existeAtor) {
+    await ChatMessage.create({
+      whisper: ChatMessage.getWhisperRecipients("GM"),
+      content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #c9a227;padding:8px 11px;border-radius:6px;color:#d7dcea">
+        🪄 <b>${nome}</b> registrada como magia sustentada de <b>${actor.name}</b>.
+      </div>`
+    });
+  }
 }
 
-async function t20RemoverSustentada(actor, registroId, nomeItem = null, solicitante = null) {
+async function t20RemoverSustentada(actor, registroId, nomeItem = null, solicitante = null, options = {}) {
   if (!actor) return;
 
   const listaActor = t20SustentadasActorFlag(actor);
   const removidaActor = listaActor.find(r => r.id === registroId || r.nome === nomeItem);
   const novaLista = listaActor.filter(r => r.id !== registroId && r.nome !== nomeItem);
 
-  await t20SetSustentadasActorFlag(actor, novaLista);
-
-  // Marca como removida para ocultar registros antigos que ainda estejam no world setting legado.
-  const removidas = t20SustentadasRemovidas(actor);
-  if (!removidas.some(r => r.id === registroId || r.nome === nomeItem)) {
-    removidas.push({ id: registroId, nome: nomeItem ?? removidaActor?.nome, removidoEm: Date.now() });
-    await t20SetSustentadasRemovidas(actor, removidas);
+  if (game.user.isGM || actor.isOwner) {
+    await t20SetSustentadasActorFlag(actor, novaLista);
   }
 
-  // Se o usuário for GM, também limpa o registro legado do mundo.
+  // Marca como removida para ocultar registros antigos/espelhados.
+  if (game.user.isGM || actor.isOwner) {
+    const removidas = t20SustentadasRemovidas(actor);
+    if (!removidas.some(r => r.id === registroId || r.nome === nomeItem)) {
+      removidas.push({ id: registroId, nome: nomeItem ?? removidaActor?.nome, removidoEm: Date.now() });
+      await t20SetSustentadasRemovidas(actor, removidas);
+    }
+  }
+
+  // Limpa o registro legado/espelhado do mundo quando estiver no cliente GM.
   if (game.user.isGM) {
     try {
       const key = t20ActorKey(actor);
@@ -2968,12 +2989,14 @@ async function t20RemoverSustentada(actor, registroId, nomeItem = null, solicita
   }
 
   const nome = nomeItem ?? removidaActor?.nome ?? "magia sustentada";
-  await ChatMessage.create({
-    content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #c9a227;padding:8px 11px;border-radius:6px;color:#d7dcea">
-      🪄 <b>${nome}</b> não está mais sendo sustentada por <b>${actor.name}</b>.
-      ${solicitante ? `<br><span style="font-size:0.85em;color:#9ca3af">Removido por ${solicitante}.</span>` : ""}
-    </div>`
-  });
+  if (!options.silent) {
+    await ChatMessage.create({
+      content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #c9a227;padding:8px 11px;border-radius:6px;color:#d7dcea">
+        🪄 <b>${nome}</b> não está mais sendo sustentada por <b>${actor.name}</b>.
+        ${solicitante ? `<br><span style="font-size:0.85em;color:#9ca3af">Removido por ${solicitante}.</span>` : ""}
+      </div>`
+    });
+  }
 }
 
 class ArsenalSustentadasPanel extends Application {
@@ -3054,7 +3077,22 @@ class ArsenalSustentadasPanel extends Application {
         return ui.notifications.warn("Você não tem permissão para alterar as magias sustentadas deste ator.");
       }
 
+      // Remove diretamente para o jogador dono, sem depender de aprovação do GM.
       await t20RemoverSustentada(actor, registroId, nomeItem, game.user.name);
+
+      // Apenas espelha silenciosamente no GM para a automação de turno não continuar cobrando PM.
+      if (!game.user.isGM) {
+        game.socket.emit("module.arsenal-t20", {
+          tipo: "removerSustentada",
+          actorId: actor?.id,
+          actorUuid: actor?.uuid,
+          registroId,
+          nomeItem,
+          solicitante: game.user.name,
+          silent: true,
+        });
+      }
+
       this.render();
     });
   }
@@ -3106,7 +3144,11 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
 
   if (game.user.isGM || actor.isOwner) {
     await t20RegistrarSustentada(actor, itemData, message);
-  } else {
+  }
+
+  // Mesmo quando o jogador registra localmente, espelha silenciosamente no GM,
+  // pois a automação de início de turno roda no cliente do GM.
+  if (!game.user.isGM) {
     game.socket.emit("module.arsenal-t20", {
       tipo: "registrarSustentada",
       actorId: actor.id,
@@ -3116,6 +3158,7 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
       itemData,
       content: message.content ?? "",
       messageId: message.id,
+      silent: true,
     });
   }
 });
@@ -3137,12 +3180,33 @@ function t20GetChangedValue(changed, path) {
   return foundry.utils.getProperty(changed, path);
 }
 
+const t20RecursosAntesUpdate = new Map();
+
+Hooks.on("preUpdateActor", (actor, changed, options, userId) => {
+  if (!game.user.isGM) return;
+  if (!t20IsPersonagemJogador(actor)) return;
+
+  const pvPath = "system.attributes.pv.value";
+  const pmPath = "system.attributes.pm.value";
+
+  const vaiAlterarPV = t20GetChangedValue(changed, pvPath) !== undefined;
+  const vaiAlterarPM = t20GetChangedValue(changed, pmPath) !== undefined;
+  if (!vaiAlterarPV && !vaiAlterarPM) return;
+
+  t20RecursosAntesUpdate.set(actor.uuid ?? actor.id, {
+    pv: Number(foundry.utils.getProperty(actor, pvPath)),
+    pm: Number(foundry.utils.getProperty(actor, pmPath)),
+  });
+});
+
 Hooks.on("updateActor", async (actor, changed, options, userId) => {
   if (!game.user.isGM) return;
   if (!t20IsPersonagemJogador(actor)) return;
 
   const pvPath = "system.attributes.pv.value";
   const pmPath = "system.attributes.pm.value";
+  const antes = t20RecursosAntesUpdate.get(actor.uuid ?? actor.id) ?? {};
+  t20RecursosAntesUpdate.delete(actor.uuid ?? actor.id);
 
   const pvNovoRaw = t20GetChangedValue(changed, pvPath);
   const pmNovoRaw = t20GetChangedValue(changed, pmPath);
@@ -3150,17 +3214,17 @@ Hooks.on("updateActor", async (actor, changed, options, userId) => {
   const linhas = [];
 
   if (pvNovoRaw !== undefined) {
-    const pvNovo = Number(pvNovoRaw);
-    const pvAntigo = Number(foundry.utils.getProperty(actor, pvPath));
+    const pvNovo = Number(foundry.utils.getProperty(actor, pvPath));
+    const pvAntigo = Number(antes.pv);
     if (Number.isFinite(pvNovo) && Number.isFinite(pvAntigo) && pvNovo !== pvAntigo) {
       const delta = pvNovo - pvAntigo;
-      linhas.push(`❤️ PV: <b>${pvAntigo}</b> → <b>${pvNovo}</b> ${delta > 0 ? `(cura +${delta})` : `(dano ${delta})`}`);
+      linhas.push(`❤️ PV: <b>${pvAntigo}</b> → <b>${pvNovo}</b> ${delta > 0 ? `(cura +${delta})` : `(dano ${Math.abs(delta)})`}`);
     }
   }
 
   if (pmNovoRaw !== undefined) {
-    const pmNovo = Number(pmNovoRaw);
-    const pmAntigo = Number(foundry.utils.getProperty(actor, pmPath));
+    const pmNovo = Number(foundry.utils.getProperty(actor, pmPath));
+    const pmAntigo = Number(antes.pm);
     if (Number.isFinite(pmNovo) && Number.isFinite(pmAntigo) && pmNovo !== pmAntigo) {
       const delta = pmNovo - pmAntigo;
       linhas.push(`🔷 PM: <b>${pmAntigo}</b> → <b>${pmNovo}</b> ${delta > 0 ? `(recuperou +${delta})` : `(gastou ${Math.abs(delta)})`}`);
@@ -3179,7 +3243,6 @@ Hooks.on("updateActor", async (actor, changed, options, userId) => {
     </div>`
   });
 });
-
 
 // ── Card de controle de PM ───────────────────────────────────
 
