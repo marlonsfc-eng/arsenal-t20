@@ -712,33 +712,74 @@ const SALV_MAP = {
 };
 
 function itemTemAreaOuTemplate(itemData = {}, message = null) {
-  const targetType = String(
+  const norm = (v) => String(v ?? "").toLowerCase();
+
+  const targetType = norm(
     itemData?.target?.type ??
     itemData?.system?.target?.type ??
     itemData?.alvo?.type ??
     itemData?.area?.type ??
     ""
-  ).toLowerCase();
+  );
 
+  // Tipos explicitamente geométricos. "ray/raio" NÃO entra aqui porque, no T20,
+  // muitas magias de alvo único/direcionadas usam raio/linha visual sem serem área.
   if (["cone", "circle", "square", "line", "rect", "rectangle", "sphere", "cylinder", "area"].includes(targetType)) {
     return true;
   }
 
-  const texto = [
+  const targetText = [
     itemData?.target?.type,
     itemData?.target?.value,
     itemData?.target?.units,
     itemData?.system?.target?.type,
     itemData?.system?.target?.value,
     itemData?.alvo,
+    itemData?.alvo?.value,
+    itemData?.alvo?.type,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  const textoCompleto = [
+    targetText,
     itemData?.area,
     itemData?.efeito,
     itemData?.effect,
     itemData?.description?.value,
     message?.content,
+  ].filter(Boolean).join(" ").toLowerCase().replace(/<[^>]+>/g, " ");
+
+  // Veto forte para magias de alvo único. Isso corrige casos como Flecha de Luz:
+  // "Alvo: 1 criatura" não deve pedir template.
+  const pareceAlvoUnico =
+    /\balvo\s*:?\s*(?:1|uma|um)\s+(?:criatura|alvo|ser|personagem|objeto)\b/i.test(textoCompleto) ||
+    /\btarget\s*:?\s*(?:1|one)\s+(?:creature|target|object)\b/i.test(textoCompleto);
+
+  // Campos estruturados de efeito/área são mais confiáveis que o HTML inteiro.
+  const textoEstruturadoArea = [
+    itemData?.area,
+    itemData?.efeito,
+    itemData?.effect,
+    itemData?.system?.area,
+    itemData?.system?.efeito,
+    itemData?.system?.effect,
   ].filter(Boolean).join(" ").toLowerCase();
 
-  return /\b(área|area|cone|linha|círculo|circulo|esfera|quadrado|cubo|cilindro|explosão|explosao|emanação|emanacao|template|modelo)\b/i.test(texto);
+  const temAreaEstruturada =
+    /\b(área|area|cone|linha|círculo|circulo|esfera|quadrado|cubo|cilindro|explosão|explosao|emanação|emanacao|template|modelo)\b/i.test(textoEstruturadoArea);
+
+  if (temAreaEstruturada && !pareceAlvoUnico) return true;
+
+  // Fallback pelo card renderizado: só considera área quando o próprio campo "Efeito:"
+  // do card indicar uma geometria/template. Evita que palavras soltas na descrição
+  // façam uma magia de alvo único ser tratada como área.
+  const conteudoLimpo = norm(message?.content).replace(/<[^>]+>/g, " ");
+  const efeitoMatch = conteudoLimpo.match(/\befeito\s*:?\s*([^.;\n]+)/i);
+  const efeitoTexto = efeitoMatch?.[1] ?? "";
+  const efeitoIndicaArea = /\b(área|area|cone|linha|círculo|circulo|esfera|quadrado|cubo|cilindro|explosão|explosao|emanação|emanacao|template|modelo)\b/i.test(efeitoTexto);
+
+  if (efeitoIndicaArea && !pareceAlvoUnico) return true;
+
+  return false;
 }
 
 function numeroOuNull(valor) {
