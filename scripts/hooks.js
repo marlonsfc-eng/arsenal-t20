@@ -504,14 +504,20 @@ async function resolverActorParaAutomacao(data = {}) {
 }
 
 function obterChatMessageDoBotao(btn) {
+  const direto = btn?.dataset?.messageId;
+  if (direto && game.messages.get(direto)) return game.messages.get(direto);
+
   const messageEl =
     btn.closest?.("[data-message-id]") ??
     btn.closest?.("[data-messageid]") ??
+    btn.closest?.("[data-messageId]") ??
+    btn.closest?.(".chat-message") ??
     btn.closest?.(".message");
 
   const id =
     messageEl?.dataset?.messageId ??
     messageEl?.dataset?.messageid ??
+    messageEl?.dataset?.messageID ??
     messageEl?.id?.replace(/^chat-message-/, "");
 
   return id ? game.messages.get(id) : null;
@@ -531,11 +537,14 @@ async function atualizarCardConsolidadoDoBotao(btn, sucesso, danoFinal) {
     btn.setAttribute("disabled", "disabled");
     btn.style.opacity = "0.55";
 
-    const card = btn.closest(".t20-card");
     const msg = obterChatMessageDoBotao(btn);
-    if (!card || !msg) return;
+    if (!msg) {
+      console.warn("Arsenal T20 | não encontrei a mensagem do card para sincronizar.");
+      return;
+    }
 
-    const novoConteudo = card.outerHTML;
+    const card = btn.closest(".t20-card");
+    const novoConteudo = card?.outerHTML ?? msg.content;
 
     if (game.user.isGM) {
       await msg.update({ content: novoConteudo });
@@ -550,7 +559,6 @@ async function atualizarCardConsolidadoDoBotao(btn, sucesso, danoFinal) {
     console.warn("Arsenal T20 | não foi possível atualizar o card consolidado para todos", e);
   }
 }
-
 
 Hooks.once("ready", () => {
   game.socket.on("module.arsenal-t20", async (data) => {
@@ -1595,7 +1603,7 @@ async function rolarSalvamento(btn) {
   // Aplicar condições baseado no resultado
   const condicoesAplicar = sucesso ? condicoesPassar : condicoesFalhar;
   if (cfg("autoCondicoes") && condicoesAplicar.length) {
-    if (game.user.isGM) {
+    if (game.user.isGM || actor.isOwner) {
       await aplicarCondicoes(actor, condicoesAplicar, nomeItem);
     } else {
       game.socket.emit("module.arsenal-t20", {
@@ -1617,11 +1625,13 @@ async function rolarSalvamento(btn) {
 Hooks.on("renderChatMessageHTML", (message, html) => {
   // html is HTMLElement directly in v13+
   html.querySelectorAll(".t20-salvar").forEach(btn => {
+    btn.dataset.messageId = message.id;
     if (btn.dataset.listenerAdded) return;
     btn.dataset.listenerAdded = "1";
     btn.addEventListener("click", () => rolarSalvamento(btn));
   });
   html.querySelectorAll(".t20-custom").forEach(btn => {
+    btn.dataset.messageId = message.id;
     if (btn.dataset.listenerAdded) return;
     btn.dataset.listenerAdded = "1";
     btn.addEventListener("click", () => abrirDialogCustom(btn));
@@ -1940,7 +1950,7 @@ async function rolarSalvamentoCustom({ actor, cd, nomeItem, danoBase, tipoDano,
 
   const condicoesAplicar2 = sucesso ? condicoesPassar : condicoesFalhar;
   if (cfg("autoCondicoes") && condicoesAplicar2.length) {
-    if (game.user.isGM) {
+    if (game.user.isGM || actor.isOwner) {
       await aplicarCondicoes(actor, condicoesAplicar2, nomeItem);
     } else {
       game.socket.emit("module.arsenal-t20", {
