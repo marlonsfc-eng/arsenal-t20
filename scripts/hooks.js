@@ -475,6 +475,83 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   }
 });
 
+
+async function resolverActorParaAutomacao(data = {}) {
+  try {
+    if (data.sceneId && data.tokenId) {
+      const scene = game.scenes.get(data.sceneId);
+      const tokenDoc = scene?.tokens?.get(data.tokenId);
+      if (tokenDoc?.actor) return tokenDoc.actor;
+    }
+
+    if (data.tokenId) {
+      const token = canvas.tokens?.get(data.tokenId);
+      if (token?.actor) return token.actor;
+    }
+
+    if (data.actorUuid) {
+      const doc = await fromUuid(data.actorUuid);
+      if (doc?.actor) return doc.actor;
+      if (doc) return doc;
+    }
+
+    if (data.actorId) return game.actors.get(data.actorId);
+  } catch (e) {
+    console.warn("Arsenal T20 | erro ao resolver ator para automação", e);
+  }
+
+  return null;
+}
+
+function obterChatMessageDoBotao(btn) {
+  const messageEl =
+    btn.closest?.("[data-message-id]") ??
+    btn.closest?.("[data-messageid]") ??
+    btn.closest?.(".message");
+
+  const id =
+    messageEl?.dataset?.messageId ??
+    messageEl?.dataset?.messageid ??
+    messageEl?.id?.replace(/^chat-message-/, "");
+
+  return id ? game.messages.get(id) : null;
+}
+
+async function atualizarCardConsolidadoDoBotao(btn, sucesso, danoFinal) {
+  try {
+    const row = btn.closest(".t20-alvo-row");
+    const inline = row?.querySelector(".t20-resultado-inline");
+
+    if (inline) {
+      inline.innerHTML = `${sucesso ? "✅ Sucesso" : "❌ Falha"}${danoFinal > 0 ? ` · ${danoFinal} dano aplicado` : ""}`;
+      inline.style.color = sucesso ? "#7dd3a7" : "#ff8d8d";
+    }
+
+    btn.disabled = true;
+    btn.setAttribute("disabled", "disabled");
+    btn.style.opacity = "0.55";
+
+    const card = btn.closest(".t20-card");
+    const msg = obterChatMessageDoBotao(btn);
+    if (!card || !msg) return;
+
+    const novoConteudo = card.outerHTML;
+
+    if (game.user.isGM) {
+      await msg.update({ content: novoConteudo });
+    } else {
+      game.socket.emit("module.arsenal-t20", {
+        tipo: "atualizarCardConsolidado",
+        messageId: msg.id,
+        content: novoConteudo,
+      });
+    }
+  } catch (e) {
+    console.warn("Arsenal T20 | não foi possível atualizar o card consolidado para todos", e);
+  }
+}
+
+
 Hooks.once("ready", () => {
   game.socket.on("module.arsenal-t20", async (data) => {
     if (!game.user.isGM) return;
@@ -482,8 +559,14 @@ Hooks.once("ready", () => {
       if (cfg("danoAutoGM")) await criarMensagemGM(data.totalAtaque, data.dadosAlvos, data.danoPorTipo, data.danoTotal);
     }
     if (data.tipo === "aplicarCondicoes") {
-      const actor = game.actors.get(data.actorId);
+      const actor = await resolverActorParaAutomacao(data);
       if (actor) await aplicarCondicoes(actor, data.condicoes, data.nomeItem);
+    }
+    if (data.tipo === "atualizarCardConsolidado") {
+      const msg = game.messages.get(data.messageId);
+      if (msg && typeof data.content === "string") {
+        await msg.update({ content: data.content });
+      }
     }
   });
 });
@@ -1506,19 +1589,8 @@ async function rolarSalvamento(btn) {
     speaker: ChatMessage.getSpeaker({ actor }),
   });
 
-  // Atualiza a linha do alvo no card consolidado, sem revelar PV.
-  try {
-    const row = btn.closest(".t20-alvo-row");
-    const inline = row?.querySelector(".t20-resultado-inline");
-    if (inline) {
-      inline.innerHTML = `${sucesso ? "✅ Sucesso" : "❌ Falha"}${danoFinal > 0 ? ` · ${danoFinal} dano aplicado` : ""}`;
-      inline.style.color = sucesso ? "#7dd3a7" : "#ff8d8d";
-    }
-    btn.disabled = true;
-    btn.style.opacity = "0.55";
-  } catch (e) {
-    console.warn("Arsenal T20 | não foi possível atualizar a linha do card consolidado", e);
-  }
+  // Atualiza o card consolidado para todos os usuários, sem revelar PV.
+  await atualizarCardConsolidadoDoBotao(btn, sucesso, danoFinal);
 
   // Aplicar condições baseado no resultado
   const condicoesAplicar = sucesso ? condicoesPassar : condicoesFalhar;
@@ -1529,6 +1601,9 @@ async function rolarSalvamento(btn) {
       game.socket.emit("module.arsenal-t20", {
         tipo: "aplicarCondicoes",
         actorId: actor.id,
+        actorUuid: actor.uuid,
+        tokenId: tokenAlvo?.id,
+        sceneId: canvas.scene?.id,
         condicoes: condicoesAplicar,
         nomeItem,
       });
@@ -1761,6 +1836,8 @@ async function abrirDialogCustom(btn) {
             evasaoSimples,
             condicoesFalhar,
             condicoesPassar,
+            contextButton: btn,
+            tokenAlvo: tokenAlvo2,
           });
         }
       },
@@ -1772,7 +1849,8 @@ async function abrirDialogCustom(btn) {
 }
 
 async function rolarSalvamentoCustom({ actor, cd, nomeItem, danoBase, tipoDano,
-    salvPericia, salvLabel, bonusExtra, temPoder, evasaoSimples = false, condicoesFalhar = [], condicoesPassar = [] }) {
+    salvPericia, salvLabel, bonusExtra, temPoder, evasaoSimples = false, condicoesFalhar = [], condicoesPassar = [],
+    contextButton = null, tokenAlvo = null }) {
 
   const pericias  = actor.system?.pericias ?? {};
   const _pRaw2    = pericias[salvPericia];
@@ -1855,16 +1933,9 @@ async function rolarSalvamentoCustom({ actor, cd, nomeItem, danoBase, tipoDano,
     speaker: ChatMessage.getSpeaker({ actor }),
   });
 
-  // Atualiza a linha do alvo no card consolidado, sem revelar PV.
-  try {
-    const row = document.querySelector(`.t20-alvo-row[data-token-row="${actor.getActiveTokens()?.[0]?.id ?? ""}"]`);
-    const inline = row?.querySelector(".t20-resultado-inline");
-    if (inline) {
-      inline.innerHTML = `${sucesso ? "✅ Sucesso" : "❌ Falha"}${danoFinal > 0 ? ` · ${danoFinal} dano aplicado` : ""}`;
-      inline.style.color = sucesso ? "#7dd3a7" : "#ff8d8d";
-    }
-  } catch (e) {
-    console.warn("Arsenal T20 | não foi possível atualizar o card consolidado custom", e);
+  // Atualiza o card consolidado para todos os usuários, sem revelar PV.
+  if (contextButton) {
+    await atualizarCardConsolidadoDoBotao(contextButton, sucesso, danoFinal);
   }
 
   const condicoesAplicar2 = sucesso ? condicoesPassar : condicoesFalhar;
@@ -1875,6 +1946,9 @@ async function rolarSalvamentoCustom({ actor, cd, nomeItem, danoBase, tipoDano,
       game.socket.emit("module.arsenal-t20", {
         tipo: "aplicarCondicoes",
         actorId: actor.id,
+        actorUuid: actor.uuid,
+        tokenId: tokenAlvo?.id,
+        sceneId: canvas.scene?.id,
         condicoes: condicoesAplicar2,
         nomeItem,
       });
