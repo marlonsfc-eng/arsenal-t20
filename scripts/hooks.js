@@ -3012,7 +3012,7 @@ async function t20ProcessarEfeitosContinuos(actor) {
   if (!linhas.length) return;
 
   await ChatMessage.create({
-    whisper: ChatMessage.getWhisperRecipients("GM"),
+    whisper: t20WhisperGMAndActorOwners(actor),
     content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #c9a227;padding:8px 11px;border-radius:6px;color:#d7dcea">
       <b>⏱️ Início do turno — ${actor.name}</b><br>${linhas.join("<br>")}
     </div>`
@@ -3090,7 +3090,8 @@ async function t20RegistrarSustentada(actor, itemData = {}, message = null, opti
     return m?.[1]?.trim() ?? "";
   })();
 
-  const nome = (itemData?.name ?? itemData?.nome ?? nomeFallback) || "Magia sustentada";
+  const nomeExtraido = t20ExtrairNomeItemDeMensagem(itemData, message);
+  const nome = (!/^magia$/i.test(String(nomeExtraido ?? "").trim()) ? nomeExtraido : nomeFallback) || "Magia sustentada";
   const img = itemData?.img ?? message?.content?.match(/img[^>]+src="([^"]+)"/)?.[1] ?? "";
 
   const lista = t20GetSustentadasActorFlag(actor);
@@ -3433,6 +3434,39 @@ function t20WhisperGMAndActorOwners(actor) {
   return users.length ? users : ChatMessage.getWhisperRecipients("GM");
 }
 
+
+function t20ExtrairNomeItemDeMensagem(itemData = {}, message = null) {
+  // Em algumas mensagens do sistema T20 o itemData vem genérico como "Magia".
+  const nomeEstruturado = itemData?.name ?? itemData?.nome ?? "";
+  if (nomeEstruturado && !/^magia$/i.test(String(nomeEstruturado).trim())) {
+    return String(nomeEstruturado).trim();
+  }
+
+  const html = message?.content ?? "";
+
+  // 1. Títulos/atributos comuns no card.
+  const title =
+    html.match(/title="([^"]+)"/i)?.[1] ??
+    html.match(/<h[1-4][^>]*>(.*?)<\/h[1-4]>/i)?.[1];
+
+  if (title) {
+    const limpo = t20TextoLimpoLocal(title);
+    if (limpo && !/^magia$/i.test(limpo)) return limpo;
+  }
+
+  // 2. Pelo texto renderizado: geralmente vem "Nome da Magia Arcana/Divina/Universal..."
+  const limpo = t20TextoLimpoLocal(html);
+
+  const antesDoTipo = limpo.match(/([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ'’\- ]{2,70})\s+(?:Universal|Arcana|Divina)\b/i)?.[1]?.trim();
+  if (antesDoTipo && !/^magia$/i.test(antesDoTipo)) return antesDoTipo;
+
+  // 3. Se houver "Controle de PM — ..." em cards já gerados.
+  const controle = limpo.match(/Controle de PM\s*[—-]\s*([^|]+?)(?:\s+por\s+|$)/i)?.[1]?.trim();
+  if (controle && !/^magia$/i.test(controle)) return controle;
+
+  return nomeEstruturado || "Magia";
+}
+
 function t20HtmlCardPM({ actor, nomeItem, custo, sustentavel = false, imgItem = "", pmJaAplicado = false }) {
   const botaoGasto = pmJaAplicado
     ? `<button disabled style="flex:1;padding:7px;border-radius:6px;background:#374151;border:1px solid #64748b;color:#cbd5e1;font-weight:bold;opacity:0.75">PM já gasto</button>`
@@ -3444,7 +3478,7 @@ function t20HtmlCardPM({ actor, nomeItem, custo, sustentavel = false, imgItem = 
           data-nome="${nomeItem}"
           data-img="${imgItem ?? ""}"
           style="flex:1;padding:7px;border-radius:6px;background:#2f7d4f;border:1px solid #4ade80;color:white;font-weight:bold;cursor:pointer">
-          🪄 Ativar sustentação
+          🪄 Sustentar
        </button>`
     : "";
 
@@ -3483,7 +3517,7 @@ async function t20CriarCardPM(message) {
   const actor = game.actors.get(message.speaker?.actor);
   if (!actor) return;
 
-  const nomeItem = itemData.name ?? itemData.nome ?? "Magia";
+  const nomeItem = t20ExtrairNomeItemDeMensagem(itemData, message);
   const imgItem = itemData.img ?? message.content?.match(/img[^>]+src="([^"]+)"/)?.[1] ?? "";
   const custo = t20ExtrairCustoPM(itemData, message);
   if (!custo.total) return;
