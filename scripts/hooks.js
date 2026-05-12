@@ -1218,49 +1218,102 @@ let _salvamentoPendente = null;
 
 // ── Detecta tokens dentro de um MeasuredTemplate ──────────
 function tokensNaArea(template) {
-  const tmplObj = template?.object ?? canvas.templates?.get(template?.id);
+  const doc = template?.document ?? template;
+  const tmplObj = template?.object ?? canvas.templates?.get(doc?.id);
   const tokens = Array.from(canvas.tokens?.placeables ?? []).filter(t => t?.actor);
   const resultado = [];
 
-  if (!tmplObj && !template) return resultado;
+  if (!doc && !tmplObj) return resultado;
+
+  const tipo = String(doc?.t ?? doc?.type ?? doc?.shape ?? "").toLowerCase();
+  const gridSize = canvas.grid?.size ?? canvas.scene?.grid?.size ?? 100;
+  const sceneDistance = Number(canvas.scene?.grid?.distance ?? 1) || 1;
+  const distancia = Number(doc?.distance ?? doc?.d ?? doc?.radius ?? 0);
+  const distanciaPx = distancia > 0 ? (distancia / sceneDistance) * gridSize : 0;
+
+  const origem = {
+    x: Number(doc?.x ?? tmplObj?.x ?? 0),
+    y: Number(doc?.y ?? tmplObj?.y ?? 0),
+  };
+
+  const direcaoRad = Math.toRadians?.(Number(doc?.direction ?? 0)) ?? ((Number(doc?.direction ?? 0) * Math.PI) / 180);
+
+  function centroToken(token) {
+    return token.center ?? {
+      x: token.x + (token.w ?? token.width * gridSize ?? gridSize) / 2,
+      y: token.y + (token.h ?? token.height * gridSize ?? gridSize) / 2,
+    };
+  }
+
+  function pontoManualDentro(p) {
+    const dx = p.x - origem.x;
+    const dy = p.y - origem.y;
+
+    // Círculo é o tipo mais comum para explosões/bolas de fogo.
+    if (["circle", "circulo", "círculo"].includes(tipo) && distanciaPx > 0) {
+      return Math.hypot(dx, dy) <= distanciaPx + 1;
+    }
+
+    // Retângulo/quadrado centrado e rotacionável.
+    // Usamos uma leitura conservadora para evitar pegar tokens fora da área visual.
+    if (["rect", "rectangle", "square", "quadrado"].includes(tipo) && distanciaPx > 0) {
+      const cos = Math.cos(-direcaoRad);
+      const sin = Math.sin(-direcaoRad);
+      const rx = dx * cos - dy * sin;
+      const ry = dx * sin + dy * cos;
+      const half = distanciaPx / 2;
+      return Math.abs(rx) <= half + 1 && Math.abs(ry) <= half + 1;
+    }
+
+    // Cone conservador.
+    if (["cone"].includes(tipo) && distanciaPx > 0) {
+      const dist = Math.hypot(dx, dy);
+      if (dist > distanciaPx + 1) return false;
+      const angulo = Number(doc?.angle ?? 90);
+      const aPonto = Math.atan2(dy, dx);
+      let diff = Math.abs(((aPonto - direcaoRad + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+      return diff <= (angulo * Math.PI / 180) / 2;
+    }
+
+    // Linha/raio conservador.
+    if (["ray", "line", "linha"].includes(tipo) && distanciaPx > 0) {
+      const larguraPx = ((Number(doc?.width ?? 1) || 1) / sceneDistance) * gridSize;
+      const cos = Math.cos(-direcaoRad);
+      const sin = Math.sin(-direcaoRad);
+      const rx = dx * cos - dy * sin;
+      const ry = dx * sin + dy * cos;
+      return rx >= -1 && rx <= distanciaPx + 1 && Math.abs(ry) <= larguraPx / 2 + 1;
+    }
+
+    return null;
+  }
 
   for (const token of tokens) {
     try {
-      const center = token.center ?? {
-        x: token.x + (token.w ?? token.width ?? canvas.grid.size) / 2,
-        y: token.y + (token.h ?? token.height ?? canvas.grid.size) / 2,
-      };
+      const center = centroToken(token);
 
-      let dentro = false;
+      let dentro = pontoManualDentro(center);
 
-      // Foundry v11/v12/v13: converter o centro do token para coordenadas locais do template.
-      if (tmplObj?.shape?.contains) {
-        let local;
-        if (typeof tmplObj.toLocal === "function") {
-          local = tmplObj.toLocal(center);
-        } else {
-          local = {
-            x: center.x - (tmplObj.x ?? template.x ?? 0),
-            y: center.y - (tmplObj.y ?? template.y ?? 0),
-          };
+      // Se conseguimos calcular manualmente, confiamos nesse resultado.
+      // Isso evita falsos positivos de shape.contains/bounds em templates rotacionados.
+      if (dentro === null) {
+        dentro = false;
+
+        if (tmplObj?.shape?.contains) {
+          let local;
+          if (typeof tmplObj.toLocal === "function") {
+            local = tmplObj.toLocal(center);
+          } else if (tmplObj.worldTransform?.applyInverse) {
+            local = tmplObj.worldTransform.applyInverse(center);
+          } else {
+            local = { x: center.x - origem.x, y: center.y - origem.y };
+          }
+          dentro = tmplObj.shape.contains(local.x, local.y);
         }
-        dentro = tmplObj.shape.contains(local.x, local.y);
-      }
 
-      // Fallback para versões/formatos em que o shape não esteja disponível.
-      if (!dentro && typeof tmplObj?.isInside === "function") {
-        dentro = tmplObj.isInside(center);
-      }
-
-      // Fallback para templates circulares quando a API do shape falhar.
-      const t = String(template?.t ?? template?.type ?? template?.shape ?? "").toLowerCase();
-      if (!dentro && ["circle", "circletemplate", "circulo", "círculo"].includes(t)) {
-        const gridSize = canvas.grid?.size ?? game.scenes.active?.grid?.size ?? 100;
-        const dist = Math.hypot(center.x - template.x, center.y - template.y);
-        const templateDistance = Number(template.distance ?? template.d ?? template.radius ?? 0);
-        const sceneDistance = Number(canvas.scene?.grid?.distance ?? game.scenes.active?.grid?.distance ?? 1) || 1;
-        const radiusPx = (templateDistance / sceneDistance) * gridSize;
-        dentro = dist <= radiusPx;
+        if (!dentro && typeof tmplObj?.isInside === "function") {
+          dentro = tmplObj.isInside(center);
+        }
       }
 
       if (dentro) resultado.push(token);
@@ -3063,7 +3116,9 @@ Hooks.on("getSceneControlButtons", (controls) => {
 });
 
 Hooks.on("createChatMessage", async (message, options, userId) => {
-  if (userId !== game.userId) return;
+  // O GM precisa processar mensagens de todos os usuários para registrar sustentadas.
+  // Jogadores só processam as próprias mensagens para evitar duplicidade.
+  if (!game.user.isGM && userId !== game.userId) return;
 
   const itemData = message.flags?.tormenta20?.itemData ?? {};
   const actor = game.actors.get(message.speaker?.actor);
@@ -3098,27 +3153,43 @@ function t20IsPersonagemJogador(actor) {
   return true;
 }
 
+function t20GetRecursoAtual(actor) {
+  const pvPath = "system.attributes.pv.value";
+  const pmPath = "system.attributes.pm.value";
+  return {
+    pv: Number(foundry.utils.getProperty(actor, pvPath)),
+    pm: Number(foundry.utils.getProperty(actor, pmPath)),
+  };
+}
+
 function t20GetChangedValue(changed, path) {
   return foundry.utils.getProperty(changed, path);
 }
 
-const t20RecursosAntesUpdate = new Map();
+// Este cache fica no cliente do GM. O preUpdateActor só dispara no cliente que iniciou
+// a alteração; por isso, quando o jogador altera a ficha, o GM precisa comparar contra
+// uma foto anterior conhecida dos recursos.
+const t20RecursosCacheGM = new Map();
 
-Hooks.on("preUpdateActor", (actor, changed, options, userId) => {
+function t20KeyRecursoActor(actor) {
+  return actor?.uuid ?? actor?.id;
+}
+
+function t20AtualizarCacheRecursos(actor) {
+  if (!actor || !t20IsPersonagemJogador(actor)) return;
+  t20RecursosCacheGM.set(t20KeyRecursoActor(actor), t20GetRecursoAtual(actor));
+}
+
+Hooks.once("ready", () => {
   if (!game.user.isGM) return;
-  if (!t20IsPersonagemJogador(actor)) return;
+  for (const actor of game.actors ?? []) {
+    t20AtualizarCacheRecursos(actor);
+  }
+});
 
-  const pvPath = "system.attributes.pv.value";
-  const pmPath = "system.attributes.pm.value";
-
-  const vaiAlterarPV = t20GetChangedValue(changed, pvPath) !== undefined;
-  const vaiAlterarPM = t20GetChangedValue(changed, pmPath) !== undefined;
-  if (!vaiAlterarPV && !vaiAlterarPM) return;
-
-  t20RecursosAntesUpdate.set(actor.uuid ?? actor.id, {
-    pv: Number(foundry.utils.getProperty(actor, pvPath)),
-    pm: Number(foundry.utils.getProperty(actor, pmPath)),
-  });
+Hooks.on("createActor", (actor) => {
+  if (!game.user.isGM) return;
+  t20AtualizarCacheRecursos(actor);
 });
 
 Hooks.on("updateActor", async (actor, changed, options, userId) => {
@@ -3127,31 +3198,38 @@ Hooks.on("updateActor", async (actor, changed, options, userId) => {
 
   const pvPath = "system.attributes.pv.value";
   const pmPath = "system.attributes.pm.value";
-  const antes = t20RecursosAntesUpdate.get(actor.uuid ?? actor.id) ?? {};
-  t20RecursosAntesUpdate.delete(actor.uuid ?? actor.id);
 
-  const pvNovoRaw = t20GetChangedValue(changed, pvPath);
-  const pmNovoRaw = t20GetChangedValue(changed, pmPath);
+  const pvMudou = t20GetChangedValue(changed, pvPath) !== undefined;
+  const pmMudou = t20GetChangedValue(changed, pmPath) !== undefined;
+
+  if (!pvMudou && !pmMudou) {
+    t20AtualizarCacheRecursos(actor);
+    return;
+  }
+
+  const key = t20KeyRecursoActor(actor);
+  const antes = t20RecursosCacheGM.get(key);
+  const agora = t20GetRecursoAtual(actor);
+
+  // Se o cache ainda não existe, inicializa e não anuncia para evitar falso positivo.
+  if (!antes) {
+    t20RecursosCacheGM.set(key, agora);
+    return;
+  }
 
   const linhas = [];
 
-  if (pvNovoRaw !== undefined) {
-    const pvNovo = Number(foundry.utils.getProperty(actor, pvPath));
-    const pvAntigo = Number(antes.pv);
-    if (Number.isFinite(pvNovo) && Number.isFinite(pvAntigo) && pvNovo !== pvAntigo) {
-      const delta = pvNovo - pvAntigo;
-      linhas.push(`❤️ PV: <b>${pvAntigo}</b> → <b>${pvNovo}</b> ${delta > 0 ? `(cura +${delta})` : `(dano ${Math.abs(delta)})`}`);
-    }
+  if (pvMudou && Number.isFinite(agora.pv) && Number.isFinite(antes.pv) && agora.pv !== antes.pv) {
+    const delta = agora.pv - antes.pv;
+    linhas.push(`❤️ PV: <b>${antes.pv}</b> → <b>${agora.pv}</b> ${delta > 0 ? `(cura +${delta})` : `(dano ${Math.abs(delta)})`}`);
   }
 
-  if (pmNovoRaw !== undefined) {
-    const pmNovo = Number(foundry.utils.getProperty(actor, pmPath));
-    const pmAntigo = Number(antes.pm);
-    if (Number.isFinite(pmNovo) && Number.isFinite(pmAntigo) && pmNovo !== pmAntigo) {
-      const delta = pmNovo - pmAntigo;
-      linhas.push(`🔷 PM: <b>${pmAntigo}</b> → <b>${pmNovo}</b> ${delta > 0 ? `(recuperou +${delta})` : `(gastou ${Math.abs(delta)})`}`);
-    }
+  if (pmMudou && Number.isFinite(agora.pm) && Number.isFinite(antes.pm) && agora.pm !== antes.pm) {
+    const delta = agora.pm - antes.pm;
+    linhas.push(`🔷 PM: <b>${antes.pm}</b> → <b>${agora.pm}</b> ${delta > 0 ? `(recuperou +${delta})` : `(gastou ${Math.abs(delta)})`}`);
   }
+
+  t20RecursosCacheGM.set(key, agora);
 
   if (!linhas.length) return;
 
