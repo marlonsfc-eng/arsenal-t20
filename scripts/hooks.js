@@ -538,7 +538,15 @@ async function resolverActorParaAutomacao(data = {}) {
       if (doc) return doc;
     }
 
-    if (data.actorId) return game.actors.get(data.actorId);
+    if (data.actorId) {
+      const byId = game.actors.get(data.actorId);
+      if (byId) return byId;
+    }
+
+    if (data.actorName) {
+      const byName = game.actors.find(a => a.name === data.actorName);
+      if (byName) return byName;
+    }
   } catch (e) {
     console.warn("Arsenal T20 | erro ao resolver ator para automação", e);
   }
@@ -2560,6 +2568,67 @@ function t20ActorKey(actor) {
   return actor?.uuid ?? actor?.id ?? actor?.name ?? "desconhecido";
 }
 
+function t20ActorKeys(actor) {
+  const keys = new Set();
+  if (!actor) return ["desconhecido"];
+  if (actor.uuid) keys.add(actor.uuid);
+  if (actor.id) keys.add(actor.id);
+  if (actor.name) keys.add(actor.name);
+
+  // Para tokens vinculados/desvinculados, o ator do combatente pode ter chave diferente.
+  try {
+    for (const token of actor.getActiveTokens?.() ?? []) {
+      if (token?.document?.uuid) keys.add(token.document.uuid);
+      if (token?.id) keys.add(token.id);
+    }
+  } catch {}
+
+  return [...keys].filter(Boolean);
+}
+
+function t20GetSustentadasPorActor(actor) {
+  const registros = t20GetSustentadas();
+  const vistos = new Set();
+  const lista = [];
+
+  for (const key of t20ActorKeys(actor)) {
+    for (const item of (Array.isArray(registros[key]) ? registros[key] : [])) {
+      const chave = `${item.id ?? ""}|${item.nome ?? ""}`;
+      if (vistos.has(chave)) continue;
+      vistos.add(chave);
+      lista.push(item);
+    }
+  }
+
+  return lista;
+}
+
+async function t20AddSustentadaParaActor(actor, registro) {
+  const registros = t20GetSustentadas();
+
+  for (const key of t20ActorKeys(actor)) {
+    const lista = Array.isArray(registros[key]) ? registros[key] : [];
+    if (!lista.some(r => String(r.nome ?? "").toLowerCase() === String(registro.nome ?? "").toLowerCase())) {
+      lista.push(registro);
+      registros[key] = lista;
+    }
+  }
+
+  await t20SetSustentadas(registros);
+}
+
+async function t20RemoveSustentadaParaActor(actor, registroId, nomeItem = null) {
+  const registros = t20GetSustentadas();
+
+  for (const key of t20ActorKeys(actor)) {
+    const lista = Array.isArray(registros[key]) ? registros[key] : [];
+    registros[key] = lista.filter(r => r.id !== registroId && r.nome !== nomeItem);
+  }
+
+  await t20SetSustentadas(registros);
+}
+
+
 function t20SustentadasRemovidas(actor) {
   try {
     const lista = actor?.getFlag?.("arsenal-t20", "sustentadasRemovidas");
@@ -2930,9 +2999,7 @@ function t20ItemEhSustentado(itemData = {}, message = null) {
 }
 
 function t20EfeitosSustentados(actor) {
-  const registros = t20GetSustentadas();
-  const key = t20ActorKey(actor);
-  const porRegistro = (Array.isArray(registros[key]) ? registros[key] : [])
+  const porRegistro = t20GetSustentadasPorActor(actor)
     .filter(r => !t20RegistroSustentadoRemovido(actor, r));
 
   const porEfeito = Array.from(actor?.effects ?? []).filter(e => {
@@ -2967,24 +3034,23 @@ async function t20RegistrarSustentada(actor, itemData = {}, message = null, opti
   })();
   const nome = (itemData?.name ?? itemData?.nome ?? nomeFallback) || "Magia sustentada";
   const img = itemData?.img ?? message?.content?.match(/img[^>]+src="([^"]+)"/)?.[1] ?? "";
-  const key = t20ActorKey(actor);
-  const registros = t20GetSustentadas();
-  const lista = Array.isArray(registros[key]) ? registros[key] : [];
+  const lista = t20GetSustentadasPorActor(actor);
+  const existe = lista.some(r => String(r.nome ?? "").toLowerCase() === String(nome).toLowerCase());
 
-  const existe = lista.some(r => r.nome === nome);
   if (!existe) {
-    lista.push({
+    const registro = {
       id: foundry.utils.randomID?.() ?? `${Date.now()}`,
       nome,
       img,
       actorUuid: actor.uuid,
       actorId: actor.id,
+      actorName: actor.name,
       custoPM: 1,
       origem: "registro",
       criadoEm: Date.now(),
-    });
-    registros[key] = lista;
-    await t20SetSustentadas(registros);
+    };
+
+    await t20AddSustentadaParaActor(actor, registro);
 
     await ChatMessage.create({
       whisper: ChatMessage.getWhisperRecipients("GM"),
@@ -2993,6 +3059,8 @@ async function t20RegistrarSustentada(actor, itemData = {}, message = null, opti
         ${options.solicitante ? `<br><span style="font-size:0.85em;color:#9ca3af">Ativada por ${options.solicitante}.</span>` : ""}
       </div>`
     });
+  } else if (options.solicitante) {
+    ui.notifications?.info?.(`${nome} já estava registrada como sustentada para ${actor.name}.`);
   }
 }
 
@@ -3012,11 +3080,7 @@ async function t20RemoverSustentada(actor, registroId, nomeItem = null, solicita
   // Se o GM estiver removendo, também limpa o registro legado do mundo.
   if (game.user.isGM) {
     try {
-      const key = t20ActorKey(actor);
-      const registros = t20GetSustentadas();
-      const lista = Array.isArray(registros[key]) ? registros[key] : [];
-      registros[key] = lista.filter(r => r.id !== registroId && r.nome !== nomeItem);
-      await t20SetSustentadas(registros);
+      await t20RemoveSustentadaParaActor(actor, registroId, nomeItem);
     } catch (e) {
       console.warn("Arsenal T20 | não foi possível limpar registro legado de sustentada", e);
     }
@@ -3442,12 +3506,16 @@ async function t20AtivarSustentacaoBotao(btn) {
     await t20RegistrarSustentada(actor, itemData, fakeMessage, {
       force: true,
       solicitante: game.user.name,
+      actorName: actor.name,
     });
   } else {
+    const activeToken = actor.getActiveTokens?.()[0];
     game.socket.emit("module.arsenal-t20", {
       tipo: "registrarSustentada",
       actorId: actor.id,
       actorUuid: actor.uuid,
+      tokenId: activeToken?.id ?? canvas.tokens?.controlled?.[0]?.id,
+      sceneId: canvas.scene?.id,
       itemData,
       content: fakeMessage.content,
       messageId: fakeMessage.id,
