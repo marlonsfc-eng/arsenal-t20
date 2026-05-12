@@ -673,6 +673,94 @@ async function criarMensagemPublica(totalAtaque, dadosAlvos) {
   await ChatMessage.create({ content: html });
 }
 
+
+function t20WhisperJogadoresDono(actor) {
+  try {
+    return game.users?.filter(u => !u.isGM && actor?.testUserPermission?.(u, "OWNER")) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function t20SplitReducaoDano(dano, danoPerda, reducao) {
+  let normal = Math.max(0, Number(dano) || 0);
+  let perda  = Math.max(0, Number(danoPerda) || 0);
+  let red    = Math.max(0, Number(reducao) || 0);
+
+  // Defesa ativa reduz primeiro o dano normal. Se sobrar redução, reduz perda de PV.
+  // Isso mantém compatibilidade com casos raros em que a rolagem tenha dano + perda.
+  const redNormal = Math.min(normal, red);
+  normal -= redNormal;
+  red -= redNormal;
+
+  const redPerda = Math.min(perda, red);
+  perda -= redPerda;
+
+  return { dano: normal, danoPerda: perda, reducaoAplicada: redNormal + redPerda };
+}
+
+function t20HtmlBotoesDano({ tokenId, danoFinalTotal, danoPerda }) {
+  const total = Math.max(0, (Number(danoFinalTotal) || 0) + (Number(danoPerda) || 0));
+  const metadeDano = Math.floor((Number(danoFinalTotal) || 0) / 2);
+  const metadePerda = Math.floor((Number(danoPerda) || 0) / 2);
+  const metadeTotal = Math.floor(total / 2);
+
+  return `
+    <div class="t20-dano-actions" style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+      <button class="t20-aplicar"
+        data-token="${tokenId}"
+        data-dano="${Number(danoFinalTotal) || 0}"
+        data-dano-perda="${Number(danoPerda) || 0}"
+        style="flex:1;min-width:120px;padding:7px 8px;border-radius:6px;cursor:pointer;
+          background:linear-gradient(180deg,#8a2f38,#6b2028);border:1px solid #b94a58;color:#fff;font-size:0.85em;font-weight:bold;
+          box-shadow:0 2px 6px rgba(0,0,0,0.25)">
+        💔 Aplicar ${total} de Dano
+      </button>
+      <button class="t20-metade"
+        data-token="${tokenId}"
+        data-dano="${metadeDano}"
+        data-dano-perda="${metadePerda}"
+        style="flex:1;min-width:105px;padding:7px 8px;border-radius:6px;cursor:pointer;
+          background:linear-gradient(180deg,#334765,#25344d);border:1px solid #47638c;color:#eef3ff;font-size:0.85em;font-weight:bold;
+          box-shadow:0 2px 6px rgba(0,0,0,0.25)">
+        🛡️ Metade (${metadeTotal})
+      </button>
+      <button class="t20-defesa-ativa"
+        data-token="${tokenId}"
+        style="flex:1;min-width:120px;padding:7px 8px;border-radius:6px;cursor:pointer;
+          background:linear-gradient(180deg,#2f7d4f,#245f3d);border:1px solid #4ade80;color:#fff;font-size:0.85em;font-weight:bold;
+          box-shadow:0 2px 6px rgba(0,0,0,0.25)">
+        🛡️ Defesa Ativa
+      </button>
+    </div>
+    <div class="t20-defesa-ativa-nota" style="font-size:0.8em;color:#9ca3af;margin-top:5px"></div>`;
+}
+
+function t20HtmlCardDanoJogador({ nomeAlvo, tokenId, danoFinalTotal, danoPerda, linhasDano }) {
+  const total = Math.max(0, (Number(danoFinalTotal) || 0) + (Number(danoPerda) || 0));
+
+  return `
+    <div class="t20-card t20-card-dano-jogador" style="background:linear-gradient(180deg,#171b26 0%,#0f1420 100%);
+      border:1px solid #2b3347;border-top:3px solid #b94a58;
+      box-shadow:0 8px 18px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.04);
+      border-radius:8px;padding:12px;color:#e8d5b7;font-family:'Palatino Linotype',serif;">
+      <div style="border-bottom:1px solid rgba(185,74,88,0.28);padding-bottom:8px;margin-bottom:10px">
+        <div style="color:#f07f7f;font-weight:bold">💥 Ataque recebido — ${nomeAlvo}</div>
+        <div style="font-size:0.82em;color:#b8becf">Dano final calculado: <b>${total}</b></div>
+      </div>
+
+      <div style="background:rgba(0,0,0,0.20);padding:7px;border-radius:6px;margin-bottom:6px">
+        ${linhasDano.join("")}
+        <div style="border-top:1px solid rgba(255,255,255,0.08);margin-top:5px;padding-top:5px;color:#f2e6c9;font-weight:bold">
+          Total final: ${total}
+        </div>
+      </div>
+
+      ${t20HtmlBotoesDano({ tokenId, danoFinalTotal, danoPerda })}
+    </div>`;
+}
+
+
 async function criarMensagemGM(totalAtaque, dadosAlvos, danoPorTipo, danoTotal) {
   const temDano = danoPorTipo && Object.keys(danoPorTipo).length > 0;
 
@@ -682,6 +770,8 @@ async function criarMensagemGM(totalAtaque, dadosAlvos, danoPorTipo, danoTotal) 
         <span style="color:#c9a227;font-weight:bold">🎲 Painel do GM — Ataque: ${totalAtaque}</span>
         ${temDano ? `<span style="float:right;color:#e74c3c;font-weight:bold">Dano base: ${danoTotal}</span>` : ""}
       </div>`;
+
+  const cardsJogadores = [];
 
   for (const a of dadosAlvos) {
     const cor = a.erroNatural ? "#555" : a.possivelCritico && a.acertou ? "#ff6b35" : a.acertou ? "#27ae60" : "#e74c3c";
@@ -743,6 +833,24 @@ async function criarMensagemGM(totalAtaque, dadosAlvos, danoPorTipo, danoTotal) 
       .map(([k, v]) => v?.imunidade ? `🛡️${k}` : v?.vulnerabilidade ? `⚡${k}` : `RD${v.value}[${k}]`)
       .join(" · ");
 
+    if (temDano && a.acertou && (danoFinalTotal + danoPerda) > 0) {
+      const tokenAlvo = canvas.tokens?.get(a.tokenId);
+      const actorAlvo = tokenAlvo?.actor;
+      const donos = t20WhisperJogadoresDono(actorAlvo);
+      if (donos.length) {
+        cardsJogadores.push({
+          whisper: donos,
+          content: t20HtmlCardDanoJogador({
+            nomeAlvo: tokenAlvo?.name ?? a.nome,
+            tokenId: a.tokenId,
+            danoFinalTotal,
+            danoPerda,
+            linhasDano,
+          }),
+        });
+      }
+    }
+
     html += `
       <div style="border-left:4px solid ${cor};padding:8px 10px;margin-bottom:6px;
         border-radius:0 4px 4px 0;background:rgba(255,255,255,0.03)">
@@ -764,26 +872,7 @@ async function criarMensagemGM(totalAtaque, dadosAlvos, danoPorTipo, danoTotal) 
             ${danoPerda > 0 ? `<span style="font-size:0.85em;color:#c0392b"> (${danoFinalTotal} dano + ${danoPerda} perda de PV)</span>` : ""}
           </div>
         </div>
-        <div style="display:flex;gap:6px;margin-top:8px">
-          <button class="t20-aplicar"
-            data-token="${a.tokenId}"
-            data-dano="${danoFinalTotal}"
-            data-dano-perda="${danoPerda}"
-            style="flex:1;padding:7px 8px;border-radius:6px;cursor:pointer;
-              background:linear-gradient(180deg,#8a2f38,#6b2028);border:1px solid #b94a58;color:#fff;font-size:0.85em;font-weight:bold;
-              box-shadow:0 2px 6px rgba(0,0,0,0.25)">
-            💔 Aplicar ${danoFinalTotal + danoPerda} de Dano
-          </button>
-          <button class="t20-metade"
-            data-token="${a.tokenId}"
-            data-dano="${Math.floor(danoFinalTotal / 2)}"
-            data-dano-perda="${Math.floor(danoPerda / 2)}"
-            style="flex:1;padding:7px 8px;border-radius:6px;cursor:pointer;
-              background:linear-gradient(180deg,#334765,#25344d);border:1px solid #47638c;color:#eef3ff;font-size:0.85em;font-weight:bold;
-              box-shadow:0 2px 6px rgba(0,0,0,0.25)">
-            🛡️ Metade (${Math.floor((danoFinalTotal + danoPerda) / 2)})
-          </button>
-        </div>` : a.acertou ? `
+        ${t20HtmlBotoesDano({ tokenId: a.tokenId, danoFinalTotal, danoPerda })}` : a.acertou ? `
         <div style="font-size:0.8em;color:#e67e22;margin-top:6px">
           ⚠️ Nenhum roll de dano encontrado.
         </div>` : ""}
@@ -800,11 +889,93 @@ async function criarMensagemGM(totalAtaque, dadosAlvos, danoPorTipo, danoTotal) 
   Hooks.once("renderChatMessageHTML", (msg, html) => {
     if (msg.id !== novaMsg.id) return;
     // html is now HTMLElement directly in v13+
-    html.querySelectorAll(".t20-aplicar, .t20-metade").forEach(btn =>
-      btn.addEventListener("click", () => aplicarDano(btn))
-    );
-  })
+    html.querySelectorAll(".t20-aplicar, .t20-metade, .t20-defesa-ativa").forEach(btn => {
+      if (btn.dataset.listenerAdded) return;
+      btn.dataset.listenerAdded = "1";
+      if (btn.classList.contains("t20-defesa-ativa")) btn.addEventListener("click", () => defesaAtivaDano(btn));
+      else btn.addEventListener("click", () => aplicarDano(btn));
+    });
+  });
+
+  for (const card of cardsJogadores) {
+    await ChatMessage.create({
+      content: card.content,
+      whisper: card.whisper,
+    });
+  }
 }
+
+
+async function defesaAtivaDano(btn) {
+  const grupo = btn.closest(".t20-dano-actions");
+  if (!grupo) return;
+
+  const aplicar = grupo.querySelector(".t20-aplicar");
+  const metade  = grupo.querySelector(".t20-metade");
+  if (!aplicar) return ui.notifications.warn("Botão de aplicar dano não encontrado.");
+
+  const danoAtual = parseInt(aplicar.dataset.dano) || 0;
+  const perdaAtual = parseInt(aplicar.dataset.danoPerda) || 0;
+  const totalAtual = danoAtual + perdaAtual;
+
+  if (totalAtual <= 0) return ui.notifications.info("Não há dano para reduzir.");
+
+  const reducao = await new Promise(resolve => {
+    new Dialog({
+      title: "Defesa Ativa",
+      content: `
+        <form>
+          <p>Informe quanto dano será reduzido por defesa ativa/reação.</p>
+          <div class="form-group">
+            <label>Redução de dano</label>
+            <input type="number" name="reducao" value="0" min="0" step="1" autofocus>
+          </div>
+          <p style="font-size:0.85em;color:#666">Dano atual: <b>${totalAtual}</b></p>
+        </form>`,
+      buttons: {
+        ok: {
+          label: "Confirmar",
+          callback: html => {
+            const val = Number(html.find?.('[name="reducao"]').val?.() ?? html.querySelector?.('[name="reducao"]')?.value ?? 0);
+            resolve(Math.max(0, Math.floor(val || 0)));
+          }
+        },
+        cancel: {
+          label: "Cancelar",
+          callback: () => resolve(null)
+        }
+      },
+      default: "ok",
+      close: () => resolve(null),
+    }).render(true);
+  });
+
+  if (reducao === null) return;
+
+  const reduzido = t20SplitReducaoDano(danoAtual, perdaAtual, reducao);
+  const novoTotal = reduzido.dano + reduzido.danoPerda;
+  const metadeDano = Math.floor(reduzido.dano / 2);
+  const metadePerda = Math.floor(reduzido.danoPerda / 2);
+  const metadeTotal = Math.floor(novoTotal / 2);
+
+  aplicar.dataset.dano = String(reduzido.dano);
+  aplicar.dataset.danoPerda = String(reduzido.danoPerda);
+  aplicar.innerHTML = `💔 Aplicar ${novoTotal} de Dano`;
+
+  if (metade) {
+    metade.dataset.dano = String(metadeDano);
+    metade.dataset.danoPerda = String(metadePerda);
+    metade.innerHTML = `🛡️ Metade (${metadeTotal})`;
+  }
+
+  const nota = grupo.parentElement?.querySelector(".t20-defesa-ativa-nota");
+  if (nota) {
+    nota.innerHTML = `🛡️ Defesa ativa: redução de <b>${reduzido.reducaoAplicada}</b>. Dano ajustado: <b>${totalAtual}</b> → <b>${novoTotal}</b>.`;
+  }
+
+  ui.notifications.info(`Defesa ativa aplicada: dano ${totalAtual} → ${novoTotal}.`);
+}
+
 
 async function aplicarDano(btn) {
   const tokenId   = btn.dataset.token;
@@ -856,7 +1027,8 @@ async function aplicarDano(btn) {
     </div>`
   });
 
-  btn.closest("div").querySelectorAll("button")
+  const grupo = btn.closest(".t20-dano-actions") ?? btn.closest("div");
+  grupo?.querySelectorAll("button")
     .forEach(b => { b.disabled = true; b.style.opacity = "0.5"; });
 }
 
@@ -2942,6 +3114,20 @@ Hooks.on("renderChatMessageHTML", (message, html) => {
       btn.style.opacity = "0.55";
       btn.textContent = "Encerrada";
     });
+  });
+
+  html.querySelectorAll(".t20-aplicar, .t20-metade").forEach(btn => {
+    btn.dataset.messageId = message.id;
+    if (btn.dataset.listenerAdded) return;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", () => aplicarDano(btn));
+  });
+
+  html.querySelectorAll(".t20-defesa-ativa").forEach(btn => {
+    btn.dataset.messageId = message.id;
+    if (btn.dataset.listenerAdded) return;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", () => defesaAtivaDano(btn));
   });
 });
 
