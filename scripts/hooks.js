@@ -629,6 +629,9 @@ Hooks.once("ready", () => {
         await t20RegistrarSustentada(actor, data.itemData ?? {}, {
           content: data.content ?? "",
           id: data.messageId ?? null,
+        }, {
+          force: !!data.force,
+          solicitante: data.solicitante ?? null,
         });
       }
     }
@@ -2801,6 +2804,27 @@ Hooks.on("renderChatMessageHTML", (message, html) => {
     btn.dataset.listenerAdded = "1";
     btn.addEventListener("click", () => t20ReverterPMBotao(btn));
   });
+
+  html.querySelectorAll(".t20-pm-sustentar").forEach(btn => {
+    btn.dataset.messageId = message.id;
+    if (btn.dataset.listenerAdded) return;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", () => t20AtivarSustentacaoBotao(btn));
+  });
+
+  html.querySelectorAll(".t20-turno-encerrar-sustentada").forEach(btn => {
+    btn.dataset.messageId = message.id;
+    if (btn.dataset.listenerAdded) return;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", async () => {
+      const actor = await fromUuid(btn.dataset.actor);
+      if (!actor) return ui.notifications.warn("Ator não encontrado.");
+      await t20RemoverSustentada(actor, btn.dataset.registro, btn.dataset.nome, game.user.name);
+      btn.disabled = true;
+      btn.style.opacity = "0.55";
+      btn.textContent = "Encerrada";
+    });
+  });
 });
 
 // ── Efeitos contínuos no avanço de turno ─────────────────────
@@ -2851,10 +2875,19 @@ async function t20ProcessarEfeitosContinuos(actor) {
         ? `<b>${nomesSustentadas[0]}</b> e <b>${nomesSustentadas[1]}</b>`
         : `<b>${nomesSustentadas.slice(0, -1).join("</b>, <b>")}</b> e <b>${nomesSustentadas.at(-1)}</b>`;
 
+    const botoesEncerrar = sustentadas.map(e => `
+      <button class="t20-turno-encerrar-sustentada"
+        data-actor="${actor.uuid}"
+        data-registro="${e.id ?? ""}"
+        data-nome="${e.nome ?? e.name ?? e.label ?? "efeito sustentado"}"
+        style="margin:4px 4px 0 0;padding:4px 8px;border-radius:5px;background:#4b5563;border:1px solid #9ca3af;color:#fff;cursor:pointer;font-size:0.82em">
+        Encerrar ${e.nome ?? e.name ?? e.label ?? "sustentação"}
+      </button>`).join("");
+
     if (resultadoPM) {
-      linhas.push(`🪄 Sustentação: gastou <b>${custoSustentadas} PM</b> para manter ${nomesTexto} sustentado(s).`);
+      linhas.push(`🪄 Sustentação: gastou <b>${custoSustentadas} PM</b> para manter ${nomesTexto} sustentado(s).<br>${botoesEncerrar}`);
     } else {
-      linhas.push(`🪄 Sustentação: ${nomesTexto} está/estão sustentado(s), mas o Arsenal não encontrou o campo de PM para aplicar o custo.`);
+      linhas.push(`🪄 Sustentação: ${nomesTexto} está/estão sustentado(s), mas o Arsenal não encontrou o campo de PM para aplicar o custo.<br>${botoesEncerrar}`);
     }
   }
 
@@ -2919,9 +2952,10 @@ function t20EfeitosSustentados(actor) {
   return [...porRegistro, ...porEfeito];
 }
 
-async function t20RegistrarSustentada(actor, itemData = {}, message = null) {
+async function t20RegistrarSustentada(actor, itemData = {}, message = null, options = {}) {
   if (!game.user.isGM) return;
-  if (!actor || !t20ItemEhSustentado(itemData, message)) return;
+  if (!actor) return;
+  if (!options.force && !t20ItemEhSustentado(itemData, message)) return;
 
   const nomeFallback = (() => {
     const html = message?.content ?? "";
@@ -2956,6 +2990,7 @@ async function t20RegistrarSustentada(actor, itemData = {}, message = null) {
       whisper: ChatMessage.getWhisperRecipients("GM"),
       content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #c9a227;padding:8px 11px;border-radius:6px;color:#d7dcea">
         🪄 <b>${nome}</b> registrada como magia sustentada de <b>${actor.name}</b>.
+        ${options.solicitante ? `<br><span style="font-size:0.85em;color:#9ca3af">Ativada por ${options.solicitante}.</span>` : ""}
       </div>`
     });
   }
@@ -3115,31 +3150,8 @@ Hooks.on("getSceneControlButtons", (controls) => {
   }
 });
 
-Hooks.on("createChatMessage", async (message, options, userId) => {
-  // O GM precisa processar mensagens de todos os usuários para registrar sustentadas.
-  // Jogadores só processam as próprias mensagens para evitar duplicidade.
-  if (!game.user.isGM && userId !== game.userId) return;
-
-  const itemData = message.flags?.tormenta20?.itemData ?? {};
-  const actor = game.actors.get(message.speaker?.actor);
-  if (!actor) return;
-  if (!t20ItemEhSustentado(itemData, message)) return;
-
-  if (game.user.isGM) {
-    await t20RegistrarSustentada(actor, itemData, message);
-  } else {
-    game.socket.emit("module.arsenal-t20", {
-      tipo: "registrarSustentada",
-      actorId: actor.id,
-      actorUuid: actor.uuid,
-      tokenId: canvas.tokens?.controlled?.[0]?.id,
-      sceneId: canvas.scene?.id,
-      itemData,
-      content: message.content ?? "",
-      messageId: message.id,
-    });
-  }
-});
+// Registro automático de sustentadas desativado.
+// A sustentação agora é ativada manualmente pelo botão no card de PM da magia.
 
 
 
@@ -3300,7 +3312,32 @@ function t20ExtrairCustoPM(itemData = {}, message = null) {
   };
 }
 
-function t20HtmlCardPM({ actor, nomeItem, custo }) {
+
+function t20WhisperGMAndActorOwners(actor) {
+  const users = game.users?.filter(u => {
+    if (u.isGM) return true;
+    try { return actor?.testUserPermission?.(u, "OWNER"); }
+    catch { return false; }
+  }) ?? [];
+
+  return users.length ? users : ChatMessage.getWhisperRecipients("GM");
+}
+
+function t20HtmlCardPM({ actor, nomeItem, custo, sustentavel = false, imgItem = "", pmJaAplicado = false }) {
+  const botaoGasto = pmJaAplicado
+    ? `<button disabled style="flex:1;padding:7px;border-radius:6px;background:#374151;border:1px solid #64748b;color:#cbd5e1;font-weight:bold;opacity:0.75">PM já gasto</button>`
+    : `<button class="t20-pm-aplicar" data-actor="${actor.uuid}" data-pm="${custo.total}" style="flex:1;padding:7px;border-radius:6px;background:#5b45a0;border:1px solid #7c65c7;color:white;font-weight:bold;cursor:pointer">Gastar PM</button>`;
+
+  const botaoSustentar = sustentavel
+    ? `<button class="t20-pm-sustentar"
+          data-actor="${actor.uuid}"
+          data-nome="${nomeItem}"
+          data-img="${imgItem ?? ""}"
+          style="flex:1;padding:7px;border-radius:6px;background:#2f7d4f;border:1px solid #4ade80;color:white;font-weight:bold;cursor:pointer">
+          🪄 Ativar sustentação
+       </button>`
+    : "";
+
   return `<div class="t20-pm-card" style="background:linear-gradient(180deg,#1f1a2e,#15111f);border:1px solid #51416f;border-top:3px solid #a78bfa;border-radius:8px;padding:12px;color:#e9ddff;font-family:serif">
     <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;border-bottom:1px solid rgba(167,139,250,0.25);padding-bottom:8px;margin-bottom:8px">
       <div>
@@ -3315,10 +3352,12 @@ function t20HtmlCardPM({ actor, nomeItem, custo }) {
     <div style="font-size:0.88em;margin-bottom:10px;color:#ddd6fe">
       ${custo.extra ? `Custo base estimado: <b>${custo.base}</b> PM<br>Aprimoramentos detectados: <b>+${custo.extra}</b> PM<br>` : `Custo detectado: <b>${custo.total}</b> PM<br>`}
       Custo total: <b>${custo.total}</b> PM
+      ${sustentavel ? `<br><span style="color:#86efac">Duração sustentada detectada. O jogador pode ativar a sustentação manualmente.</span>` : ""}
     </div>
-    <div style="display:flex;gap:8px">
-      <button class="t20-pm-aplicar" data-actor="${actor.uuid}" data-pm="${custo.total}" style="flex:1;padding:7px;border-radius:6px;background:#5b45a0;border:1px solid #7c65c7;color:white;font-weight:bold;cursor:pointer">Gastar PM</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${botaoGasto}
       <button class="t20-pm-reverter" data-actor="${actor.uuid}" data-pm="${custo.total}" style="flex:1;padding:7px;border-radius:6px;background:#334155;border:1px solid #64748b;color:white;font-weight:bold;cursor:pointer">Reverter gasto</button>
+      ${botaoSustentar}
     </div>
   </div>`;
 }
@@ -3335,17 +3374,19 @@ async function t20CriarCardPM(message) {
   if (!actor) return;
 
   const nomeItem = itemData.name ?? itemData.nome ?? "Magia";
+  const imgItem = itemData.img ?? message.content?.match(/img[^>]+src="([^"]+)"/)?.[1] ?? "";
   const custo = t20ExtrairCustoPM(itemData, message);
   if (!custo.total) return;
+
+  const sustentavel = t20ItemEhSustentado(itemData, message);
+  const whisper = t20WhisperGMAndActorOwners(actor);
 
   if (modo === "auto") {
     await t20AplicarPMDireto(actor, custo.total);
     await ChatMessage.create({
-      whisper: ChatMessage.getWhisperRecipients("GM"),
-      content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #a78bfa;padding:8px 11px;border-radius:6px;color:#d7dcea">
-        🔷 <b>${actor.name}</b> gastou <b>${custo.total} PM</b> automaticamente por <b>${nomeItem}</b>.
-        <br><span style="font-size:0.85em;color:#9ca3af">${custo.extra ? `Base estimada: ${custo.base} · aprimoramentos: +${custo.extra}` : `Custo detectado: ${custo.total}`}</span>
-      </div>`,
+      content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: true }),
+      speaker: message.speaker,
+      whisper,
       flags: { "arsenal-t20": { tipo: "pm", origem: message.id, auto: true } }
     });
     return;
@@ -3353,9 +3394,9 @@ async function t20CriarCardPM(message) {
 
   // manual
   await ChatMessage.create({
-    content: t20HtmlCardPM({ actor, nomeItem, custo }),
+    content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: false }),
     speaker: message.speaker,
-    whisper: ChatMessage.getWhisperRecipients("GM"),
+    whisper,
     flags: { "arsenal-t20": { tipo: "pm", origem: message.id } }
   });
 }
@@ -3376,6 +3417,49 @@ async function t20ReverterPMBotao(btn) {
   if (!actor || !pm) return;
   await t20ReverterPMDireto(actor, pm);
   ui.notifications.info(`${actor.name}: ${pm} PM revertidos.`);
+}
+
+async function t20AtivarSustentacaoBotao(btn) {
+  const actor = await fromUuid(btn.dataset.actor);
+  if (!actor) return ui.notifications.warn("Ator não encontrado para ativar sustentação.");
+
+  const nomeItem = btn.dataset.nome ?? "Magia sustentada";
+  const imgItem = btn.dataset.img ?? "";
+
+  const itemData = {
+    name: nomeItem,
+    img: imgItem,
+    duration: "Sustentada",
+    description: { value: "Duração: Sustentada" },
+  };
+
+  const fakeMessage = {
+    content: `Duração: Sustentada ${nomeItem}`,
+    id: obterChatMessageDoBotao(btn)?.id ?? null,
+  };
+
+  if (game.user.isGM) {
+    await t20RegistrarSustentada(actor, itemData, fakeMessage, {
+      force: true,
+      solicitante: game.user.name,
+    });
+  } else {
+    game.socket.emit("module.arsenal-t20", {
+      tipo: "registrarSustentada",
+      actorId: actor.id,
+      actorUuid: actor.uuid,
+      itemData,
+      content: fakeMessage.content,
+      messageId: fakeMessage.id,
+      force: true,
+      solicitante: game.user.name,
+    });
+    ui.notifications.info(`${nomeItem} marcada como sustentada.`);
+  }
+
+  btn.disabled = true;
+  btn.style.opacity = "0.55";
+  btn.textContent = "🪄 Sustentação ativa";
 }
 
 Hooks.on("createChatMessage", async (message, options, userId) => {
