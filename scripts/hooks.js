@@ -3453,6 +3453,7 @@ Hooks.on("getSceneControlButtons", (controls) => {
 
 
 // ── Monitor discreto de PV/PM de personagens jogadores ─────
+// Em vez de poluir o chat, o GM recebe uma notificação discreta e um log consultável em painel.
 
 function t20IsPersonagemJogador(actor) {
   if (!actor) return false;
@@ -3475,10 +3476,9 @@ function t20GetChangedValue(changed, path) {
   return foundry.utils.getProperty(changed, path);
 }
 
-// Este cache fica no cliente do GM. O preUpdateActor só dispara no cliente que iniciou
-// a alteração; por isso, quando o jogador altera a ficha, o GM precisa comparar contra
-// uma foto anterior conhecida dos recursos.
 const t20RecursosCacheGM = new Map();
+const t20RecursosLogGM = [];
+let _arsenalRecursosPanel = null;
 
 function t20KeyRecursoActor(actor) {
   return actor?.uuid ?? actor?.id;
@@ -3489,10 +3489,169 @@ function t20AtualizarCacheRecursos(actor) {
   t20RecursosCacheGM.set(t20KeyRecursoActor(actor), t20GetRecursoAtual(actor));
 }
 
+function t20RegistrarLogRecurso({ actor, linhas, textoCurto, userId }) {
+  if (!game.user.isGM || !actor || !linhas?.length) return;
+
+  const quem = game.users.get(userId)?.name ?? "Sistema";
+  const entrada = {
+    id: foundry.utils.randomID?.() ?? `${Date.now()}-${Math.random()}`,
+    time: Date.now(),
+    actor: actor.name,
+    actorUuid: actor.uuid,
+    origem: quem,
+    linhas,
+    textoCurto,
+  };
+
+  t20RecursosLogGM.unshift(entrada);
+  if (t20RecursosLogGM.length > 200) t20RecursosLogGM.length = 200;
+
+  ui.notifications.info(`📊 ${textoCurto}`);
+
+  if (_arsenalRecursosPanel?.rendered) {
+    _arsenalRecursosPanel.render(false);
+  }
+}
+
+class ArsenalRecursosPanel extends Application {
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: "arsenal-recursos-panel",
+      title: "📊 Log de Recursos — Arsenal T20",
+      width: 520,
+      height: "auto",
+      resizable: true,
+    });
+  }
+
+  async getData() { return {}; }
+  get template() { return null; }
+
+  async _renderInner() {
+    const div = document.createElement("div");
+    div.innerHTML = this._html();
+    return $(div);
+  }
+
+  _html() {
+    const entradas = t20RecursosLogGM;
+
+    return `<div style="padding:12px;background:#111827;color:#e5e7eb;font-family:serif;max-height:640px;overflow:auto">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <div style="flex:1">
+          <div style="color:#d9b85f;font-weight:bold;font-size:1.1em">Alterações de PV/PM</div>
+          <div style="font-size:0.82em;color:#9ca3af">Mostra alterações de recursos de personagens jogadores sem enviar mensagens ao chat.</div>
+        </div>
+        <button class="t20-limpar-log-recursos" style="padding:6px 10px;border-radius:6px;background:#374151;border:1px solid #6b7280;color:#fff;cursor:pointer">Limpar</button>
+      </div>
+
+      ${entradas.length ? entradas.map(e => {
+        const hora = new Date(e.time).toLocaleTimeString();
+        return `<div style="margin-bottom:8px;padding:9px;border:1px solid #2b3347;border-left:4px solid #64748b;border-radius:7px;background:#0f172a">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+            <div style="font-weight:bold;color:#f2e6c9">📊 ${e.actor}</div>
+            <div style="font-size:0.78em;color:#9ca3af">${hora}</div>
+          </div>
+          <div style="font-size:0.92em;color:#d7dcea;margin-top:4px;line-height:1.35">${e.linhas.join("<br>")}</div>
+          <div style="font-size:0.78em;color:#9ca3af;margin-top:4px">Origem: ${e.origem}</div>
+        </div>`;
+      }).join("") : `<div style="padding:14px;border:1px dashed #374151;border-radius:8px;color:#9ca3af;text-align:center">
+        Nenhuma alteração de PV/PM registrada nesta sessão.
+      </div>`}
+    </div>`;
+  }
+
+  activateListeners(html) {
+    super.activateListeners(html);
+    html.find(".t20-limpar-log-recursos").on("click", () => {
+      t20RecursosLogGM.length = 0;
+      this.render(false);
+    });
+  }
+}
+
+function abrirPainelRecursosArsenal() {
+  if (!game.user.isGM) return ui.notifications.warn("O log de recursos é visível apenas ao GM.");
+
+  if (_arsenalRecursosPanel?.rendered) {
+    _arsenalRecursosPanel.close();
+  } else {
+    _arsenalRecursosPanel = new ArsenalRecursosPanel();
+    _arsenalRecursosPanel.render(true);
+  }
+}
+
 Hooks.once("ready", () => {
   if (!game.user.isGM) return;
   for (const actor of game.actors ?? []) {
     t20AtualizarCacheRecursos(actor);
+  }
+
+  // Botão fixo discreto para o GM abrir o log sem usar o chat.
+  if (!document.getElementById("arsenal-recursos-btn")) {
+    const btn = document.createElement("button");
+    btn.id = "arsenal-recursos-btn";
+    btn.title = "Log de Recursos — Arsenal T20";
+    btn.innerHTML = `<i class="fas fa-chart-line" style="margin-right:4px"></i><span style="font-size:0.75em;font-family:'Cinzel',serif;letter-spacing:0.03em">Recursos</span>`;
+    btn.style.cssText = `
+      position: fixed;
+      bottom: 64px;
+      left: 0;
+      z-index: 101;
+      height: 38px;
+      padding: 0 10px;
+      background: #111827;
+      border: 1px solid #374151;
+      border-radius: 0 6px 6px 0;
+      color: #93c5fd;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      box-shadow: 2px 2px 8px rgba(0,0,0,0.55);
+    `;
+    btn.addEventListener("mouseenter", () => {
+      btn.style.background = "#1f2937";
+      btn.style.borderColor = "#93c5fd";
+      btn.style.color = "#bfdbfe";
+    });
+    btn.addEventListener("mouseleave", () => {
+      btn.style.background = "#111827";
+      btn.style.borderColor = "#374151";
+      btn.style.color = "#93c5fd";
+    });
+    btn.addEventListener("click", () => abrirPainelRecursosArsenal());
+    document.body.appendChild(btn);
+  }
+});
+
+Hooks.on("getSceneControlButtons", (controls) => {
+  if (!game.user.isGM) return;
+
+  if (Array.isArray(controls)) {
+    const tokens = controls.find(c => c.name === "token");
+    if (tokens) {
+      tokens.tools.push({
+        name: "arsenal-recursos",
+        title: "Log de Recursos — Arsenal T20",
+        icon: "fas fa-chart-line",
+        button: true,
+        onClick: () => abrirPainelRecursosArsenal(),
+      });
+    }
+  } else {
+    const tokens = controls.token ?? controls.tokens;
+    if (tokens) {
+      tokens.tools["arsenal-recursos"] = {
+        name: "arsenal-recursos",
+        title: "Log de Recursos — Arsenal T20",
+        icon: "fas fa-chart-line",
+        button: true,
+        onChange: () => abrirPainelRecursosArsenal(),
+        order: 102,
+      };
+    }
   }
 });
 
@@ -3520,36 +3679,37 @@ Hooks.on("updateActor", async (actor, changed, options, userId) => {
   const antes = t20RecursosCacheGM.get(key);
   const agora = t20GetRecursoAtual(actor);
 
-  // Se o cache ainda não existe, inicializa e não anuncia para evitar falso positivo.
   if (!antes) {
     t20RecursosCacheGM.set(key, agora);
     return;
   }
 
   const linhas = [];
+  const curtas = [];
 
   if (pvMudou && Number.isFinite(agora.pv) && Number.isFinite(antes.pv) && agora.pv !== antes.pv) {
     const delta = agora.pv - antes.pv;
-    linhas.push(`❤️ PV: <b>${antes.pv}</b> → <b>${agora.pv}</b> ${delta > 0 ? `(cura +${delta})` : `(dano ${Math.abs(delta)})`}`);
+    const desc = delta > 0 ? `cura +${delta}` : `dano ${Math.abs(delta)}`;
+    linhas.push(`❤️ PV: <b>${antes.pv}</b> → <b>${agora.pv}</b> (${desc})`);
+    curtas.push(`PV ${antes.pv}→${agora.pv}`);
   }
 
   if (pmMudou && Number.isFinite(agora.pm) && Number.isFinite(antes.pm) && agora.pm !== antes.pm) {
     const delta = agora.pm - antes.pm;
-    linhas.push(`🔷 PM: <b>${antes.pm}</b> → <b>${agora.pm}</b> ${delta > 0 ? `(recuperou +${delta})` : `(gastou ${Math.abs(delta)})`}`);
+    const desc = delta > 0 ? `recuperou +${delta}` : `gastou ${Math.abs(delta)}`;
+    linhas.push(`🔷 PM: <b>${antes.pm}</b> → <b>${agora.pm}</b> (${desc})`);
+    curtas.push(`PM ${antes.pm}→${agora.pm}`);
   }
 
   t20RecursosCacheGM.set(key, agora);
 
   if (!linhas.length) return;
 
-  const quem = game.users.get(userId)?.name ?? "Sistema";
-  await ChatMessage.create({
-    whisper: ChatMessage.getWhisperRecipients("GM"),
-    content: `<div style="background:#111827;border:1px solid #2b3347;border-left:4px solid #64748b;padding:7px 10px;border-radius:6px;color:#d7dcea;font-size:0.9em">
-      <b>📊 Recurso alterado — ${actor.name}</b><br>
-      ${linhas.join("<br>")}
-      <br><span style="font-size:0.82em;color:#9ca3af">Origem: ${quem}</span>
-    </div>`
+  t20RegistrarLogRecurso({
+    actor,
+    linhas,
+    textoCurto: `${actor.name}: ${curtas.join(", ")}`,
+    userId,
   });
 });
 
