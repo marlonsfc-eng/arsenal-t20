@@ -1082,17 +1082,26 @@ function t20ValorAtributo(actor, atributo = "car") {
     `system.atributos.${atributo}.mod`,
     `system.atributos.${atributo}.value`,
     `system.atributos.${atributo}.total`,
+    `system.atributos.${atributo}.bonus`,
+    `system.atributos.${atributo}.modificador`,
     `system.attributes.${atributo}.mod`,
     `system.attributes.${atributo}.value`,
     `system.attributes.${atributo}.total`,
+    `system.attributes.${atributo}.bonus`,
     `system.${atributo}.mod`,
     `system.${atributo}.value`,
+    `system.${atributo}.total`,
   ];
 
   for (const path of paths) {
     const raw = foundry.utils.getProperty(actor, path);
     const n = Number(raw);
-    if (Number.isFinite(n)) return n;
+    if (Number.isFinite(n)) {
+      // Em T20/FVTT normalmente o campo value já é o modificador.
+      // Se alguma ficha retornar valor de atributo bruto alto, converte de forma conservadora.
+      if (n > 10) return Math.floor((n - 10) / 2);
+      return n;
+    }
   }
 
   return 0;
@@ -1114,11 +1123,19 @@ function t20DistanciaTokensMetros(tokenA, tokenB) {
 function t20TokensSaoAliadosAura(tokenFonte, tokenAlvo, aura) {
   if (!tokenFonte || !tokenAlvo) return false;
 
-  // Versão inicial: aliados = mesma disposição do token.
-  // Isso é simples, previsível e evita beneficiar inimigos hostis.
+  if (tokenFonte.id === tokenAlvo.id) return true;
+
   const dispFonte = tokenFonte.document?.disposition;
   const dispAlvo = tokenAlvo.document?.disposition;
-  return dispFonte !== undefined && dispFonte === dispAlvo;
+
+  // Critério 1: mesma disposição do token.
+  if (dispFonte !== undefined && dispAlvo !== undefined && dispFonte === dispAlvo) return true;
+
+  // Critério 2: ambos são personagens controlados por jogadores.
+  // Isso corrige mesas em que os PCs estão como Neutral/sem a mesma disposição.
+  if (tokenFonte.actor?.hasPlayerOwner && tokenAlvo.actor?.hasPlayerOwner) return true;
+
+  return false;
 }
 
 function t20BonusAurasResistencia(actorAlvo, tokenAlvo, salvPericia = "") {
@@ -1161,6 +1178,7 @@ function t20BonusAurasResistencia(actorAlvo, tokenAlvo, salvPericia = "") {
         bonus,
         distancia: dist,
       });
+      console.log(`Arsenal T20 | Aura aplicada: ${aura.nome ?? "Aura"} de ${tokenFonte.name} +${bonus} em ${tokenAlvo.name} (${dist.toFixed(1)}m)`);
     }
   }
 
@@ -1225,7 +1243,7 @@ async function t20ToggleAuraSagrada() {
 
 function t20AtualizarAurasVisuais() {
   try {
-    if (!canvas?.ready || !canvas.interface || !window.PIXI) return;
+    if (!canvas?.ready || !window.PIXI) return;
 
     if (canvas.arsenalT20AuraLayer) {
       canvas.arsenalT20AuraLayer.destroy({ children: true });
@@ -1234,9 +1252,14 @@ function t20AtualizarAurasVisuais() {
 
     if (!cfg("autoAuras")) return;
 
+    const parentLayer = canvas.tokens ?? canvas.interface;
+    if (!parentLayer?.addChild) return;
+
     const layer = new PIXI.Container();
     layer.name = "arsenal-t20-aura-layer";
-    canvas.interface.addChild(layer);
+    layer.sortableChildren = true;
+    layer.zIndex = -10;
+    parentLayer.addChild(layer);
     canvas.arsenalT20AuraLayer = layer;
 
     const gridSize = canvas.grid?.size ?? canvas.scene?.grid?.size ?? 100;
@@ -1252,8 +1275,8 @@ function t20AtualizarAurasVisuais() {
         const center = token.center ?? { x: token.x, y: token.y };
 
         const g = new PIXI.Graphics();
-        g.lineStyle(2, 0x2dd4bf, 0.75);
-        g.beginFill(0x2dd4bf, 0.10);
+        g.lineStyle(3, 0x2dd4bf, 0.85);
+        g.beginFill(0x2dd4bf, 0.12);
         g.drawCircle(center.x, center.y, raioPx);
         g.endFill();
         layer.addChild(g);
@@ -1285,7 +1308,7 @@ Hooks.on("getSceneControlButtons", (controls) => {
       tokens.tools.push({
         name: "arsenal-aura-sagrada",
         title: "Alternar Aura Sagrada — Arsenal T20",
-        icon: "fas fa-shield-halved",
+        icon: "fas fa-shield-alt",
         button: true,
         onClick: () => t20ToggleAuraSagrada(),
       });
@@ -1296,13 +1319,63 @@ Hooks.on("getSceneControlButtons", (controls) => {
       tokens.tools["arsenal-aura-sagrada"] = {
         name: "arsenal-aura-sagrada",
         title: "Alternar Aura Sagrada — Arsenal T20",
-        icon: "fas fa-shield-halved",
+        icon: "fas fa-shield-alt",
         button: true,
         onChange: () => t20ToggleAuraSagrada(),
         order: 103,
       };
     }
   }
+});
+
+Hooks.once("ready", () => {
+  if (!game.user.isGM && !game.user.character) return;
+  if (document.getElementById("arsenal-aura-btn")) return;
+
+  const btn = document.createElement("button");
+  btn.id = "arsenal-aura-btn";
+  btn.title = "Alternar Aura Sagrada — Arsenal T20";
+  btn.innerHTML = `<i class="fas fa-shield-alt" style="margin-right:4px"></i><span style="font-size:0.76em;font-family:'Cinzel',serif;letter-spacing:0.03em">Aura</span>`;
+  btn.style.cssText = `
+    position: fixed;
+    top: 534px;
+    left: 0;
+    z-index: 102;
+    height: 34px;
+    padding: 0 10px;
+    background: #10231f;
+    border: 1px solid #2dd4bf;
+    border-radius: 0 6px 6px 0;
+    color: #7dd3fc;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    box-shadow: 2px 2px 8px rgba(0,0,0,0.55);
+  `;
+
+  const ajustarPosicaoAura = () => {
+    const recBtn = document.getElementById("arsenal-recursos-btn");
+    if (recBtn) {
+      const rect = recBtn.getBoundingClientRect();
+      btn.style.top = `${Math.ceil(rect.bottom + 6)}px`;
+    } else {
+      const controls = document.getElementById("controls") ?? document.querySelector("#ui-left #controls");
+      if (controls) {
+        const rect = controls.getBoundingClientRect();
+        btn.style.top = `${Math.max(534, Math.ceil(rect.bottom + 88))}px`;
+      } else {
+        btn.style.top = "534px";
+      }
+    }
+  };
+
+  btn.addEventListener("click", () => t20ToggleAuraSagrada());
+  document.body.appendChild(btn);
+  setTimeout(ajustarPosicaoAura, 800);
+  Hooks.on("renderPlayerList", ajustarPosicaoAura);
+  Hooks.on("canvasReady", ajustarPosicaoAura);
 });
 
 
