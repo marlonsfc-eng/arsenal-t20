@@ -159,7 +159,7 @@ Hooks.once("ready", () => {
       compact: "Lista compacta",
       cards: "Cartões de habilidades"
     },
-    default: "compact",
+    default: "cards",
   });
 
   game.settings.register(MOD, "arsenalHudSpellMode", {
@@ -172,7 +172,7 @@ Hooks.once("ready", () => {
       list: "Lista direta",
       grimoire: "Grimório por círculo"
     },
-    default: "list",
+    default: "grimoire",
   });
 
   const ativas = [];
@@ -4399,7 +4399,7 @@ function t20HudSetCollapsed(value) {
 }
 
 
-const T20_HUD_CATEGORIAS_PADRAO = ["ataques", "magias", "poderes", "pericias"];
+const T20_HUD_CATEGORIAS_PADRAO = ["favoritos", "magias", "poderes", "pericias", "ataques"];
 
 function t20HudGetCategoryOrder() {
   try {
@@ -4510,29 +4510,53 @@ function t20HudActorEhPersonagemJogador(actor) {
   return !["ameaca", "ameaça", "npc", "threat", "monster", "creature"].includes(tipo);
 }
 
+function t20HudItemAtivavel(item) {
+  if (!item) return false;
+  const txt = t20HudItemTexto(item);
+  if (typeof item.use === "function" || typeof item.roll === "function" || typeof item.displayCard === "function" || typeof item.toMessage === "function") return true;
+  if (/execu[cç][aã]o|a[cç][aã]o|rea[cç][aã]o|movimento|padr[aã]o|completa|livre|mana|pm|ataque|teste|rolagem|dano|cura|resist[eê]ncia/i.test(txt)) return true;
+  return false;
+}
+
 function t20HudItensActor(actor) {
-  const grupos = { ataques: [], magias: [], poderes: [] };
+  const grupos = { favoritos: [], ataques: [], magias: [], poderes: [] };
   if (!actor) return grupos;
 
   const personagemJogador = t20HudActorEhPersonagemJogador(actor);
 
   for (const item of actor.items ?? []) {
     const cat = t20HudClassificarItem(item);
-    if (!cat) continue;
+    const favorito = t20HudItemFavorito(item);
 
-    // Personagem jogador: somente favoritos da ficha.
-    // NPC/ameaça: mantém ataques e habilidades/poderes para o GM.
-    if (personagemJogador) {
-      if (!t20HudItemFavorito(item)) continue;
-    } else {
-      if (!["ataques", "poderes"].includes(cat)) continue;
+    if (favorito && cat) {
+      grupos.favoritos.push(item);
     }
 
-    grupos[cat].push(item);
+    if (!cat) continue;
+
+    if (personagemJogador) {
+      // Com o grimório, magias podem ser buscadas fora dos favoritos.
+      // Ataques e poderes/habilidades aparecem quando forem utilizáveis/ativáveis.
+      if (cat === "magias") {
+        grupos.magias.push(item);
+      } else if (cat === "ataques" || cat === "poderes") {
+        if (t20HudItemAtivavel(item) || favorito) grupos[cat].push(item);
+      }
+    } else {
+      // NPC/ameaça: mantém ações úteis para o GM.
+      if (["ataques", "poderes"].includes(cat)) grupos[cat].push(item);
+    }
   }
 
   for (const k of Object.keys(grupos)) {
-    grupos[k].sort((a, b) => String(a.name).localeCompare(String(b.name), "pt-BR"));
+    const vistos = new Set();
+    grupos[k] = grupos[k]
+      .filter(item => {
+        if (vistos.has(item.id)) return false;
+        vistos.add(item.id);
+        return true;
+      })
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), "pt-BR"));
   }
 
   return grupos;
@@ -4659,13 +4683,17 @@ class ArsenalGrimorio extends Application {
 
       <div style="overflow:auto;min-height:0">
         ${magias.length ? magias.map(item => `
-          <button class="t20-grimorio-magia" data-item-id="${item.id}" title="${item.name}"
-            style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;margin-bottom:5px;border-radius:7px;
-            background:linear-gradient(180deg,#182235,#111827);border:1px solid #374151;color:#e5e7eb;cursor:pointer;
-            font-size:0.92em;text-align:left;min-width:0">
-            ${item.img ? `<img src="${item.img}" style="width:28px;height:28px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.35)">` : `<span style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:#0f172a">🪄</span>`}
-            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</span>
-          </button>`).join("") : `<div style="color:#9ca3af;padding:12px;text-align:center">Nenhuma magia encontrada neste círculo.</div>`}
+          <div style="display:flex;align-items:center;gap:6px;width:100%;padding:6px;margin-bottom:5px;border-radius:7px;
+            background:linear-gradient(180deg,#182235,#111827);border:1px solid #374151;color:#e5e7eb;min-width:0">
+            <button class="t20-grimorio-magia" data-item-id="${item.id}" title="Conjurar ${item.name}"
+              style="display:flex;align-items:center;gap:8px;flex:1;padding:2px;border:none;background:transparent;color:#e5e7eb;cursor:pointer;
+              font-size:0.92em;text-align:left;min-width:0">
+              ${item.img ? `<img src="${item.img}" style="width:28px;height:28px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.35)">` : `<span style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:#0f172a">🪄</span>`}
+              <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</span>
+            </button>
+            <button class="t20-grimorio-aprimorar" data-item-id="${item.id}" title="Aumentos/aprimoramentos"
+              style="width:30px;height:30px;border-radius:6px;background:#2c2140;border:1px solid #8b5cf6;color:#ddd6fe;cursor:pointer;font-weight:bold">⚙</button>
+          </div>`).join("") : `<div style="color:#9ca3af;padding:12px;text-align:center">Nenhuma magia encontrada neste círculo.</div>`}
       </div>
     </div>`;
   }
@@ -4680,6 +4708,12 @@ class ArsenalGrimorio extends Application {
 
     html.find(".t20-grimorio-magia").on("click", async ev => {
       await t20HudUsarItem(this.actor, ev.currentTarget.dataset.itemId);
+    });
+
+    html.find(".t20-grimorio-aprimorar").on("click", async ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      await t20HudAbrirAprimoramentos(this.actor, ev.currentTarget.dataset.itemId);
     });
   }
 }
@@ -4739,6 +4773,28 @@ function t20HudPericiasTreinadasActor(actor) {
   return lista.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
 }
 
+function t20HudRecursosAtuais(actor) {
+  const pv = Number(foundry.utils.getProperty(actor, "system.attributes.pv.value"));
+  const pvMax = Number(foundry.utils.getProperty(actor, "system.attributes.pv.max"));
+  const pm = Number(foundry.utils.getProperty(actor, "system.attributes.pm.value"));
+  const pmMax = Number(foundry.utils.getProperty(actor, "system.attributes.pm.max"));
+  return {
+    pv: Number.isFinite(pv) ? pv : null,
+    pvMax: Number.isFinite(pvMax) ? pvMax : null,
+    pm: Number.isFinite(pm) ? pm : null,
+    pmMax: Number.isFinite(pmMax) ? pmMax : null,
+  };
+}
+
+function t20HudFormatarRecursos(actor) {
+  const r = t20HudRecursosAtuais(actor);
+  const pv = r.pv === null ? "?" : r.pv;
+  const pvMax = r.pvMax === null ? "" : `/${r.pvMax}`;
+  const pm = r.pm === null ? "?" : r.pm;
+  const pmMax = r.pmMax === null ? "" : `/${r.pmMax}`;
+  return `PV ${pv}${pvMax} · PM ${pm}${pmMax}`;
+}
+
 async function t20HudRolarPericia(actor, periciaId) {
   if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
 
@@ -4771,6 +4827,321 @@ async function t20HudUsarItem(actor, itemId) {
     item.sheet?.render?.(true);
   }
 }
+
+
+// ============================================================
+// GRIMÓRIO — APRIMORAMENTOS/AUMENTOS DE MAGIA
+// ============================================================
+
+const T20_HUD_APRIMORAMENTOS_PENDENTES = new Map();
+
+function t20HudStripHtml(str) {
+  const s = String(str ?? "");
+  try {
+    const div = document.createElement("div");
+    div.innerHTML = s;
+    return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
+  } catch {
+    return s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  }
+}
+
+function t20HudNorm(str) {
+  return t20HudStripHtml(str)
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s+-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function t20HudParseCustoPM(...valores) {
+  for (const v of valores) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    const s = t20HudStripHtml(v);
+    const m = s.match(/([+-]?\d+)\s*PM/i);
+    if (m) return Number(m[1]);
+    const n = Number(s);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function t20HudTextoAprimoramento(obj) {
+  if (!obj) return "";
+  const partes = [
+    obj.name, obj.label, obj.nome, obj.titulo, obj.title,
+    obj.text, obj.texto, obj.effect, obj.efeito, obj.description, obj.descricao,
+    obj.value, obj.html,
+    obj.description?.value, obj.descricao?.value,
+    obj.system?.description?.value, obj.system?.descricao?.value,
+    obj.system?.name, obj.system?.label, obj.system?.text, obj.system?.texto,
+  ].filter(Boolean).map(t20HudStripHtml);
+
+  return partes.filter(Boolean).join(" — ").trim();
+}
+
+function t20HudAprimoramentoDeObjeto(obj, path = "") {
+  if (!obj || typeof obj !== "object") return null;
+
+  const custo = t20HudParseCustoPM(
+    obj.custo, obj.cost, obj.pm, obj.mana, obj.valor, obj.value,
+    obj.system?.custo, obj.system?.cost, obj.system?.pm, obj.system?.mana,
+    obj.label, obj.name, obj.nome, obj.text, obj.texto
+  );
+
+  const texto = t20HudTextoAprimoramento(obj);
+  if (!texto && custo === null) return null;
+
+  const raw = texto || t20HudStripHtml(obj.name ?? obj.label ?? path);
+  const custoTexto = custo !== null ? `${custo >= 0 ? "+" : ""}${custo} PM` : "";
+  const semCusto = raw.replace(/^[•\-\s]*/, "").replace(/^[+-]?\d+\s*PM\s*[:\-–—]?\s*/i, "").trim();
+  const nome = t20HudStripHtml(obj.name ?? obj.nome ?? obj.label ?? semCusto.split(/[:—–-]/)[0] ?? "Aprimoramento").trim();
+
+  return {
+    id: foundry.utils.randomID?.() ?? `${Date.now()}-${Math.random()}`,
+    nome: nome || "Aprimoramento",
+    texto: semCusto || raw,
+    custo,
+    custoTexto,
+    path,
+    norm: t20HudNorm(`${nome} ${semCusto} ${custoTexto}`),
+  };
+}
+
+function t20HudExtrairAprimoramentosDeTexto(texto) {
+  const saida = [];
+  const limpo = t20HudStripHtml(String(texto ?? "")
+    .replace(/<\/p>|<\/li>|<br\s*\/?>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "\n• "));
+
+  const linhas = limpo
+    .split(/\n|(?=•\s*[+-]?\d+\s*PM)|(?=\s[+-]?\d+\s*PM\s*[:\-–—])/i)
+    .map(s => s.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
+  for (const linha of linhas) {
+    const m = linha.match(/^[•\-\s]*([+-]?\d+)\s*PM\s*[:\-–—]?\s*(.+)$/i);
+    if (!m) continue;
+    const custo = Number(m[1]);
+    const desc = m[2].trim();
+    const nome = desc.split(/[:—–-]/)[0].slice(0, 80).trim() || `${custo >= 0 ? "+" : ""}${custo} PM`;
+    saida.push({
+      id: foundry.utils.randomID?.() ?? `${Date.now()}-${Math.random()}`,
+      nome,
+      texto: desc,
+      custo,
+      custoTexto: `${custo >= 0 ? "+" : ""}${custo} PM`,
+      path: "description",
+      norm: t20HudNorm(`${nome} ${desc} ${custo} PM`),
+    });
+  }
+
+  return saida;
+}
+
+function t20HudExtrairAprimoramentosMagia(item) {
+  const encontrados = [];
+  const vistos = new Set();
+
+  const add = (apr) => {
+    if (!apr) return;
+    const key = t20HudNorm(`${apr.custo ?? ""} ${apr.nome ?? ""} ${apr.texto ?? ""}`).slice(0, 180);
+    if (!key || vistos.has(key)) return;
+    vistos.add(key);
+    encontrados.push(apr);
+  };
+
+  // 1) Tenta achar objetos estruturados nos dados do item.
+  const visitar = (obj, path = "", depth = 0) => {
+    if (!obj || typeof obj !== "object" || depth > 5) return;
+
+    if (Array.isArray(obj)) {
+      for (let i = 0; i < obj.length; i++) {
+        const v = obj[i];
+        if (v && typeof v === "object") {
+          const candidato = t20HudAprimoramentoDeObjeto(v, `${path}.${i}`);
+          const txt = t20HudTextoAprimoramento(v);
+          const pareceAprim = /pm|aprimor|aumento|efeito|magia|dano|alvo|alcance|dura/i.test(txt);
+          if (candidato && (candidato.custo !== null || pareceAprim)) add(candidato);
+          visitar(v, `${path}.${i}`, depth + 1);
+        } else if (typeof v === "string") {
+          for (const apr of t20HudExtrairAprimoramentosDeTexto(v)) add(apr);
+        }
+      }
+      return;
+    }
+
+    for (const [k, v] of Object.entries(obj)) {
+      if (["effects", "items", "ownership", "permission"].includes(k)) continue;
+      const p = path ? `${path}.${k}` : k;
+
+      if (typeof v === "string") {
+        if (/PM|aprimor|aumento/i.test(v)) {
+          for (const apr of t20HudExtrairAprimoramentosDeTexto(v)) add(apr);
+        }
+      } else if (v && typeof v === "object") {
+        visitar(v, p, depth + 1);
+      }
+    }
+  };
+
+  visitar(item?.system ?? {}, "system", 0);
+
+  // 2) Fallback pela descrição textual.
+  for (const txt of [
+    item?.system?.description?.value,
+    item?.system?.descricao?.value,
+    item?.system?.description,
+    item?.system?.descricao,
+    item?.description,
+  ]) {
+    for (const apr of t20HudExtrairAprimoramentosDeTexto(txt)) add(apr);
+  }
+
+  return encontrados
+    .filter(a => a.texto || a.nome)
+    .sort((a, b) => (a.custo ?? 999) - (b.custo ?? 999) || String(a.nome).localeCompare(String(b.nome), "pt-BR"));
+}
+
+function t20HudDialogRowText(row) {
+  return t20HudNorm(row?.innerText ?? row?.textContent ?? "");
+}
+
+function t20HudAplicarSelecoesNoDialogo(app, html) {
+  try {
+    const pendentes = Array.from(T20_HUD_APRIMORAMENTOS_PENDENTES.values())
+      .filter(p => Date.now() - p.timestamp < 12000);
+
+    if (!pendentes.length) return;
+
+    const title = t20HudNorm(app?.title ?? app?.options?.title ?? "");
+    const pend = pendentes.find(p => title.includes(t20HudNorm(p.itemName).slice(0, 40)) || title.includes("configuracao de uso de magia"));
+    if (!pend) return;
+
+    const root = html instanceof jQuery ? html[0] : html;
+    if (!root) return;
+
+    for (const sel of pend.selecoes ?? []) {
+      const alvoNorm = t20HudNorm(`${sel.nome} ${sel.texto}`).slice(0, 90);
+      const custoNorm = sel.custo !== null && sel.custo !== undefined ? `${sel.custo} pm` : "";
+
+      const rows = Array.from(root.querySelectorAll("tr, .form-group, .row, li, label, div"));
+      const row = rows.find(r => {
+        const txt = t20HudDialogRowText(r);
+        if (!txt) return false;
+        if (custoNorm && !txt.includes(custoNorm.replace("+", "")) && !txt.includes(custoNorm)) return false;
+        const pedacos = alvoNorm.split(" ").filter(w => w.length >= 5).slice(0, 5);
+        return pedacos.length ? pedacos.some(w => txt.includes(w)) : true;
+      });
+
+      if (!row) continue;
+
+      const qtd = Math.max(1, Number(sel.qtd ?? 1) || 1);
+      const cb = row.querySelector('input[type="checkbox"]');
+      if (cb && !cb.checked) {
+        cb.click();
+      }
+
+      const plus = Array.from(row.querySelectorAll("button"))
+        .find(b => String(b.textContent ?? "").trim() === "+" || b.className?.toString?.().includes("plus"));
+      if (plus) {
+        for (let i = 0; i < qtd; i++) plus.click();
+      } else {
+        const number = row.querySelector('input[type="number"]');
+        if (number) {
+          number.value = String(qtd);
+          number.dispatchEvent(new Event("change", { bubbles: true }));
+          number.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      }
+    }
+
+    ui.notifications.info(`Arsenal T20: aprimoramentos aplicados em ${pend.itemName}.`);
+    T20_HUD_APRIMORAMENTOS_PENDENTES.delete(pend.key);
+  } catch (e) {
+    console.warn("Arsenal T20 | erro ao aplicar aprimoramentos no diálogo", e);
+  }
+}
+
+Hooks.on("renderDialog", (app, html) => t20HudAplicarSelecoesNoDialogo(app, html));
+Hooks.on("renderApplication", (app, html) => t20HudAplicarSelecoesNoDialogo(app, html));
+
+async function t20HudAbrirAprimoramentos(actor, itemId) {
+  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+  const item = actor.items?.get?.(itemId);
+  if (!item) return ui.notifications.warn("Magia não encontrada.");
+
+  const aprimoramentos = t20HudExtrairAprimoramentosMagia(item);
+  if (!aprimoramentos.length) {
+    ui.notifications.warn(`Nenhum aprimoramento detectado para ${item.name}.`);
+    return;
+  }
+
+  const linhas = aprimoramentos.map((a, idx) => `
+    <div style="display:grid;grid-template-columns:34px 58px 1fr 58px;gap:6px;align-items:start;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.08)">
+      <input type="checkbox" class="t20-apr-check" data-idx="${idx}" style="margin-top:5px">
+      <div style="color:${(a.custo ?? 0) < 0 ? "#93c5fd" : "#facc15"};font-weight:bold;white-space:nowrap">${a.custoTexto || "-"}</div>
+      <div>
+        <div style="color:#f2e6c9;font-weight:bold">${a.nome}</div>
+        <div style="font-size:0.86em;color:#cbd5e1;line-height:1.25">${a.texto}</div>
+      </div>
+      <input type="number" class="t20-apr-qtd" data-idx="${idx}" value="1" min="1" max="20"
+        style="width:50px;background:#0f172a;border:1px solid #374151;color:#e5e7eb;border-radius:4px;padding:3px">
+    </div>`).join("");
+
+  new Dialog({
+    title: `Aprimoramentos — ${item.name}`,
+    content: `<div style="background:#111827;color:#e5e7eb;padding:10px;border-radius:8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        ${item.img ? `<img src="${item.img}" style="width:34px;height:34px;border-radius:6px;border:1px solid #374151">` : ""}
+        <div>
+          <div style="font-weight:bold;color:#f2e6c9">${item.name}</div>
+          <div style="font-size:0.85em;color:#9ca3af">Selecione os aumentos. Ao conjurar, o Arsenal tentará marcar a caixa automática do sistema.</div>
+        </div>
+      </div>
+      <div style="max-height:430px;overflow:auto">${linhas}</div>
+      <div style="font-size:0.78em;color:#9ca3af;margin-top:8px">
+        Observação: alguns aprimoramentos repetíveis usam o campo de quantidade; para aprimoramentos simples, deixe 1.
+      </div>
+    </div>`,
+    buttons: {
+      cast: {
+        label: "Conjurar com aumentos",
+        callback: html => {
+          const root = html instanceof jQuery ? html[0] : html;
+          const selecionados = [];
+          root.querySelectorAll(".t20-apr-check:checked").forEach(cb => {
+            const idx = Number(cb.dataset.idx);
+            const apr = aprimoramentos[idx];
+            const qtd = Number(root.querySelector(`.t20-apr-qtd[data-idx="${idx}"]`)?.value ?? 1) || 1;
+            selecionados.push({ ...apr, qtd });
+          });
+
+          const key = `${actor.id}.${item.id}.${Date.now()}`;
+          T20_HUD_APRIMORAMENTOS_PENDENTES.set(key, {
+            key,
+            actorId: actor.id,
+            itemId: item.id,
+            itemName: item.name,
+            selecoes: selecionados,
+            timestamp: Date.now(),
+          });
+
+          t20HudUsarItem(actor, item.id);
+        }
+      },
+      normal: {
+        label: "Conjurar sem aumentos",
+        callback: () => t20HudUsarItem(actor, item.id),
+      },
+      cancel: { label: "Cancelar" }
+    },
+    default: "cast",
+  }, { width: 680 }).render(true);
+}
+
 
 async function t20HudGastarPM(actor) {
   if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
@@ -4999,6 +5370,7 @@ class ArsenalHUD extends Application {
     const sustentadas = actor ? t20EfeitosSustentados(actor) : [];
     const grupos = t20HudItensActor(actor);
     const pericias = t20HudPericiasTreinadasActor(actor);
+    const recursos = actor ? t20HudFormatarRecursos(actor) : "";
     const bottom = modo === "bottom";
     const layout = t20HudLayout();
     const collapsed = t20HudIsCollapsed();
@@ -5013,8 +5385,8 @@ class ArsenalHUD extends Application {
       <div class="t20-hud-drag" style="display:flex;align-items:center;gap:6px;margin-bottom:6px;border-bottom:1px solid rgba(201,162,39,0.18);padding-bottom:5px;cursor:${modo === "token" ? "default" : "move"};flex-shrink:0">
         ${img ? `<img src="${img}" style="width:30px;height:30px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.38)">` : ""}
         <div style="min-width:0;flex:1">
-          <div style="font-size:0.72em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">${personagemJogador ? "Favoritos" : "NPC/Ameaça"}</div>
-          <div style="color:#f2e6c9;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nome}</div>
+          <div style="color:#f2e6c9;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.05">${nome}</div>
+          <div style="font-size:0.78em;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px">${recursos}</div>
         </div>
         ${actor ? `
           <div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end;max-width:48%;margin-right:3px">
@@ -5041,7 +5413,7 @@ class ArsenalHUD extends Application {
         </div>
 
         <div style="margin-top:5px;font-size:0.78em;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;padding-right:12px">
-          ${personagemJogador ? "Favoritos da ficha + perícias treinadas. Use ▲▼ para reordenar." : "NPC: ataques e habilidades. Use ▲▼ para reordenar."}
+          ${personagemJogador ? "Grimório + habilidades/poderes ativáveis + favoritos. Use ▲▼ para reordenar." : "NPC: ataques e habilidades. Use ▲▼ para reordenar."}
           ${sustentadas.length ? ` · Sust.: <b style="color:#f2e6c9">${sustentadas.map(s => s.nome ?? s.name ?? s.label).join(", ")}</b>` : ""}
         </div>
       `)}
@@ -5054,9 +5426,10 @@ class ArsenalHUD extends Application {
 
   _renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador, layout = "compact", actor = null) {
     const defs = {
+      favoritos:{ titulo: "⭐ Favoritos", itens: grupos.favoritos ?? [], tipo: "item" },
       ataques:  { titulo: "⚔️ Ataques", itens: grupos.ataques, tipo: "item" },
       magias:   { titulo: "🪄 Magias", itens: grupos.magias, tipo: "item" },
-      poderes:  { titulo: "✨ Poderes", itens: grupos.poderes, tipo: "item" },
+      poderes:  { titulo: "✨ Poderes/Habilidades", itens: grupos.poderes, tipo: "item" },
       pericias: { titulo: "🎲 Perícias treinadas", itens: personagemJogador ? pericias : [], tipo: "pericia" },
     };
 
@@ -5310,6 +5683,10 @@ Hooks.once("ready", () => {
 
 Hooks.on("controlToken", () => atualizarArsenalHUD());
 Hooks.on("updateToken", () => atualizarArsenalHUD());
+Hooks.on("updateActor", (actor) => {
+  const atual = t20HudActorSelecionado();
+  if (_arsenalHUD?.rendered && atual?.id === actor?.id) atualizarArsenalHUD();
+});
 Hooks.on("refreshToken", () => {
   if (t20HudMode() === "token") atualizarArsenalHUD();
 });
