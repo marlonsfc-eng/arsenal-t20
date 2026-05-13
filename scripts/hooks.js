@@ -5586,8 +5586,6 @@ function t20ElementoTexto(el) {
 function t20AprimRoot(app) {
   let root = null;
 
-  // Foundry/Tormenta20 AbilityUseDialog costuma guardar o elemento em _element,
-  // não necessariamente em element.
   const candidatos = [
     app?.element,
     app?._element,
@@ -5595,7 +5593,6 @@ function t20AprimRoot(app) {
   ].filter(Boolean);
 
   for (const c of candidatos) {
-    if (!c) continue;
     root = c instanceof jQuery ? c[0] : c;
     if (root?.querySelector || root?.classList) break;
   }
@@ -5613,6 +5610,143 @@ function t20AprimForm(app) {
   return root.querySelector?.("#ability-use-form, form") ?? null;
 }
 
+function t20AprimItem(app) {
+  const candidatos = [
+    app?.item,
+    app?.object,
+    app?.document,
+    app?.options?.item,
+    app?.options?.object,
+    app?.options?.document,
+    app?.options?.ability,
+    app?.ability,
+  ].filter(Boolean);
+
+  for (const c of candidatos) {
+    if (c?.name && (c?.system || c?.effects || c?.type)) return c;
+  }
+
+  // Fallback por título da janela: tenta achar a magia no ator do usuário/token.
+  const root = t20AprimRoot(app);
+  const titulo = root?.querySelector?.(".window-title")?.textContent ?? app?.title ?? app?.options?.title ?? "";
+  const nome = String(titulo).replace(/Configura[cç][aã]o de uso de magia\s*:\s*/i, "").trim();
+  const actor = t20HudActorSelecionado?.();
+  if (nome && actor?.items) {
+    return Array.from(actor.items).find(i => String(i.name ?? "").trim().toLowerCase() === nome.toLowerCase()) ?? null;
+  }
+
+  return null;
+}
+
+function t20AprimTextoLimpo(str) {
+  const s = String(str ?? "");
+  try {
+    const div = document.createElement("div");
+    div.innerHTML = s;
+    return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
+  } catch {
+    return s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  }
+}
+
+function t20AprimNorm(str) {
+  return t20AprimTextoLimpo(str).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function t20AprimCustoDeTexto(txt) {
+  const m = String(txt ?? "").match(/([+-]?\d+)\s*PM\b/i);
+  if (!m) return "";
+  const n = Number(m[1]);
+  return `${n >= 0 ? "" : "-"}${Math.abs(n)} PM`;
+}
+
+function t20AprimInfoDeTexto(txt, fallback = "") {
+  let raw = t20AprimTextoLimpo(txt || fallback);
+  if (!raw) return null;
+
+  const custo = t20AprimCustoDeTexto(raw);
+  let texto = raw
+    .replace(/^Efeitos? de Uso\s*/i, "")
+    .replace(/^Aprimoramentos?\s*/i, "")
+    .replace(/^[•\-–—\s]*/, "")
+    .replace(/^[+-]?\d+\s*PM\s*[:\-–—]?\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Nomes curtos como "Magia Discreta" são válidos; não descartar.
+  if (!texto && raw) texto = raw;
+
+  if (!custo && !/PM\b/i.test(raw)) return null;
+  return { custo, texto: texto || "(sem descrição)", raw };
+}
+
+function t20AprimColetarEfeitosItem(app) {
+  const item = t20AprimItem(app);
+  if (!item) return [];
+
+  const saida = [];
+  const vistos = new Set();
+
+  const addTexto = (txt, hint = "") => {
+    const info = t20AprimInfoDeTexto(txt, hint);
+    if (!info) return;
+    const key = t20AprimNorm(`${info.custo} ${info.texto}`).slice(0, 220);
+    if (!key || vistos.has(key)) return;
+    vistos.add(key);
+    saida.push(info);
+  };
+
+  // 1) Efeitos embutidos do item: normalmente a aba "Efeitos de Uso" do T20.
+  const effects = item.effects ? Array.from(item.effects) : [];
+  for (const ef of effects) {
+    const partes = [
+      ef?.name,
+      ef?.label,
+      ef?.description,
+      ef?.description?.value,
+      ef?.system?.description,
+      ef?.system?.description?.value,
+      ef?.system?.descricao,
+      ef?.system?.descricao?.value,
+      ef?.flags?.tormenta20?.description,
+      ef?.flags?.tormenta20?.descricao,
+      ef?.changes?.map?.(c => `${c?.key ?? ""} ${c?.value ?? ""}`).join(" "),
+    ].filter(Boolean).join(" — ");
+    addTexto(partes, ef?.name ?? ef?.label ?? "");
+  }
+
+  // 2) Campos comuns dentro do system, incluindo possíveis arrays de efeitos de uso.
+  const visitar = (obj, depth = 0) => {
+    if (!obj || typeof obj !== "object" || depth > 5) return;
+
+    if (Array.isArray(obj)) {
+      for (const v of obj) visitar(v, depth + 1);
+      return;
+    }
+
+    const textoObj = [
+      obj.name, obj.nome, obj.label, obj.title, obj.titulo,
+      obj.text, obj.texto, obj.description, obj.descricao,
+      obj.description?.value, obj.descricao?.value,
+      obj.effect, obj.efeito, obj.value,
+    ].filter(Boolean).join(" — ");
+
+    if (/PM\b/i.test(textoObj)) addTexto(textoObj);
+
+    for (const [k, v] of Object.entries(obj)) {
+      if (["img", "ownership", "permission", "folder", "sort", "_stats"].includes(k)) continue;
+      if (typeof v === "string") {
+        if (/PM\b/i.test(v)) addTexto(v);
+      } else if (v && typeof v === "object") {
+        visitar(v, depth + 1);
+      }
+    }
+  };
+  visitar(item.system ?? {}, 0);
+
+  return saida;
+}
+
 function t20AprimRows(app) {
   const root = t20AprimRoot(app);
   const form = t20AprimForm(app) ?? root;
@@ -5627,7 +5761,6 @@ function t20AprimRows(app) {
       return row.querySelector("input, button");
     });
 
-  // Fallback para estruturas sem tabela real.
   if (!rows.length) {
     rows = Array.from(form.querySelectorAll(".form-group, .form-fields, .form-row, .flexrow, div"))
       .filter(el => {
@@ -5640,6 +5773,9 @@ function t20AprimRows(app) {
     rows = rows.filter(el => !rows.some(other => other !== el && el.contains(other)));
   }
 
+  const efeitosItem = t20AprimColetarEfeitosItem(app);
+  const usados = new Set();
+
   return rows.map((row, index) => {
     const cells = Array.from(row.querySelectorAll("td"));
     const aplicar = cells.find(c => c.querySelector("input, button")) ?? row.querySelector("input, button")?.closest("td, div") ?? cells[0] ?? row;
@@ -5651,8 +5787,23 @@ function t20AprimRows(app) {
       ""
     );
 
-    // A descrição costuma estar em uma célula separada, mas no T20 às vezes há
-    // células intermediárias só com custo/controles. Pegamos a célula com mais texto útil.
+    let efeito = null;
+
+    // 1) Preferência: mesmo índice da lista de efeitos do item, pois o diálogo segue a ordem da aba Efeitos de Uso.
+    if (efeitosItem[index]) efeito = efeitosItem[index];
+
+    // 2) Fallback: primeiro efeito ainda não usado com mesmo custo.
+    if (!efeito && custo) {
+      const custoNorm = custo.replace(/^\+/, "").toLowerCase();
+      efeito = efeitosItem.find((e, i) => !usados.has(i) && String(e.custo ?? "").replace(/^\+/, "").toLowerCase() === custoNorm);
+    }
+
+    if (efeito) {
+      const idxEf = efeitosItem.indexOf(efeito);
+      if (idxEf >= 0) usados.add(idxEf);
+    }
+
+    // 3) Fallback final: tenta extrair do próprio diálogo.
     const textosCelulas = cells
       .map(c => ({ el: c, txt: t20ElementoTexto(c) }))
       .filter(o => o.txt && !/^Aplicar$/i.test(o.txt))
@@ -5660,41 +5811,30 @@ function t20AprimRows(app) {
         ...o,
         clean: o.txt
           .replace(/^Aplicar\s*/i, "")
-          .replace(new RegExp(`^${String(custo).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`, "i"), "")
           .replace(/^[+\-]?\d+\s*PM\s*/i, "")
-          .replace(/^[+\-]\s*\d+\s*[+\-]?\d*\s*PM\s*/i, "")
           .trim()
       }));
 
-    let melhor = textosCelulas
+    const melhor = textosCelulas
       .filter(o => o.el !== aplicar)
       .sort((a, b) => b.clean.length - a.clean.length)[0];
 
-    if (!melhor || melhor.clean.length < 8) {
-      melhor = textosCelulas.sort((a, b) => b.clean.length - a.clean.length)[0];
-    }
-
-    let textoDesc = melhor?.clean ?? "";
-
-    if (!textoDesc || textoDesc.length < 8 || textoDesc === custo) {
-      const aplicarTxt = t20ElementoTexto(aplicar);
-      textoDesc = rowTxt
-        .replace(aplicarTxt, "")
-        .replace(new RegExp(String(custo).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "")
-        .replace(/^[+\-]?\d+\s*PM\s*/i, "")
-        .replace(/\s+/g, " ")
-        .trim();
-    }
-
-    // Remove duplicações comuns: "1 PM 1 PM texto" ou apenas custo repetido.
-    textoDesc = textoDesc
-      .replace(new RegExp(`^${String(custo).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`, "i"), "")
-      .replace(/^[+\-]?\d+\s*PM\s*/i, "")
+    let textoDesc = efeito?.texto ?? melhor?.clean ?? "";
+    textoDesc = String(textoDesc)
+      .replace(/^[+\-]?\d+\s*PM\s*[:\-–—]?\s*/i, "")
       .replace(/\s+/g, " ")
       .trim();
 
     const desc = melhor?.el ?? cells[cells.length - 1] ?? row;
-    return { index, row, aplicar, desc, custo, texto: textoDesc || "(sem descrição)" };
+    return {
+      index,
+      row,
+      aplicar,
+      desc,
+      custo: efeito?.custo || custo,
+      texto: textoDesc || "(sem descrição)",
+      fonte: efeito ? "item" : "dialogo",
+    };
   });
 }
 
