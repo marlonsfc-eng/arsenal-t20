@@ -116,6 +116,15 @@ Hooks.once("ready", () => {
     default: "panel_notification",
   });
 
+  game.settings.register(MOD, "autoAuras", {
+    name: "Auras Dinâmicas",
+    hint: "Permite ativar auras vinculadas ao token e aplicar bônus automaticamente em testes de resistência de aliados dentro da área.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+  });
+
   const ativas = [];
   if (game.settings.get(MOD, "autoAtaque"))      ativas.push("Ataque");
   if (game.settings.get(MOD, "autoSalvamento"))  ativas.push("Salvamento");
@@ -123,6 +132,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoCura"))        ativas.push("Cura");
   if (game.settings.get(MOD, "autoEfeitosContinuos")) ativas.push("Efeitos contínuos");
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
+  if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
   console.log(`Arsenal T20 | v1.6 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
   if (game.user.isGM) ui.notifications.info("⚔️ Arsenal T20 ativo!");
@@ -295,32 +305,34 @@ Hooks.on("ready", () => {
   const btn = document.createElement("button");
   btn.id    = "arsenal-cond-btn";
   btn.title = "Condições Rápidas — Arsenal T20";
-  btn.innerHTML = `<i class="fas fa-skull-crossbones" style="margin-right:3px"></i><span style="font-size:0.70em;font-family:'Cinzel',serif;letter-spacing:0.03em">Condições</span>`;
+  btn.innerHTML = `<i class="fas fa-skull-crossbones" style="margin-right:4px"></i><span style="font-size:0.76em;font-family:'Cinzel',serif;letter-spacing:0.03em">Condições</span>`;
   btn.style.cssText = `
     position: fixed;
-    bottom: 8px;
+    top: 454px;
     left: 0;
     z-index: 100;
-    height: 30px;
-    padding: 0 8px;
+    height: 34px;
+    padding: 0 10px;
     background: #1a1a26;
     border: 1px solid #3a3a50;
-    border-radius: 0 5px 5px 0;
+    border-radius: 0 6px 6px 0;
     color: #c9a227;
-    font-size: 11px;
+    font-size: 12px;
     cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 3px;
+    gap: 4px;
     box-shadow: 2px 2px 8px rgba(0,0,0,0.6);
     transition: all 0.2s;
   `;
-  // Posiciona acima da barra de players
+  // Mantém os botões logo abaixo da barra de ferramentas esquerda, sem sobrepor a lista de jogadores.
   const ajustarPosicao = () => {
-    const players = document.getElementById("players");
-    if (players) {
-      const alturaPlayers = players.offsetHeight;
-      btn.style.bottom = (alturaPlayers + 86) + "px";
+    const controls = document.getElementById("controls") ?? document.querySelector("#ui-left #controls");
+    if (controls) {
+      const rect = controls.getBoundingClientRect();
+      btn.style.top = `${Math.max(454, Math.ceil(rect.bottom + 8))}px`;
+    } else {
+      btn.style.top = "454px";
     }
   };
   btn.addEventListener("mouseenter", () => {
@@ -335,10 +347,11 @@ Hooks.on("ready", () => {
   });
   btn.addEventListener("click", () => abrirPainelCondicoes());
 
-  // Posiciona após a barra de players quando ela renderizar
+  // Reposiciona após renderização dos controles
   document.body.appendChild(btn);
   setTimeout(ajustarPosicao, 500);
   Hooks.on("renderPlayerList", ajustarPosicao);
+  Hooks.on("canvasReady", ajustarPosicao);
 });
 
 // Helper para verificar configurações
@@ -797,7 +810,7 @@ async function criarMensagemGM(totalAtaque, dadosAlvos, danoPorTipo, danoTotal) 
     let danoFinalTotal = 0;
     let linhasDano = [];
 
-    let danoPerda = 0; // perda de PV (reduz pvMax também)
+    let danoPerda = 0; // perda de PV: ignora RD/resistências, mas NÃO ignora RDimo
 
     if (temDano && a.acertou) {
       // O sistema base de Tormenta20 já entrega o dano crítico corretamente na rolagem.
@@ -810,11 +823,12 @@ async function criarMensagemGM(totalAtaque, dadosAlvos, danoPorTipo, danoTotal) 
         const ePerda   = tipoNorm === "perda";
 
         if (ePerda) {
-          // Perda de PV não sofre RD nem resistências — aplica direto.
+          // Perda de PV não sofre RD nem resistências — aplica direto no PV atual.
+          // Importante: em Tormenta20 isso NÃO reduz o PV máximo.
           danoPerda += valor;
           linhasDano.push(`
             <div style="font-size:0.82em;color:#c0392b;padding:2px 0">
-              perda de PV: ${valor} → <b>${valor}</b> (reduz PV máx)
+              perda de PV: ${valor} → <b>${valor}</b> (ignora RD)
             </div>`);
           continue;
         }
@@ -1007,27 +1021,20 @@ async function aplicarDano(btn) {
     });
   }
 
-  const pvPath    = "system.attributes.pv.value";
-  const pvMaxPath = "system.attributes.pv.max";
-  const pvAtual   = foundry.utils.getProperty(token.actor, pvPath);
-  const pvMax     = foundry.utils.getProperty(token.actor, pvMaxPath) ?? pvAtual;
+  const pvPath  = "system.attributes.pv.value";
+  const pvAtual = foundry.utils.getProperty(token.actor, pvPath);
   if (pvAtual === undefined) return ui.notifications.warn("PV não encontrado!");
 
-  let novoMax = pvMax;
-  let novoPV  = pvAtual;
+  let novoPV = pvAtual;
   const update = {};
-  let msgExtra = "";
 
-  // Perda de PV: reduz pvMax E pvAtual pelo mesmo valor
+  // Perda de PV: ignora RD/resistências, mas NÃO ignora RDimo.
   if (danoPerda > 0) {
-    novoMax = Math.max(0, pvMax  - danoPerda);
-    novoPV  = Math.max(0, pvAtual - danoPerda);
-    update[pvMaxPath] = novoMax;
-    update[pvPath]    = novoPV;
-    msgExtra += `<br>💀 Perda de PV: máx ${pvMax} → <b>${novoMax}</b>`;
+    novoPV = Math.max(0, novoPV - danoPerda);
+    update[pvPath] = novoPV;
   }
 
-  // Dano normal: reduz apenas pvAtual
+  // Dano normal: reduz apenas PV atual.
   if (dano > 0) {
     novoPV = Math.max(0, novoPV - dano);
     update[pvPath] = novoPV;
@@ -1049,6 +1056,254 @@ async function aplicarDano(btn) {
     .forEach(b => { b.disabled = true; b.style.opacity = "0.5"; });
 }
 
+
+
+
+// ============================================================
+// AURAS DINÂMICAS
+// ============================================================
+
+function t20AurasAtivasActor(actor) {
+  try {
+    const auras = actor?.getFlag?.("arsenal-t20", "aurasAtivas");
+    return Array.isArray(auras) ? auras : [];
+  } catch {
+    return [];
+  }
+}
+
+async function t20SetAurasAtivasActor(actor, auras) {
+  if (!actor) return;
+  await actor.setFlag("arsenal-t20", "aurasAtivas", Array.isArray(auras) ? auras : []);
+}
+
+function t20ValorAtributo(actor, atributo = "car") {
+  const paths = [
+    `system.atributos.${atributo}.mod`,
+    `system.atributos.${atributo}.value`,
+    `system.atributos.${atributo}.total`,
+    `system.attributes.${atributo}.mod`,
+    `system.attributes.${atributo}.value`,
+    `system.attributes.${atributo}.total`,
+    `system.${atributo}.mod`,
+    `system.${atributo}.value`,
+  ];
+
+  for (const path of paths) {
+    const raw = foundry.utils.getProperty(actor, path);
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n;
+  }
+
+  return 0;
+}
+
+function t20DistanciaTokensMetros(tokenA, tokenB) {
+  if (!tokenA || !tokenB) return Infinity;
+
+  const a = tokenA.center ?? { x: tokenA.x, y: tokenA.y };
+  const b = tokenB.center ?? { x: tokenB.x, y: tokenB.y };
+
+  const gridSize = canvas.grid?.size ?? canvas.scene?.grid?.size ?? 100;
+  const sceneDistance = Number(canvas.scene?.grid?.distance ?? 1) || 1;
+  const distPx = Math.hypot((a.x ?? 0) - (b.x ?? 0), (a.y ?? 0) - (b.y ?? 0));
+
+  return (distPx / gridSize) * sceneDistance;
+}
+
+function t20TokensSaoAliadosAura(tokenFonte, tokenAlvo, aura) {
+  if (!tokenFonte || !tokenAlvo) return false;
+
+  // Versão inicial: aliados = mesma disposição do token.
+  // Isso é simples, previsível e evita beneficiar inimigos hostis.
+  const dispFonte = tokenFonte.document?.disposition;
+  const dispAlvo = tokenAlvo.document?.disposition;
+  return dispFonte !== undefined && dispFonte === dispAlvo;
+}
+
+function t20BonusAurasResistencia(actorAlvo, tokenAlvo, salvPericia = "") {
+  if (!cfg("autoAuras")) return { bonus: 0, detalhes: [] };
+  if (!actorAlvo || !tokenAlvo) return { bonus: 0, detalhes: [] };
+
+  const detalhes = [];
+  let bonusTotal = 0;
+
+  const tokens = Array.from(canvas.tokens?.placeables ?? []).filter(t => t?.actor);
+  const periciaNorm = String(salvPericia ?? "").toLowerCase();
+
+  for (const tokenFonte of tokens) {
+    const auras = t20AurasAtivasActor(tokenFonte.actor);
+    if (!auras.length) continue;
+
+    for (const aura of auras) {
+      if (aura.tipo !== "resistencia") continue;
+
+      const aplica = aura.aplica ?? ["refl", "fort", "vont", "reflexos", "fortitude", "vontade"];
+      if (periciaNorm && !aplica.map(x => String(x).toLowerCase()).includes(periciaNorm)) continue;
+
+      if (!t20TokensSaoAliadosAura(tokenFonte, tokenAlvo, aura)) continue;
+
+      const raio = Number(aura.raio ?? 9);
+      const dist = t20DistanciaTokensMetros(tokenFonte, tokenAlvo);
+      if (dist > raio) continue;
+
+      const atributo = aura.atributo ?? "car";
+      const bonus = Number.isFinite(Number(aura.bonusFixo))
+        ? Number(aura.bonusFixo)
+        : t20ValorAtributo(tokenFonte.actor, atributo);
+
+      if (!bonus) continue;
+
+      bonusTotal += bonus;
+      detalhes.push({
+        nome: aura.nome ?? "Aura",
+        fonte: tokenFonte.name,
+        bonus,
+        distancia: dist,
+      });
+    }
+  }
+
+  return { bonus: bonusTotal, detalhes };
+}
+
+function t20TextoAuras(detalhes = []) {
+  if (!detalhes.length) return "";
+  return detalhes
+    .map(a => `${a.nome} de ${a.fonte} ${a.bonus >= 0 ? "+" : ""}${a.bonus}`)
+    .join(", ");
+}
+
+async function t20ToggleAuraSagrada() {
+  if (!cfg("autoAuras")) return ui.notifications.warn("Auras dinâmicas estão desativadas nas configurações do Arsenal T20.");
+
+  const token = canvas.tokens?.controlled?.[0];
+  if (!token?.actor) return ui.notifications.warn("Selecione o token do conjurador da aura.");
+
+  const actor = token.actor;
+  if (!game.user.isGM && !actor.isOwner) {
+    return ui.notifications.warn("Você não tem permissão para alterar auras deste personagem.");
+  }
+
+  const auras = t20AurasAtivasActor(actor);
+  const idx = auras.findIndex(a => a.id === "aura-sagrada");
+
+  if (idx >= 0) {
+    const removida = auras.splice(idx, 1)[0];
+    await t20SetAurasAtivasActor(actor, auras);
+    t20AtualizarAurasVisuais();
+    await ChatMessage.create({
+      content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #64748b;padding:8px 11px;border-radius:6px;color:#d7dcea">
+        🛡️ <b>${removida.nome ?? "Aura Sagrada"}</b> foi desativada em <b>${actor.name}</b>.
+      </div>`
+    });
+    return;
+  }
+
+  const bonus = t20ValorAtributo(actor, "car");
+  auras.push({
+    id: "aura-sagrada",
+    nome: "Aura Sagrada",
+    tipo: "resistencia",
+    raio: 9,
+    atributo: "car",
+    aplica: ["refl", "fort", "vont", "reflexos", "fortitude", "vontade"],
+    aliados: "mesmaDisposicao",
+    criadoEm: Date.now(),
+  });
+
+  await t20SetAurasAtivasActor(actor, auras);
+  t20AtualizarAurasVisuais();
+
+  await ChatMessage.create({
+    content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #2dd4bf;padding:8px 11px;border-radius:6px;color:#d7dcea">
+      🛡️ <b>Aura Sagrada</b> ativada em <b>${actor.name}</b>.
+      <br><span style="font-size:0.88em;color:#9ca3af">Raio: 9m · Bônus: CAR (${bonus >= 0 ? "+" : ""}${bonus}) · Afeta aliados pela disposição do token.</span>
+    </div>`
+  });
+}
+
+function t20AtualizarAurasVisuais() {
+  try {
+    if (!canvas?.ready || !canvas.interface || !window.PIXI) return;
+
+    if (canvas.arsenalT20AuraLayer) {
+      canvas.arsenalT20AuraLayer.destroy({ children: true });
+      canvas.arsenalT20AuraLayer = null;
+    }
+
+    if (!cfg("autoAuras")) return;
+
+    const layer = new PIXI.Container();
+    layer.name = "arsenal-t20-aura-layer";
+    canvas.interface.addChild(layer);
+    canvas.arsenalT20AuraLayer = layer;
+
+    const gridSize = canvas.grid?.size ?? canvas.scene?.grid?.size ?? 100;
+    const sceneDistance = Number(canvas.scene?.grid?.distance ?? 1) || 1;
+
+    for (const token of canvas.tokens?.placeables ?? []) {
+      const auras = t20AurasAtivasActor(token.actor);
+      if (!auras.length) continue;
+
+      for (const aura of auras) {
+        const raio = Number(aura.raio ?? 9);
+        const raioPx = (raio / sceneDistance) * gridSize;
+        const center = token.center ?? { x: token.x, y: token.y };
+
+        const g = new PIXI.Graphics();
+        g.lineStyle(2, 0x2dd4bf, 0.75);
+        g.beginFill(0x2dd4bf, 0.10);
+        g.drawCircle(center.x, center.y, raioPx);
+        g.endFill();
+        layer.addChild(g);
+      }
+    }
+  } catch (e) {
+    console.warn("Arsenal T20 | erro ao desenhar auras", e);
+  }
+}
+
+Hooks.once("ready", () => {
+  setTimeout(() => t20AtualizarAurasVisuais(), 1000);
+});
+
+Hooks.on("canvasReady", () => t20AtualizarAurasVisuais());
+Hooks.on("updateToken", () => t20AtualizarAurasVisuais());
+Hooks.on("deleteToken", () => t20AtualizarAurasVisuais());
+Hooks.on("controlToken", () => t20AtualizarAurasVisuais());
+Hooks.on("updateActor", (actor, changed) => {
+  if (foundry.utils.getProperty(changed, "flags.arsenal-t20.aurasAtivas") !== undefined) {
+    t20AtualizarAurasVisuais();
+  }
+});
+
+Hooks.on("getSceneControlButtons", (controls) => {
+  if (Array.isArray(controls)) {
+    const tokens = controls.find(c => c.name === "token");
+    if (tokens) {
+      tokens.tools.push({
+        name: "arsenal-aura-sagrada",
+        title: "Alternar Aura Sagrada — Arsenal T20",
+        icon: "fas fa-shield-halved",
+        button: true,
+        onClick: () => t20ToggleAuraSagrada(),
+      });
+    }
+  } else {
+    const tokens = controls.token ?? controls.tokens;
+    if (tokens) {
+      tokens.tools["arsenal-aura-sagrada"] = {
+        name: "arsenal-aura-sagrada",
+        title: "Alternar Aura Sagrada — Arsenal T20",
+        icon: "fas fa-shield-halved",
+        button: true,
+        onChange: () => t20ToggleAuraSagrada(),
+        order: 103,
+      };
+    }
+  }
+});
 
 
 // ============================================================
@@ -1820,7 +2075,10 @@ async function rolarSalvamento(btn) {
   const _pRaw    = pericias[salvPericia];
   // T20 às vezes serializa a perícia como string JSON — faz o parse se necessário
   const pericia  = typeof _pRaw === "string" ? JSON.parse(_pRaw) : (_pRaw ?? {});
-  const bonus    = pericia?.total ?? pericia?.value ?? pericia?.mod ?? 0;
+  const bonusBase = pericia?.total ?? pericia?.value ?? pericia?.mod ?? 0;
+  const auraInfo = t20BonusAurasResistencia(actor, tokenAlvo, salvPericia);
+  const bonus    = bonusBase + auraInfo.bonus;
+  const auraTxt  = t20TextoAuras(auraInfo.detalhes);
 
   const roll    = await new Roll(`1d20 + ${bonus}`).evaluate();
   const sucesso = roll.total >= cd;
@@ -1894,7 +2152,7 @@ async function rolarSalvamento(btn) {
   // Mensagem da rolagem (limpa, só o resultado do dado)
   await roll.toMessage({
     speaker: ChatMessage.getSpeaker({ actor }),
-    flavor: `<b>${salvLabel}</b> contra <i>${nomeItem}</i> (CD ${cd})`,
+    flavor: `<b>${salvLabel}${auraTxt ? ` (${auraTxt})` : ""}</b> contra <i>${nomeItem}</i> (CD ${cd})`,
   });
 
   // Mensagem separada com resultado e dano aplicado
@@ -2182,10 +2440,13 @@ async function rolarSalvamentoCustom({ actor, cd, nomeItem, danoBase, tipoDano,
   const _pRaw2    = pericias[salvPericia];
   const p         = typeof _pRaw2 === "string" ? JSON.parse(_pRaw2) : (_pRaw2 ?? {});
   const bonusBase = p?.total ?? p?.value ?? p?.mod ?? 0;
-  const bonus     = bonusBase + bonusExtra;
-  const bonusStr = bonusExtra !== 0 ? ` ${bonusExtra > 0 ? "+" : ""}${bonusExtra} custom` : "";
+  const tokenParaAura = tokenAlvo ?? actor.getActiveTokens?.()[0] ?? canvas.tokens.controlled?.[0] ?? null;
+  const auraInfo = t20BonusAurasResistencia(actor, tokenParaAura, salvPericia);
+  const bonus     = bonusBase + bonusExtra + auraInfo.bonus;
+  const auraTxt   = t20TextoAuras(auraInfo.detalhes);
+  const bonusStr = `${bonusExtra !== 0 ? ` ${bonusExtra > 0 ? "+" : ""}${bonusExtra} custom` : ""}${auraTxt ? ` (${auraTxt})` : ""}`;
 
-  console.log(`Arsenal T20 | rolarSalvamentoCustom | pericia=${salvPericia} bonusBase=${bonusBase} bonusExtra=${bonusExtra} total=${bonus} cd=${cd}`);
+  console.log(`Arsenal T20 | rolarSalvamentoCustom | pericia=${salvPericia} bonusBase=${bonusBase} bonusExtra=${bonusExtra} aura=${auraInfo.bonus} total=${bonus} cd=${cd}`);
   const roll    = await new Roll(`1d20 + ${bonus}`).evaluate();
   const sucesso = roll.total >= cd;
   const cor     = sucesso ? "#27ae60" : "#e74c3c";
@@ -3672,32 +3933,39 @@ Hooks.once("ready", () => {
     const btn = document.createElement("button");
     btn.id = "arsenal-recursos-btn";
     btn.title = "Log de Recursos — Arsenal T20";
-    btn.innerHTML = `<i class="fas fa-chart-line" style="margin-right:4px"></i><span style="font-size:0.70em;font-family:'Cinzel',serif;letter-spacing:0.03em">Recursos</span>`;
+    btn.innerHTML = `<i class="fas fa-chart-line" style="margin-right:4px"></i><span style="font-size:0.76em;font-family:'Cinzel',serif;letter-spacing:0.03em">Recursos</span>`;
     btn.style.cssText = `
       position: fixed;
-      bottom: 64px;
+      top: 494px;
       left: 0;
       z-index: 101;
-      height: 30px;
-      padding: 0 8px;
+      height: 34px;
+      padding: 0 10px;
       background: #111827;
       border: 1px solid #374151;
-      border-radius: 0 5px 5px 0;
+      border-radius: 0 6px 6px 0;
       color: #93c5fd;
-      font-size: 11px;
+      font-size: 12px;
       cursor: pointer;
       display: flex;
       align-items: center;
-      gap: 3px;
+      gap: 4px;
       box-shadow: 2px 2px 8px rgba(0,0,0,0.55);
     `;
 
     const ajustarPosicaoRecursos = () => {
-      const players = document.getElementById("players");
-      if (players) {
-        btn.style.bottom = (players.offsetHeight + 48) + "px";
+      const condBtn = document.getElementById("arsenal-cond-btn");
+      if (condBtn) {
+        const rect = condBtn.getBoundingClientRect();
+        btn.style.top = `${Math.ceil(rect.bottom + 6)}px`;
       } else {
-        btn.style.bottom = "104px";
+        const controls = document.getElementById("controls") ?? document.querySelector("#ui-left #controls");
+        if (controls) {
+          const rect = controls.getBoundingClientRect();
+          btn.style.top = `${Math.max(494, Math.ceil(rect.bottom + 48))}px`;
+        } else {
+          btn.style.top = "494px";
+        }
       }
     };
 
@@ -3715,6 +3983,7 @@ Hooks.once("ready", () => {
     document.body.appendChild(btn);
     setTimeout(ajustarPosicaoRecursos, 500);
     Hooks.on("renderPlayerList", ajustarPosicaoRecursos);
+    Hooks.on("canvasReady", ajustarPosicaoRecursos);
   }
 });
 
