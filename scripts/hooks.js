@@ -4384,6 +4384,21 @@ function t20HudSetSavedSize(modo, size) {
   try { localStorage.setItem(t20HudStorageKey(modo, "size"), JSON.stringify(size)); } catch {}
 }
 
+function t20HudIsCollapsed() {
+  try {
+    return localStorage.getItem(`arsenal-t20.hud.collapsed.${game.user?.id ?? "user"}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function t20HudSetCollapsed(value) {
+  try {
+    localStorage.setItem(`arsenal-t20.hud.collapsed.${game.user?.id ?? "user"}`, value ? "1" : "0");
+  } catch {}
+}
+
+
 const T20_HUD_CATEGORIAS_PADRAO = ["ataques", "magias", "poderes", "pericias"];
 
 function t20HudGetCategoryOrder() {
@@ -4918,10 +4933,10 @@ class ArsenalHUD extends Application {
     const salvo = t20HudGetSavedSize(modo);
     const defaults = modo === "bottom" ? { width: 640, height: 230 } : { width: 315, height: 390 };
     const w = Number(salvo?.width) || defaults.width;
-    const h = Number(salvo?.height) || defaults.height;
+    const h = t20HudIsCollapsed() ? 58 : (Number(salvo?.height) || defaults.height);
 
     el.style.width = `${Math.max(245, Math.min(window.innerWidth - 24, w))}px`;
-    el.style.height = `${Math.max(165, Math.min(window.innerHeight - 32, h))}px`;
+    el.style.height = `${t20HudIsCollapsed() ? 58 : Math.max(165, Math.min(window.innerHeight - 32, h))}px`;
     el.style.minWidth = "245px";
     el.style.minHeight = "165px";
     el.style.maxWidth = `${window.innerWidth - 12}px`;
@@ -4986,6 +5001,7 @@ class ArsenalHUD extends Application {
     const pericias = t20HudPericiasTreinadasActor(actor);
     const bottom = modo === "bottom";
     const layout = t20HudLayout();
+    const collapsed = t20HudIsCollapsed();
     const personagemJogador = t20HudActorEhPersonagemJogador(actor);
 
     return `<div style="
@@ -5008,9 +5024,10 @@ class ArsenalHUD extends Application {
             <button class="t20-hud-action" title="Cura manual" data-action="cura" style="${this._iconBtn("#14351f","#4ade80")}">💚</button>
           </div>` : ""}
         <button class="t20-hud-refresh" title="Atualizar" style="padding:2px 5px;border-radius:5px;background:#1f2937;border:1px solid #4b5563;color:#fff;cursor:pointer;font-size:13px">↻</button>
+        <button class="t20-hud-minimize" title="${collapsed ? "Expandir HUD" : "Minimizar HUD"}" style="padding:2px 6px;border-radius:5px;background:#1f2937;border:1px solid #4b5563;color:#fff;cursor:pointer;font-size:13px">${collapsed ? "▣" : "—"}</button>
       </div>
 
-      ${!actor ? `<div style="color:#9ca3af;padding:6px">Selecione um token para usar o HUD.</div>` : `
+      ${collapsed ? "" : (!actor ? `<div style="color:#9ca3af;padding:6px">Selecione um token para usar o HUD.</div>` : `
         <div style="${bottom ? "display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:7px;overflow:auto;min-height:0;flex:1;padding-right:2px" : "overflow:auto;min-height:0;flex:1;padding-right:2px"}">
           ${this._renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador, layout, actor)}
         </div>
@@ -5027,7 +5044,7 @@ class ArsenalHUD extends Application {
           ${personagemJogador ? "Favoritos da ficha + perícias treinadas. Use ▲▼ para reordenar." : "NPC: ataques e habilidades. Use ▲▼ para reordenar."}
           ${sustentadas.length ? ` · Sust.: <b style="color:#f2e6c9">${sustentadas.map(s => s.nome ?? s.name ?? s.label).join(", ")}</b>` : ""}
         </div>
-      `}
+      `)}
       <div class="t20-hud-resize" title="Redimensionar"
         style="position:absolute;right:2px;bottom:2px;width:14px;height:14px;cursor:nwse-resize;
           border-right:2px solid rgba(201,162,39,0.75);border-bottom:2px solid rgba(201,162,39,0.75);
@@ -5052,6 +5069,37 @@ class ArsenalHUD extends Application {
         return this._secao(defs[cat].titulo, defs[cat].itens, bottom, defs[cat].tipo, cat, layout);
       })
       .join("");
+  }
+
+  _secaoGrimorio(actor, bottom, layout = "compact") {
+    const grupos = t20HudMagiasPorCirculo(actor);
+    const cards = layout === "cards";
+    const circulos = [1, 2, 3, 4, 5];
+
+    return `<div style="${bottom ? "min-width:0" : "margin-bottom:9px"}">
+      <div style="display:flex;align-items:center;gap:4px;margin:3px 0 5px">
+        <div style="font-size:0.92em;color:#d9b85f;font-weight:bold;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🪄 Grimório</div>
+        <button class="t20-hud-cat-move" data-cat="magias" data-dir="-1" title="Mover categoria para cima/esquerda"
+          style="padding:1px 5px;border-radius:4px;background:#1f2937;border:1px solid #4b5563;color:#cbd5e1;cursor:pointer;font-size:0.78em">▲</button>
+        <button class="t20-hud-cat-move" data-cat="magias" data-dir="1" title="Mover categoria para baixo/direita"
+          style="padding:1px 5px;border-radius:4px;background:#1f2937;border:1px solid #4b5563;color:#cbd5e1;cursor:pointer;font-size:0.78em">▼</button>
+      </div>
+      <div style="display:grid;grid-template-columns:${cards ? "repeat(auto-fit,minmax(118px,1fr))" : "repeat(auto-fit,minmax(92px,1fr))"};gap:6px">
+        ${circulos.map(c => {
+          const qtd = grupos[c]?.length ?? 0;
+          const disabled = qtd <= 0;
+          return `<button class="t20-hud-grimorio-circulo" data-circulo="${c}" ${disabled ? "disabled" : ""}
+            style="min-height:${cards ? "54px" : "42px"};padding:7px;border-radius:8px;
+            background:${disabled ? "#111827" : "linear-gradient(180deg,#2c2140,#171226)"};
+            border:1px solid ${disabled ? "#273142" : "#8b5cf6"};color:${disabled ? "#6b7280" : "#ddd6fe"};
+            cursor:${disabled ? "not-allowed" : "pointer"};font-weight:bold;text-align:center;font-size:${cards ? "0.92em" : "0.86em"};
+            box-shadow:${disabled ? "none" : "inset 0 1px 0 rgba(255,255,255,0.05)"}">
+            <div>${c}º Círculo</div>
+            <div style="font-size:0.78em;color:${disabled ? "#4b5563" : "#c4b5fd"}">${qtd} magia(s)</div>
+          </button>`;
+        }).join("")}
+      </div>
+    </div>`;
   }
 
   _secao(titulo, itens, bottom, tipo = "item", cat = "", layout = "compact") {
@@ -5204,6 +5252,13 @@ class ArsenalHUD extends Application {
     this._iniciarResize();
 
     html.find(".t20-hud-refresh").on("click", () => this.render(false));
+
+    html.find(".t20-hud-minimize").on("click", ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      t20HudSetCollapsed(!t20HudIsCollapsed());
+      this.render(false);
+    });
 
     html.find(".t20-hud-cat-move").on("click", ev => {
       ev.preventDefault();
