@@ -162,6 +162,19 @@ Hooks.once("ready", () => {
     default: "compact",
   });
 
+  game.settings.register(MOD, "arsenalHudSpellMode", {
+    name: "Magias no Arsenal HUD",
+    hint: "Define como magias aparecem no HUD. Grimório por círculo troca a lista de magias por cards de 1º a 5º círculo que abrem uma janela separada.",
+    scope: "client",
+    config: true,
+    type: String,
+    choices: {
+      list: "Lista direta",
+      grimoire: "Grimório por círculo"
+    },
+    default: "list",
+  });
+
   const ativas = [];
   if (game.settings.get(MOD, "autoAtaque"))      ativas.push("Ataque");
   if (game.settings.get(MOD, "autoSalvamento"))  ativas.push("Salvamento");
@@ -4329,6 +4342,14 @@ function t20HudLayout() {
   }
 }
 
+function t20HudSpellMode() {
+  try {
+    return game.settings.get("arsenal-t20", "arsenalHudSpellMode") ?? "list";
+  } catch {
+    return "list";
+  }
+}
+
 function t20HudTokenSelecionado() {
   return canvas.tokens?.controlled?.[0] ?? null;
 }
@@ -4501,6 +4522,153 @@ function t20HudItensActor(actor) {
 
   return grupos;
 }
+
+function t20HudTodasMagiasActor(actor) {
+  if (!actor) return [];
+  return Array.from(actor.items ?? [])
+    .filter(item => t20HudClassificarItem(item) === "magias")
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), "pt-BR"));
+}
+
+function t20HudExtrairCirculoMagia(item) {
+  const candidatos = [
+    item?.system?.circulo,
+    item?.system?.circle,
+    item?.system?.nivel,
+    item?.system?.level,
+    item?.system?.rank,
+    item?.system?.grau,
+    item?.system?.spellLevel,
+    item?.system?.spell?.level,
+  ];
+
+  for (const c of candidatos) {
+    const val = (c && typeof c === "object") ? (c.value ?? c.total ?? c.nivel ?? c.level) : c;
+    const n = Number(String(val ?? "").match(/[1-5]/)?.[0]);
+    if (Number.isFinite(n) && n >= 1 && n <= 5) return n;
+  }
+
+  const txt = t20HudItemTexto(item);
+  const m =
+    txt.match(/([1-5])\s*[ºo]?\s*c[ií]rculo/i) ??
+    txt.match(/c[ií]rculo\s*[:\-]?\s*([1-5])/i) ??
+    txt.match(/\b([1-5])\s*circ/i);
+
+  if (m) {
+    const n = Number(m[1]);
+    if (n >= 1 && n <= 5) return n;
+  }
+
+  const palavras = [
+    ["primeiro", 1], ["segundo", 2], ["terceiro", 3], ["quarto", 4], ["quinto", 5],
+    ["1º", 1], ["2º", 2], ["3º", 3], ["4º", 4], ["5º", 5],
+  ];
+  for (const [p, n] of palavras) {
+    if (txt.includes(`${p} círculo`) || txt.includes(`${p} circulo`)) return n;
+  }
+
+  return null;
+}
+
+function t20HudMagiasPorCirculo(actor) {
+  const grupos = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+  for (const item of t20HudTodasMagiasActor(actor)) {
+    const c = t20HudExtrairCirculoMagia(item);
+    if (c && grupos[c]) grupos[c].push(item);
+  }
+  return grupos;
+}
+
+let _arsenalGrimorio = null;
+
+function abrirArsenalGrimorio(actor, circulo) {
+  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+  if (_arsenalGrimorio?.rendered) _arsenalGrimorio.close();
+  _arsenalGrimorio = new ArsenalGrimorio(actor, circulo);
+  _arsenalGrimorio.render(true);
+}
+
+class ArsenalGrimorio extends Application {
+  constructor(actor, circulo, options = {}) {
+    super(options);
+    this.actor = actor;
+    this.circulo = Number(circulo);
+    this.busca = "";
+  }
+
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: "arsenal-grimorio",
+      title: "Grimório — Arsenal T20",
+      width: 360,
+      height: "auto",
+      resizable: true,
+      minimizable: true,
+    });
+  }
+
+  async getData() { return {}; }
+  get template() { return null; }
+
+  async _renderInner() {
+    const div = document.createElement("div");
+    div.innerHTML = this._html();
+    return $(div);
+  }
+
+  _magias() {
+    const q = String(this.busca ?? "").trim().toLowerCase();
+    return t20HudTodasMagiasActor(this.actor)
+      .filter(item => t20HudExtrairCirculoMagia(item) === this.circulo)
+      .filter(item => !q || String(item.name ?? "").toLowerCase().includes(q));
+  }
+
+  _html() {
+    const magias = this._magias();
+
+    return `<div style="background:linear-gradient(180deg,#111827,#0b1020);border:1px solid #374151;border-top:3px solid #c9a227;
+      border-radius:8px;color:#e5e7eb;font-family:serif;padding:10px;max-height:620px;display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(201,162,39,0.22);padding-bottom:8px;margin-bottom:8px">
+        ${this.actor?.img ? `<img src="${this.actor.img}" style="width:34px;height:34px;border-radius:6px;object-fit:cover;border:1px solid rgba(201,162,39,0.45)">` : ""}
+        <div style="min-width:0;flex:1">
+          <div style="font-size:0.78em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">Grimório — ${this.circulo}º Círculo</div>
+          <div style="color:#f2e6c9;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.actor?.name ?? "Conjurador"}</div>
+        </div>
+        <div style="font-size:0.82em;color:#9ca3af">${magias.length} magia(s)</div>
+      </div>
+
+      <input class="t20-grimorio-busca" type="text" placeholder="Buscar magia..."
+        value="${this.busca ?? ""}"
+        style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:7px 9px;border-radius:6px;
+        background:#0f172a;border:1px solid #303b52;color:#e5e7eb">
+
+      <div style="overflow:auto;min-height:0">
+        ${magias.length ? magias.map(item => `
+          <button class="t20-grimorio-magia" data-item-id="${item.id}" title="${item.name}"
+            style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;margin-bottom:5px;border-radius:7px;
+            background:linear-gradient(180deg,#182235,#111827);border:1px solid #374151;color:#e5e7eb;cursor:pointer;
+            font-size:0.92em;text-align:left;min-width:0">
+            ${item.img ? `<img src="${item.img}" style="width:28px;height:28px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.35)">` : `<span style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:#0f172a">🪄</span>`}
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</span>
+          </button>`).join("") : `<div style="color:#9ca3af;padding:12px;text-align:center">Nenhuma magia encontrada neste círculo.</div>`}
+      </div>
+    </div>`;
+  }
+
+  activateListeners(html) {
+    super.activateListeners(html);
+
+    html.find(".t20-grimorio-busca").on("input", ev => {
+      this.busca = ev.currentTarget.value ?? "";
+      this.render(false);
+    });
+
+    html.find(".t20-grimorio-magia").on("click", async ev => {
+      await t20HudUsarItem(this.actor, ev.currentTarget.dataset.itemId);
+    });
+  }
+}
+
 
 const T20_HUD_PERICIAS_LABELS = {
   acro: "Acrobacia", ades: "Adestramento", atua: "Atuação", cava: "Cavalgar",
@@ -4844,7 +5012,7 @@ class ArsenalHUD extends Application {
 
       ${!actor ? `<div style="color:#9ca3af;padding:6px">Selecione um token para usar o HUD.</div>` : `
         <div style="${bottom ? "display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:7px;overflow:auto;min-height:0;flex:1;padding-right:2px" : "overflow:auto;min-height:0;flex:1;padding-right:2px"}">
-          ${this._renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador, layout)}
+          ${this._renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador, layout, actor)}
         </div>
 
         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:6px;flex-shrink:0;padding-right:12px">
@@ -4867,7 +5035,7 @@ class ArsenalHUD extends Application {
     </div>`;
   }
 
-  _renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador, layout = "compact") {
+  _renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador, layout = "compact", actor = null) {
     const defs = {
       ataques:  { titulo: "⚔️ Ataques", itens: grupos.ataques, tipo: "item" },
       magias:   { titulo: "🪄 Magias", itens: grupos.magias, tipo: "item" },
@@ -4877,7 +5045,12 @@ class ArsenalHUD extends Application {
 
     return t20HudGetCategoryOrder()
       .filter(cat => cat !== "pericias" || personagemJogador)
-      .map(cat => this._secao(defs[cat].titulo, defs[cat].itens, bottom, defs[cat].tipo, cat, layout))
+      .map(cat => {
+        if (cat === "magias" && t20HudSpellMode() === "grimoire") {
+          return this._secaoGrimorio(actor, bottom, layout);
+        }
+        return this._secao(defs[cat].titulo, defs[cat].itens, bottom, defs[cat].tipo, cat, layout);
+      })
       .join("");
   }
 
@@ -5047,6 +5220,12 @@ class ArsenalHUD extends Application {
     html.find(".t20-hud-pericia").on("click", async ev => {
       const actor = t20HudActorSelecionado();
       await t20HudRolarPericia(actor, ev.currentTarget.dataset.periciaId);
+    });
+
+    html.find(".t20-hud-grimorio-circulo").on("click", ev => {
+      const actor = t20HudActorSelecionado();
+      const circulo = Number(ev.currentTarget.dataset.circulo);
+      abrirArsenalGrimorio(actor, circulo);
     });
 
     html.find(".t20-hud-action").on("click", async ev => {
