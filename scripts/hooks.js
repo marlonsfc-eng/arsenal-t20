@@ -99,6 +99,23 @@ Hooks.once("ready", () => {
     default: {},
   });
 
+  game.settings.register(MOD, "resourceMonitorMode", {
+    name: "Monitor de Recursos",
+    hint: "Define como alterações de PV/PM de personagens jogadores serão informadas ao GM.",
+    scope: "world",
+    config: true,
+    type: String,
+    choices: {
+      off: "Desligado",
+      notification: "Notificação discreta",
+      panel: "Painel Arsenal T20",
+      panel_notification: "Painel + notificação discreta",
+      round_summary: "Resumo por rodada",
+      chat: "Chat privado do GM"
+    },
+    default: "panel_notification",
+  });
+
   const ativas = [];
   if (game.settings.get(MOD, "autoAtaque"))      ativas.push("Ataque");
   if (game.settings.get(MOD, "autoSalvamento"))  ativas.push("Salvamento");
@@ -278,23 +295,23 @@ Hooks.on("ready", () => {
   const btn = document.createElement("button");
   btn.id    = "arsenal-cond-btn";
   btn.title = "Condições Rápidas — Arsenal T20";
-  btn.innerHTML = `<i class="fas fa-skull-crossbones" style="margin-right:4px"></i><span style="font-size:0.75em;font-family:'Cinzel',serif;letter-spacing:0.03em">Condições</span>`;
+  btn.innerHTML = `<i class="fas fa-skull-crossbones" style="margin-right:3px"></i><span style="font-size:0.70em;font-family:'Cinzel',serif;letter-spacing:0.03em">Condições</span>`;
   btn.style.cssText = `
     position: fixed;
     bottom: 8px;
     left: 0;
     z-index: 100;
-    height: 44px;
-    padding: 0 12px;
+    height: 30px;
+    padding: 0 8px;
     background: #1a1a26;
     border: 1px solid #3a3a50;
-    border-radius: 0 6px 6px 0;
+    border-radius: 0 5px 5px 0;
     color: #c9a227;
-    font-size: 13px;
+    font-size: 11px;
     cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
     box-shadow: 2px 2px 8px rgba(0,0,0,0.6);
     transition: all 0.2s;
   `;
@@ -303,7 +320,7 @@ Hooks.on("ready", () => {
     const players = document.getElementById("players");
     if (players) {
       const alturaPlayers = players.offsetHeight;
-      btn.style.bottom = (alturaPlayers + 12) + "px";
+      btn.style.bottom = (alturaPlayers + 86) + "px";
     }
   };
   btn.addEventListener("mouseenter", () => {
@@ -3453,7 +3470,7 @@ Hooks.on("getSceneControlButtons", (controls) => {
 
 
 // ── Monitor discreto de PV/PM de personagens jogadores ─────
-// Em vez de poluir o chat, o GM recebe uma notificação discreta e um log consultável em painel.
+// Opções disponíveis no módulo: desligado, notificação, painel, painel+notificação, resumo por rodada ou chat privado.
 
 function t20IsPersonagemJogador(actor) {
   if (!actor) return false;
@@ -3476,8 +3493,17 @@ function t20GetChangedValue(changed, path) {
   return foundry.utils.getProperty(changed, path);
 }
 
+function t20ResourceMonitorMode() {
+  try {
+    return game.settings.get("arsenal-t20", "resourceMonitorMode") ?? "panel_notification";
+  } catch {
+    return "panel_notification";
+  }
+}
+
 const t20RecursosCacheGM = new Map();
 const t20RecursosLogGM = [];
+const t20RecursosResumoRodada = [];
 let _arsenalRecursosPanel = null;
 
 function t20KeyRecursoActor(actor) {
@@ -3489,13 +3515,37 @@ function t20AtualizarCacheRecursos(actor) {
   t20RecursosCacheGM.set(t20KeyRecursoActor(actor), t20GetRecursoAtual(actor));
 }
 
+function t20PushLogRecursos(entrada) {
+  t20RecursosLogGM.unshift(entrada);
+  if (t20RecursosLogGM.length > 200) t20RecursosLogGM.length = 200;
+
+  if (_arsenalRecursosPanel?.rendered) {
+    _arsenalRecursosPanel.render(false);
+  }
+}
+
+async function t20MensagemChatRecurso(entrada) {
+  await ChatMessage.create({
+    whisper: ChatMessage.getWhisperRecipients("GM"),
+    content: `<div style="background:#111827;border:1px solid #2b3347;border-left:4px solid #64748b;padding:7px 10px;border-radius:6px;color:#d7dcea;font-size:0.9em">
+      <b>📊 Recurso alterado — ${entrada.actor}</b><br>
+      ${entrada.linhas.join("<br>")}
+      <br><span style="font-size:0.82em;color:#9ca3af">Origem: ${entrada.origem}</span>
+    </div>`
+  });
+}
+
 function t20RegistrarLogRecurso({ actor, linhas, textoCurto, userId }) {
   if (!game.user.isGM || !actor || !linhas?.length) return;
+
+  const modo = t20ResourceMonitorMode();
+  if (modo === "off") return;
 
   const quem = game.users.get(userId)?.name ?? "Sistema";
   const entrada = {
     id: foundry.utils.randomID?.() ?? `${Date.now()}-${Math.random()}`,
     time: Date.now(),
+    round: game.combat?.round ?? null,
     actor: actor.name,
     actorUuid: actor.uuid,
     origem: quem,
@@ -3503,14 +3553,42 @@ function t20RegistrarLogRecurso({ actor, linhas, textoCurto, userId }) {
     textoCurto,
   };
 
-  t20RecursosLogGM.unshift(entrada);
-  if (t20RecursosLogGM.length > 200) t20RecursosLogGM.length = 200;
-
-  ui.notifications.info(`📊 ${textoCurto}`);
-
-  if (_arsenalRecursosPanel?.rendered) {
-    _arsenalRecursosPanel.render(false);
+  if (modo === "chat") {
+    t20MensagemChatRecurso(entrada);
+    return;
   }
+
+  if (modo === "notification" || modo === "panel_notification") {
+    ui.notifications.info(`📊 ${textoCurto}`);
+  }
+
+  if (modo === "panel" || modo === "panel_notification" || modo === "round_summary") {
+    t20PushLogRecursos(entrada);
+  }
+
+  if (modo === "round_summary") {
+    t20RecursosResumoRodada.push(entrada);
+  }
+}
+
+function t20ResumoRecursosRodada() {
+  if (!game.user.isGM) return;
+  if (t20ResourceMonitorMode() !== "round_summary") return;
+  if (!t20RecursosResumoRodada.length) return;
+
+  const porAtor = new Map();
+  for (const e of t20RecursosResumoRodada) {
+    const arr = porAtor.get(e.actor) ?? [];
+    arr.push(...e.linhas.map(l => l.replace(/<[^>]+>/g, "")));
+    porAtor.set(e.actor, arr);
+  }
+
+  const resumo = [...porAtor.entries()]
+    .map(([ator, linhas]) => `${ator}: ${linhas.join(" | ")}`)
+    .join(" · ");
+
+  ui.notifications.info(`📊 Resumo de recursos: ${resumo}`);
+  t20RecursosResumoRodada.length = 0;
 }
 
 class ArsenalRecursosPanel extends Application {
@@ -3535,12 +3613,13 @@ class ArsenalRecursosPanel extends Application {
 
   _html() {
     const entradas = t20RecursosLogGM;
+    const modo = t20ResourceMonitorMode();
 
     return `<div style="padding:12px;background:#111827;color:#e5e7eb;font-family:serif;max-height:640px;overflow:auto">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
         <div style="flex:1">
           <div style="color:#d9b85f;font-weight:bold;font-size:1.1em">Alterações de PV/PM</div>
-          <div style="font-size:0.82em;color:#9ca3af">Mostra alterações de recursos de personagens jogadores sem enviar mensagens ao chat.</div>
+          <div style="font-size:0.82em;color:#9ca3af">Modo atual: <b>${modo}</b>. Este painel não envia mensagens ao chat, exceto no modo “Chat privado do GM”.</div>
         </div>
         <button class="t20-limpar-log-recursos" style="padding:6px 10px;border-radius:6px;background:#374151;border:1px solid #6b7280;color:#fff;cursor:pointer">Limpar</button>
       </div>
@@ -3565,6 +3644,7 @@ class ArsenalRecursosPanel extends Application {
     super.activateListeners(html);
     html.find(".t20-limpar-log-recursos").on("click", () => {
       t20RecursosLogGM.length = 0;
+      t20RecursosResumoRodada.length = 0;
       this.render(false);
     });
   }
@@ -3592,25 +3672,35 @@ Hooks.once("ready", () => {
     const btn = document.createElement("button");
     btn.id = "arsenal-recursos-btn";
     btn.title = "Log de Recursos — Arsenal T20";
-    btn.innerHTML = `<i class="fas fa-chart-line" style="margin-right:4px"></i><span style="font-size:0.75em;font-family:'Cinzel',serif;letter-spacing:0.03em">Recursos</span>`;
+    btn.innerHTML = `<i class="fas fa-chart-line" style="margin-right:4px"></i><span style="font-size:0.70em;font-family:'Cinzel',serif;letter-spacing:0.03em">Recursos</span>`;
     btn.style.cssText = `
       position: fixed;
       bottom: 64px;
       left: 0;
       z-index: 101;
-      height: 38px;
-      padding: 0 10px;
+      height: 30px;
+      padding: 0 8px;
       background: #111827;
       border: 1px solid #374151;
-      border-radius: 0 6px 6px 0;
+      border-radius: 0 5px 5px 0;
       color: #93c5fd;
-      font-size: 13px;
+      font-size: 11px;
       cursor: pointer;
       display: flex;
       align-items: center;
-      gap: 4px;
+      gap: 3px;
       box-shadow: 2px 2px 8px rgba(0,0,0,0.55);
     `;
+
+    const ajustarPosicaoRecursos = () => {
+      const players = document.getElementById("players");
+      if (players) {
+        btn.style.bottom = (players.offsetHeight + 48) + "px";
+      } else {
+        btn.style.bottom = "104px";
+      }
+    };
+
     btn.addEventListener("mouseenter", () => {
       btn.style.background = "#1f2937";
       btn.style.borderColor = "#93c5fd";
@@ -3623,6 +3713,8 @@ Hooks.once("ready", () => {
     });
     btn.addEventListener("click", () => abrirPainelRecursosArsenal());
     document.body.appendChild(btn);
+    setTimeout(ajustarPosicaoRecursos, 500);
+    Hooks.on("renderPlayerList", ajustarPosicaoRecursos);
   }
 });
 
@@ -3653,6 +3745,12 @@ Hooks.on("getSceneControlButtons", (controls) => {
       };
     }
   }
+});
+
+Hooks.on("updateCombat", (combat, changed) => {
+  if (!game.user.isGM) return;
+  if (!("round" in changed)) return;
+  t20ResumoRecursosRodada();
 });
 
 Hooks.on("createActor", (actor) => {
