@@ -5583,40 +5583,59 @@ function t20ElementoTexto(el) {
   return String(el?.innerText ?? el?.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 
-function t20DialogoMagiaCandidatos(form) {
-  if (!form) return [];
+function t20AprimCustoFromText(txt = "") {
+  const m = String(txt).match(/([+-]?\d+)\s*PM\b/i);
+  if (!m) return "";
+  const n = Number(m[1]);
+  return `${n >= 0 ? "+" : ""}${n} PM`;
+}
+
+function t20DialogoMagiaRows(form) {
+  if (!form) return { tipo: "none", rows: [] };
+
+  const table = form.querySelector("table");
+  if (table) {
+    const rows = Array.from(table.querySelectorAll("tbody tr, tr"))
+      .filter(row => {
+        const txt = t20ElementoTexto(row);
+        if (!txt || !/PM\b/i.test(txt)) return false;
+        if (/Aplicar\s+Nome/i.test(txt)) return false;
+        if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção/i.test(txt)) return false;
+        return row.querySelector("td");
+      });
+    if (rows.length) return { tipo: "table", table, rows };
+  }
 
   const filhos = Array.from(form.children ?? []);
-  let candidatos = filhos.filter(el => {
+  let rows = filhos.filter(el => {
     const txt = t20ElementoTexto(el);
     if (!txt || !/PM\b/i.test(txt)) return false;
-    if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção/i.test(txt)) return false;
+    if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção|Dano\s*:/i.test(txt)) return false;
     return !!el.querySelector?.('input[type="checkbox"], input[type="number"], button');
   });
 
-  // Se o sistema colocar os aprimoramentos dentro de um bloco intermediário, pega filhos desse bloco.
-  if (candidatos.length < 3) {
+  if (rows.length < 3) {
     const blocos = Array.from(form.querySelectorAll(":scope > div, :scope > section, :scope > fieldset"));
     for (const bloco of blocos) {
       const internos = Array.from(bloco.children ?? []).filter(el => {
         const txt = t20ElementoTexto(el);
         if (!txt || !/PM\b/i.test(txt)) return false;
-        if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção/i.test(txt)) return false;
+        if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção|Dano\s*:/i.test(txt)) return false;
         return !!el.querySelector?.('input[type="checkbox"], input[type="number"], button');
       });
-      if (internos.length > candidatos.length) candidatos = internos;
+      if (internos.length > rows.length) rows = internos;
     }
   }
 
-  // Remove elementos que sejam ancestrais de outros candidatos para evitar bagunçar o layout.
-  candidatos = candidatos.filter(el => !candidatos.some(other => other !== el && el.contains(other)));
-
+  rows = rows.filter(el => !rows.some(other => other !== el && el.contains(other)));
   const vistos = new Set();
-  return candidatos.filter(el => {
+  rows = rows.filter(el => {
     if (vistos.has(el)) return false;
     vistos.add(el);
     return true;
   });
+
+  return { tipo: "div", rows };
 }
 
 function t20InjectDialogoMagiaCss() {
@@ -5626,41 +5645,102 @@ function t20InjectDialogoMagiaCss() {
   style.id = "arsenal-t20-dialogo-magia-css";
   style.textContent = `
     .arsenal-t20-spell-dialog {
-      min-width: 780px !important;
-      max-width: 980px !important;
+      min-width: 820px !important;
+      max-width: 1020px !important;
     }
 
     .arsenal-t20-spell-dialog #ability-use-form {
       font-size: 14px;
     }
 
-    .arsenal-t20-spell-dialog .arsenal-t20-magia-lista {
-      max-height: 56vh;
-      overflow-y: auto;
-      padding-right: 8px;
-      margin: 8px 0 12px;
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-scroll {
+      max-height: 56vh !important;
+      overflow-y: auto !important;
+      padding: 6px 8px 6px 2px !important;
+      margin: 8px 0 12px !important;
+      border-left: 3px solid #8b5cf6 !important;
+    }
+
+    .arsenal-t20-spell-dialog table.arsenal-t20-aprim-scroll {
+      display: block !important;
+      width: 100% !important;
+      border-collapse: separate !important;
+      border-spacing: 0 !important;
+    }
+
+    .arsenal-t20-spell-dialog table.arsenal-t20-aprim-scroll thead {
+      display: none !important;
+    }
+
+    .arsenal-t20-spell-dialog table.arsenal-t20-aprim-scroll tbody {
+      display: block !important;
+      width: 100% !important;
+    }
+
+    .arsenal-t20-spell-dialog tr.arsenal-t20-aprim-card {
+      display: grid !important;
+      grid-template-columns: 140px minmax(0, 1fr) !important;
+      gap: 12px !important;
+      align-items: start !important;
     }
 
     .arsenal-t20-spell-dialog .arsenal-t20-aprim-card {
-      margin: 0 0 8px 0 !important;
+      margin: 0 0 9px 0 !important;
       padding: 10px 12px !important;
-      border: 1px solid rgba(55, 65, 81, 0.60) !important;
+      border: 1px solid rgba(55, 65, 81, 0.55) !important;
       border-left: 4px solid #8b5cf6 !important;
       border-radius: 10px !important;
-      background: linear-gradient(180deg, rgba(255,255,255,0.70), rgba(245,241,231,0.55)) !important;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 3px rgba(0,0,0,0.10) !important;
+      background: linear-gradient(180deg, rgba(255,255,255,0.82), rgba(246,241,230,0.66)) !important;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.65), 0 1px 3px rgba(0,0,0,0.12) !important;
       line-height: 1.38 !important;
     }
 
     .arsenal-t20-spell-dialog .arsenal-t20-aprim-card:hover {
       border-left-color: #c9a227 !important;
-      background: linear-gradient(180deg, rgba(255,250,240,0.88), rgba(246,234,212,0.70)) !important;
+      background: linear-gradient(180deg, rgba(255,250,240,0.96), rgba(246,234,212,0.78)) !important;
     }
 
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card:has(input[type="checkbox"]:checked),
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card:has(input[type="number"][value]:not([value="0"])) {
-      outline: 2px solid rgba(37,99,235,0.45);
-      background: linear-gradient(180deg, rgba(219,234,254,0.72), rgba(191,219,254,0.46)) !important;
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card.arsenal-t20-selected {
+      outline: 2px solid rgba(37,99,235,0.45) !important;
+      background: linear-gradient(180deg, rgba(219,234,254,0.78), rgba(191,219,254,0.52)) !important;
+    }
+
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card td:first-child,
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card .arsenal-t20-aplicar {
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 6px !important;
+      min-height: 42px !important;
+      padding: 6px !important;
+      border: 1px solid rgba(55,65,81,0.35) !important;
+      border-radius: 8px !important;
+      background: rgba(15,23,42,0.07) !important;
+      white-space: nowrap !important;
+      font-weight: bold !important;
+    }
+
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card td:nth-child(2),
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card .arsenal-t20-desc {
+      display: block !important;
+      padding: 2px 4px !important;
+      line-height: 1.45 !important;
+      color: #111827 !important;
+    }
+
+    .arsenal-t20-spell-dialog .arsenal-t20-custo-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 48px;
+      padding: 3px 6px;
+      border-radius: 999px;
+      background: rgba(139,92,246,0.12);
+      border: 1px solid rgba(139,92,246,0.28);
+      color: #4c1d95;
+      font-weight: bold;
+      font-size: 0.84em;
+      margin-right: 4px;
     }
 
     .arsenal-t20-spell-dialog .arsenal-t20-aprim-card input[type="checkbox"] {
@@ -5668,7 +5748,7 @@ function t20InjectDialogoMagiaCss() {
       height: 18px !important;
       cursor: pointer;
       vertical-align: middle;
-      margin-right: 6px;
+      margin-right: 4px;
     }
 
     .arsenal-t20-spell-dialog .arsenal-t20-aprim-card button {
@@ -5686,39 +5766,12 @@ function t20InjectDialogoMagiaCss() {
       text-align: center;
       border-radius: 6px;
       border: 1px solid #9ca3af;
-      background: rgba(255,255,255,0.85);
+      background: rgba(255,255,255,0.92);
     }
 
-    .arsenal-t20-spell-dialog .arsenal-t20-magia-toolbar {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      margin: 6px 0 10px;
-      padding: 8px;
-      border: 1px solid rgba(55,65,81,0.45);
-      border-radius: 8px;
-      background: rgba(15,23,42,0.08);
-    }
-
-    .arsenal-t20-spell-dialog .arsenal-t20-magia-toolbar input {
-      flex: 1;
-      padding: 7px 9px;
-      border-radius: 6px;
-      border: 1px solid #9ca3af;
-      background: rgba(255,255,255,0.86);
-    }
-
-    .arsenal-t20-spell-dialog .arsenal-t20-magia-toolbar button {
-      padding: 7px 9px;
-      border-radius: 6px;
-      border: 1px solid #9ca3af;
-      background: #f3f4f6;
-      cursor: pointer;
-    }
-
-    .arsenal-t20-spell-dialog footer button,
     .arsenal-t20-spell-dialog .dialog-buttons button,
-    .arsenal-t20-spell-dialog button.dialog-button {
+    .arsenal-t20-spell-dialog button.dialog-button,
+    .arsenal-t20-spell-dialog footer button {
       min-height: 38px;
       font-weight: bold;
       font-size: 1em;
@@ -5728,32 +5781,51 @@ function t20InjectDialogoMagiaCss() {
   document.head.appendChild(style);
 }
 
-function t20CriarToolbarDialogoMagia(win, form, linhas) {
-  if (!linhas.length || form.querySelector(".arsenal-t20-magia-toolbar")) return;
+function t20MarcarEstadoAprim(row) {
+  const checked = !!row.querySelector?.("input[type='checkbox']:checked");
+  const qtd = Array.from(row.querySelectorAll?.("input[type='number'], input:not([type])") ?? [])
+    .some(inp => Number(inp.value) > 0);
+  row.classList.toggle("arsenal-t20-selected", checked || qtd);
+}
 
-  const toolbar = document.createElement("div");
-  toolbar.className = "arsenal-t20-magia-toolbar";
-  toolbar.innerHTML = `
-    <input type="text" placeholder="Filtrar aprimoramentos...">
-    <button type="button" data-action="limpar">Limpar</button>
-  `;
+function t20PrepararLinhaAprim(row, tipo, index) {
+  if (!row || row.dataset.arsenalCard === "1") return;
+  row.dataset.arsenalCard = "1";
+  row.classList.add("arsenal-t20-aprim-card");
 
-  const primeiraLinha = linhas[0];
-  primeiraLinha.parentElement?.insertBefore(toolbar, primeiraLinha);
+  if (tipo === "table") {
+    const cells = Array.from(row.querySelectorAll("td"));
+    const aplicar = cells[0];
+    const desc = cells[1] ?? cells[cells.length - 1];
 
-  const filtro = toolbar.querySelector("input");
-  filtro?.addEventListener("input", () => {
-    const q = String(filtro.value ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    linhas.forEach(row => {
-      const txt = t20ElementoTexto(row).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      row.style.display = !q || txt.includes(q) ? "" : "none";
-    });
+    if (aplicar && !aplicar.querySelector(".arsenal-t20-custo-badge")) {
+      const custo = t20AprimCustoFromText(t20ElementoTexto(aplicar) || t20ElementoTexto(row));
+      if (custo) {
+        const badge = document.createElement("span");
+        badge.className = "arsenal-t20-custo-badge";
+        badge.textContent = custo;
+        aplicar.prepend(badge);
+      }
+    }
+
+    if (desc) desc.classList.add("arsenal-t20-desc");
+  } else {
+    // Não reestrutura a linha por div; só adiciona badge no início quando possível.
+    row.classList.add("arsenal-t20-div-card");
+    const custo = t20AprimCustoFromText(t20ElementoTexto(row));
+    if (custo && !row.querySelector(".arsenal-t20-custo-badge")) {
+      const badge = document.createElement("span");
+      badge.className = "arsenal-t20-custo-badge";
+      badge.textContent = custo;
+      row.prepend(badge);
+    }
+  }
+
+  row.querySelectorAll("input, button, select").forEach(el => {
+    el.addEventListener("change", () => t20MarcarEstadoAprim(row));
+    el.addEventListener("click", () => setTimeout(() => t20MarcarEstadoAprim(row), 30));
   });
-
-  toolbar.querySelector("[data-action='limpar']")?.addEventListener("click", () => {
-    filtro.value = "";
-    filtro.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  t20MarcarEstadoAprim(row);
 }
 
 function t20MelhorarDialogoUsoMagia(app, html, data = null) {
@@ -5769,21 +5841,18 @@ function t20MelhorarDialogoUsoMagia(app, html, data = null) {
   if (!t20EhDialogoUsoMagia(app, root)) return;
 
   const form = win?.querySelector?.("#ability-use-form, form") ?? root.querySelector?.("#ability-use-form, form") ?? root;
-  if (!form) {
-    console.warn("Arsenal T20 | AbilityUseDialog detectado, mas formulário não foi encontrado.");
-    return;
-  }
+  if (!form) return;
 
-  const linhas = t20DialogoMagiaCandidatos(form);
+  const result = t20DialogoMagiaRows(form);
+  const rows = result.rows ?? [];
 
-  // Se não encontrar linhas, não mexe no layout. Isso evita piorar a janela.
-  if (!linhas.length) {
+  if (!rows.length) {
     const tentativas = Number(win?.dataset?.arsenalTentativasDialogo ?? 0);
     if (win?.dataset) win.dataset.arsenalTentativasDialogo = String(tentativas + 1);
     if (tentativas < 8) {
       setTimeout(() => t20MelhorarDialogoUsoMagia(app, win, data), 120);
     } else {
-      console.warn("Arsenal T20 | AbilityUseDialog detectado, mas nenhuma linha de aprimoramento foi encontrada.", {
+      console.warn("Arsenal T20 | AbilityUseDialog detectado, mas nenhuma linha segura foi encontrada. Mantendo janela original.", {
         titulo: app?.title ?? app?.options?.title,
         texto: t20ElementoTexto(form).slice(0, 700),
       });
@@ -5794,25 +5863,26 @@ function t20MelhorarDialogoUsoMagia(app, html, data = null) {
   t20InjectDialogoMagiaCss();
 
   win.classList?.add("arsenal-t20-spell-dialog");
-  if (win) {
-    win.style.minWidth = "780px";
-    win.style.maxWidth = "980px";
-    win.style.width = win.style.width || "840px";
-  }
-
+  win.style.minWidth = "820px";
+  win.style.maxWidth = "1020px";
+  win.style.width = win.style.width || "860px";
   form.style.fontSize = "14px";
 
-  linhas.forEach((linha) => {
-    linha.classList.add("arsenal-t20-aprim-card");
-  });
-
-  // Coloca a área de aprimoramentos em uma lista rolável sem mover controles internos.
-  const parent = linhas[0].parentElement;
-  if (parent && !parent.classList.contains("arsenal-t20-magia-lista")) {
-    parent.classList.add("arsenal-t20-magia-lista");
+  if (result.tipo === "table" && result.table) {
+    result.table.classList.add("arsenal-t20-aprim-scroll");
+    const thead = result.table.querySelector("thead");
+    if (thead) thead.style.display = "none";
+    const tbody = result.table.querySelector("tbody");
+    if (tbody) {
+      tbody.style.display = "block";
+      tbody.style.width = "100%";
+    }
+  } else {
+    const parent = rows[0].parentElement;
+    parent?.classList?.add("arsenal-t20-aprim-scroll");
   }
 
-  t20CriarToolbarDialogoMagia(win, form, linhas);
+  rows.forEach((row, index) => t20PrepararLinhaAprim(row, result.tipo, index));
 
   if (win?.dataset) win.dataset.arsenalDialogoMagia = "1";
   if (root?.dataset) root.dataset.arsenalDialogoMagia = "1";
