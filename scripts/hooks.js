@@ -1320,52 +1320,49 @@ function t20AtualizarAurasVisuais() {
         const raioPx = (raio / sceneDistance) * gridSize;
         const center = token.center ?? { x: token.x, y: token.y };
 
-        // Círculo base: preenchimento leve e borda estável.
-        const base = new PIXI.Graphics();
-        base.interactive = false;
-        base.interactiveChildren = false;
-        base.eventMode = "none";
-        base.lineStyle(3, 0x2dd4bf, 0.72);
-        base.beginFill(0x2dd4bf, 0.08);
-        base.drawCircle(center.x, center.y, raioPx);
-        base.endFill();
-        layer.addChild(base);
-
-        // Núcleo sutil próximo ao conjurador, ajuda a identificar a origem da aura.
+        // Sem círculo base fixo: a aura aparece apenas como emanação ondulante.
+        // O pequeno núcleo identifica a origem da aura sem ocupar a área inteira.
         const nucleo = new PIXI.Graphics();
         nucleo.interactive = false;
         nucleo.interactiveChildren = false;
         nucleo.eventMode = "none";
-        nucleo.beginFill(0xfacc15, 0.18);
-        nucleo.drawCircle(center.x, center.y, Math.max(10, gridSize * 0.18));
+        nucleo.beginFill(0xfacc15, 0.26);
+        nucleo.drawCircle(center.x, center.y, Math.max(12, gridSize * 0.20));
         nucleo.endFill();
         layer.addChild(nucleo);
 
         if (animar) {
-          // Duas ondas suaves, desenhadas como círculos locais escalados.
-          // Usamos posição no centro + drawCircle(0,0,raio) para animar escala sem recalcular geometria.
+          // Ondas visíveis e leves, sem preenchimento fixo.
           const ondas = [];
-          for (let i = 0; i < 2; i++) {
+          for (let i = 0; i < 3; i++) {
             const onda = new PIXI.Graphics();
             onda.interactive = false;
             onda.interactiveChildren = false;
             onda.eventMode = "none";
             onda.x = center.x;
             onda.y = center.y;
-            onda.lineStyle(2, i === 0 ? 0x7dd3fc : 0xfacc15, 0.45);
+            onda.lineStyle(i === 0 ? 3 : 2, i % 2 === 0 ? 0x7dd3fc : 0xfacc15, 0.72);
             onda.drawCircle(0, 0, raioPx);
             layer.addChild(onda);
-            ondas.push({ grafico: onda, fase: i * 0.5 });
+            ondas.push({ grafico: onda, fase: i / 3 });
           }
 
           animados.push({
             tokenId: token.id,
             raioPx,
-            base,
             nucleo,
             ondas,
             tempo: Math.random(),
           });
+        } else {
+          // Com animação desligada, mantém apenas uma linha pontilhada muito discreta para indicar o alcance.
+          const limite = new PIXI.Graphics();
+          limite.interactive = false;
+          limite.interactiveChildren = false;
+          limite.eventMode = "none";
+          limite.lineStyle(2, 0x7dd3fc, 0.45);
+          limite.drawCircle(center.x, center.y, raioPx);
+          layer.addChild(limite);
         }
       }
     }
@@ -1381,16 +1378,16 @@ function t20AtualizarAurasVisuais() {
 
             // Reposiciona tudo para acompanhar o token sem recriar a camada a cada movimento fino.
             item.nucleo.clear();
-            item.nucleo.beginFill(0xfacc15, 0.14 + 0.06 * Math.sin(performance.now() / 420));
-            item.nucleo.drawCircle(center.x, center.y, Math.max(10, gridSize * 0.18));
+            item.nucleo.beginFill(0xfacc15, 0.22 + 0.10 * Math.sin(performance.now() / 360));
+            item.nucleo.drawCircle(center.x, center.y, Math.max(12, gridSize * 0.20));
             item.nucleo.endFill();
 
-            item.tempo = (item.tempo + dt * 0.22) % 1;
+            item.tempo = (item.tempo + dt * 0.28) % 1;
 
             for (const o of item.ondas) {
               const t = (item.tempo + o.fase) % 1;
-              const escala = 0.72 + t * 0.34;
-              const alpha = Math.max(0, 0.42 * (1 - t));
+              const escala = 0.55 + t * 0.55;
+              const alpha = Math.max(0, 0.72 * (1 - t));
               o.grafico.x = center.x;
               o.grafico.y = center.y;
               o.grafico.scale.set(escala);
