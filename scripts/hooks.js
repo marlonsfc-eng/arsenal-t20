@@ -5642,14 +5642,59 @@ function t20AprimRows(app) {
 
   return rows.map((row, index) => {
     const cells = Array.from(row.querySelectorAll("td"));
-    const aplicar = cells[0] ?? row.querySelector("input, button")?.closest("td, div") ?? row;
-    const desc = cells[1] ?? cells[cells.length - 1] ?? row;
-    const custo = String(t20ElementoTexto(aplicar).match(/([+-]?\d+)\s*PM/i)?.[0] ?? t20ElementoTexto(row).match(/([+-]?\d+)\s*PM/i)?.[0] ?? "");
-    const aplicarTxt = t20ElementoTexto(aplicar);
-    const texto = (t20ElementoTexto(desc) || t20ElementoTexto(row).replace(aplicarTxt, "").trim())
-      .replace(/^Aplicar\s+Nome\s*/i, "")
+    const aplicar = cells.find(c => c.querySelector("input, button")) ?? row.querySelector("input, button")?.closest("td, div") ?? cells[0] ?? row;
+
+    const rowTxt = t20ElementoTexto(row).replace(/^Aplicar\s+Nome\s*/i, "").trim();
+    const custo = String(
+      t20ElementoTexto(aplicar).match(/([+-]?\d+)\s*PM/i)?.[0] ??
+      rowTxt.match(/([+-]?\d+)\s*PM/i)?.[0] ??
+      ""
+    );
+
+    // A descrição costuma estar em uma célula separada, mas no T20 às vezes há
+    // células intermediárias só com custo/controles. Pegamos a célula com mais texto útil.
+    const textosCelulas = cells
+      .map(c => ({ el: c, txt: t20ElementoTexto(c) }))
+      .filter(o => o.txt && !/^Aplicar$/i.test(o.txt))
+      .map(o => ({
+        ...o,
+        clean: o.txt
+          .replace(/^Aplicar\s*/i, "")
+          .replace(new RegExp(`^${String(custo).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`, "i"), "")
+          .replace(/^[+\-]?\d+\s*PM\s*/i, "")
+          .replace(/^[+\-]\s*\d+\s*[+\-]?\d*\s*PM\s*/i, "")
+          .trim()
+      }));
+
+    let melhor = textosCelulas
+      .filter(o => o.el !== aplicar)
+      .sort((a, b) => b.clean.length - a.clean.length)[0];
+
+    if (!melhor || melhor.clean.length < 8) {
+      melhor = textosCelulas.sort((a, b) => b.clean.length - a.clean.length)[0];
+    }
+
+    let textoDesc = melhor?.clean ?? "";
+
+    if (!textoDesc || textoDesc.length < 8 || textoDesc === custo) {
+      const aplicarTxt = t20ElementoTexto(aplicar);
+      textoDesc = rowTxt
+        .replace(aplicarTxt, "")
+        .replace(new RegExp(String(custo).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "")
+        .replace(/^[+\-]?\d+\s*PM\s*/i, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    // Remove duplicações comuns: "1 PM 1 PM texto" ou apenas custo repetido.
+    textoDesc = textoDesc
+      .replace(new RegExp(`^${String(custo).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`, "i"), "")
+      .replace(/^[+\-]?\d+\s*PM\s*/i, "")
+      .replace(/\s+/g, " ")
       .trim();
-    return { index, row, aplicar, desc, custo, texto };
+
+    const desc = melhor?.el ?? cells[cells.length - 1] ?? row;
+    return { index, row, aplicar, desc, custo, texto: textoDesc || "(sem descrição)" };
   });
 }
 
