@@ -5506,6 +5506,8 @@ function t20DialogoMagiaAtivo() {
 
 function t20EhDialogoUsoMagia(app, root) {
   const win = root?.closest?.(".window-app, .app") ?? root;
+  const ctor = String(app?.constructor?.name ?? "");
+  const classes = String(win?.className ?? root?.className ?? "");
   const titulo = [
     app?.title,
     app?.options?.title,
@@ -5513,8 +5515,15 @@ function t20EhDialogoUsoMagia(app, root) {
     root?.querySelector?.(".window-title")?.textContent,
   ].filter(Boolean).join(" ");
 
+  // O sistema Tormenta20 renderiza essa janela como AbilityUseDialog.
+  if (/AbilityUseDialog/i.test(ctor) && /ability-use-form/i.test(classes)) return true;
+  if (/AbilityUseDialog/i.test(ctor) && /configura[cç][aã]o de uso de magia/i.test(titulo)) return true;
+
   if (/configura[cç][aã]o de uso de magia/i.test(titulo)) return true;
   if (/uso de magia/i.test(titulo) && (win?.querySelector?.("table") || root?.querySelector?.("table"))) return true;
+
+  const form = win?.querySelector?.("#ability-use-form, form#ability-use-form") ?? root?.querySelector?.("#ability-use-form, form#ability-use-form");
+  if (form && /PM/i.test(String(form.innerText ?? "")) && /Aplicar/i.test(String(form.innerText ?? ""))) return true;
 
   const table = win?.querySelector?.("table") ?? root?.querySelector?.("table");
   const header = String(table?.querySelector?.("thead")?.innerText ?? table?.querySelector?.("tr")?.innerText ?? "");
@@ -5536,23 +5545,32 @@ function t20ExtrairCustoLinhaMagia(row) {
 function t20MelhorarDialogoUsoMagia(app, html) {
   if (!t20DialogoMagiaAtivo()) return;
 
-  const root = html instanceof jQuery ? html[0] : html;
-  if (!root || root.dataset?.arsenalDialogoMagia === "1") return;
+  let root = html instanceof jQuery ? html[0] : html;
+  if (!root && app?.element) root = app.element instanceof jQuery ? app.element[0] : app.element;
+  if (!root && app?.appId) root = document.getElementById(`app-${app.appId}`);
+  if (!root) return;
+
+  const win = root.closest?.(".app, .window-app") ?? root;
+  if (win?.dataset?.arsenalDialogoMagia === "1") return;
   if (!t20EhDialogoUsoMagia(app, root)) return;
 
-  root.dataset.arsenalDialogoMagia = "1";
+  if (win?.dataset) win.dataset.arsenalDialogoMagia = "1";
+  if (root?.dataset) root.dataset.arsenalDialogoMagia = "1";
 
-  const win = root.closest?.(".app, .window-app") ?? root.parentElement;
   if (win) {
-    win.style.minWidth = "720px";
-    win.style.maxWidth = "920px";
+    win.style.minWidth = "760px";
+    win.style.maxWidth = "980px";
+    win.style.width = win.style.width || "820px";
   }
 
-  const form = root.querySelector("form") ?? root;
+  const form = win?.querySelector?.("#ability-use-form, form") ?? root.querySelector?.("#ability-use-form, form") ?? root;
   form.style.fontSize = "14px";
 
-  const table = root.querySelector("table");
-  if (!table) return;
+  const table = form.querySelector?.("table") ?? win?.querySelector?.("table") ?? root.querySelector?.("table");
+  if (!table) {
+    console.warn("Arsenal T20 | AbilityUseDialog detectado, mas tabela de aprimoramentos não foi encontrada.");
+    return;
+  }
 
   table.classList.add("arsenal-t20-magia-table");
   table.style.display = "block";
@@ -5713,6 +5731,7 @@ function t20MelhorarDialogoUsoMagia(app, html) {
 }
 
 Hooks.on("renderDialog", (app, html) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html), 20));
+Hooks.on("renderAbilityUseDialog", (app, html) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html), 20));
 Hooks.on("renderApplication", (app, html) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html), 20));
 Hooks.on("renderApplicationV2", (app, html) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html), 20));
 
@@ -5721,7 +5740,7 @@ function t20ObservarDialogosMagia() {
 
   const tentarAplicar = () => {
     if (!t20DialogoMagiaAtivo()) return;
-    document.querySelectorAll(".window-app, .app").forEach(win => {
+    document.querySelectorAll(".window-app, .app, .ability-use-form").forEach(win => {
       try {
         if (win.dataset?.arsenalDialogoMagia === "1") return;
         if (!t20EhDialogoUsoMagia(null, win)) return;
@@ -5743,6 +5762,18 @@ function t20ObservarDialogosMagia() {
 
 Hooks.once("ready", () => setTimeout(t20ObservarDialogosMagia, 1000));
 
+
+
+Hooks.on("getAbilityUseDialogHeaderButtons", (app, buttons) => {
+  try {
+    buttons.unshift({
+      label: "Arsenal",
+      class: "arsenal-t20-restyle-dialog",
+      icon: "fas fa-wand-magic-sparkles",
+      onclick: () => setTimeout(() => t20MelhorarDialogoUsoMagia(app, app.element), 20),
+    });
+  } catch {}
+});
 
 // ── Card de controle de PM ───────────────────────────────────
 
