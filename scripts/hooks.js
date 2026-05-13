@@ -198,8 +198,8 @@ Hooks.once("ready", () => {
   });
 
   game.settings.register(MOD, "melhorarDialogoMagias", {
-    name: "Melhorar janela de aprimoramentos de magia",
-    hint: "Reorganiza visualmente a janela de configuração de uso de magia do sistema T20, mantendo a lógica original do sistema.",
+    name: "Painel auxiliar de aprimoramentos de magia",
+    hint: "Adiciona o botão Arsenal na janela de uso de magia para abrir um painel auxiliar mais organizado, sem modificar a janela original do sistema.",
     scope: "client",
     config: true,
     type: Boolean,
@@ -5583,352 +5583,205 @@ function t20ElementoTexto(el) {
   return String(el?.innerText ?? el?.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 
-function t20AprimCustoFromText(txt = "") {
-  const m = String(txt).match(/([+-]?\d+)\s*PM\b/i);
-  if (!m) return "";
-  const n = Number(m[1]);
-  return `${n >= 0 ? "+" : ""}${n} PM`;
+function t20AprimRoot(app) {
+  let root = null;
+  if (app?.element) root = app.element instanceof jQuery ? app.element[0] : app.element;
+  if (!root && app?.appId) root = document.getElementById(`app-${app.appId}`);
+  return root;
 }
 
-function t20DialogoMagiaRows(form) {
-  if (!form) return { tipo: "none", rows: [] };
+function t20AprimForm(app) {
+  const root = t20AprimRoot(app);
+  return root?.querySelector?.("#ability-use-form, form") ?? null;
+}
 
-  const table = form.querySelector("table");
-  if (table) {
-    const rows = Array.from(table.querySelectorAll("tbody tr, tr"))
-      .filter(row => {
-        const txt = t20ElementoTexto(row);
-        if (!txt || !/PM\b/i.test(txt)) return false;
-        if (/Aplicar\s+Nome/i.test(txt)) return false;
-        if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção/i.test(txt)) return false;
-        return row.querySelector("td");
-      });
-    if (rows.length) return { tipo: "table", table, rows };
-  }
+function t20AprimRows(app) {
+  const form = t20AprimForm(app);
+  if (!form) return [];
 
-  const filhos = Array.from(form.children ?? []);
-  let rows = filhos.filter(el => {
-    const txt = t20ElementoTexto(el);
-    if (!txt || !/PM\b/i.test(txt)) return false;
-    if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção|Dano\s*:/i.test(txt)) return false;
-    return !!el.querySelector?.('input[type="checkbox"], input[type="number"], button');
+  const rows = Array.from(form.querySelectorAll("table tbody tr, table tr"))
+    .filter(row => {
+      const txt = t20ElementoTexto(row);
+      if (!txt || !/PM\b/i.test(txt)) return false;
+      if (/Aplicar\s+Nome/i.test(txt)) return false;
+      if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção|Dano\s*:/i.test(txt)) return false;
+      return row.querySelector("input, button");
+    });
+
+  return rows.map((row, index) => {
+    const cells = Array.from(row.querySelectorAll("td"));
+    const aplicar = cells[0] ?? row;
+    const desc = cells[1] ?? cells[cells.length - 1] ?? row;
+    const custo = String(t20ElementoTexto(aplicar).match(/([+-]?\d+)\s*PM/i)?.[0] ?? "");
+    const texto = t20ElementoTexto(desc) || t20ElementoTexto(row).replace(t20ElementoTexto(aplicar), "").trim();
+    return { index, row, aplicar, desc, custo, texto };
   });
-
-  if (rows.length < 3) {
-    const blocos = Array.from(form.querySelectorAll(":scope > div, :scope > section, :scope > fieldset"));
-    for (const bloco of blocos) {
-      const internos = Array.from(bloco.children ?? []).filter(el => {
-        const txt = t20ElementoTexto(el);
-        if (!txt || !/PM\b/i.test(txt)) return false;
-        if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção|Dano\s*:/i.test(txt)) return false;
-        return !!el.querySelector?.('input[type="checkbox"], input[type="number"], button');
-      });
-      if (internos.length > rows.length) rows = internos;
-    }
-  }
-
-  rows = rows.filter(el => !rows.some(other => other !== el && el.contains(other)));
-  const vistos = new Set();
-  rows = rows.filter(el => {
-    if (vistos.has(el)) return false;
-    vistos.add(el);
-    return true;
-  });
-
-  return { tipo: "div", rows };
 }
 
-function t20InjectDialogoMagiaCss() {
-  if (document.getElementById("arsenal-t20-dialogo-magia-css")) return;
-
-  const style = document.createElement("style");
-  style.id = "arsenal-t20-dialogo-magia-css";
-  style.textContent = `
-    .arsenal-t20-spell-dialog {
-      min-width: 820px !important;
-      max-width: 1020px !important;
-    }
-
-    .arsenal-t20-spell-dialog #ability-use-form {
-      font-size: 14px;
-    }
-
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-scroll {
-      max-height: 56vh !important;
-      overflow-y: auto !important;
-      padding: 6px 8px 6px 2px !important;
-      margin: 8px 0 12px !important;
-      border-left: 3px solid #8b5cf6 !important;
-    }
-
-    .arsenal-t20-spell-dialog table.arsenal-t20-aprim-scroll {
-      display: block !important;
-      width: 100% !important;
-      border-collapse: separate !important;
-      border-spacing: 0 !important;
-    }
-
-    .arsenal-t20-spell-dialog table.arsenal-t20-aprim-scroll thead {
-      display: none !important;
-    }
-
-    .arsenal-t20-spell-dialog table.arsenal-t20-aprim-scroll tbody {
-      display: block !important;
-      width: 100% !important;
-    }
-
-    .arsenal-t20-spell-dialog tr.arsenal-t20-aprim-card {
-      display: grid !important;
-      grid-template-columns: 140px minmax(0, 1fr) !important;
-      gap: 12px !important;
-      align-items: start !important;
-    }
-
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card {
-      margin: 0 0 9px 0 !important;
-      padding: 10px 12px !important;
-      border: 1px solid rgba(55, 65, 81, 0.55) !important;
-      border-left: 4px solid #8b5cf6 !important;
-      border-radius: 10px !important;
-      background: linear-gradient(180deg, rgba(255,255,255,0.82), rgba(246,241,230,0.66)) !important;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.65), 0 1px 3px rgba(0,0,0,0.12) !important;
-      line-height: 1.38 !important;
-    }
-
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card:hover {
-      border-left-color: #c9a227 !important;
-      background: linear-gradient(180deg, rgba(255,250,240,0.96), rgba(246,234,212,0.78)) !important;
-    }
-
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card.arsenal-t20-selected {
-      outline: 2px solid rgba(37,99,235,0.45) !important;
-      background: linear-gradient(180deg, rgba(219,234,254,0.78), rgba(191,219,254,0.52)) !important;
-    }
-
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card td:first-child,
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card .arsenal-t20-aplicar {
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      gap: 6px !important;
-      min-height: 42px !important;
-      padding: 6px !important;
-      border: 1px solid rgba(55,65,81,0.35) !important;
-      border-radius: 8px !important;
-      background: rgba(15,23,42,0.07) !important;
-      white-space: nowrap !important;
-      font-weight: bold !important;
-    }
-
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card td:nth-child(2),
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card .arsenal-t20-desc {
-      display: block !important;
-      padding: 2px 4px !important;
-      line-height: 1.45 !important;
-      color: #111827 !important;
-    }
-
-    .arsenal-t20-spell-dialog .arsenal-t20-custo-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 48px;
-      padding: 3px 6px;
-      border-radius: 999px;
-      background: rgba(139,92,246,0.12);
-      border: 1px solid rgba(139,92,246,0.28);
-      color: #4c1d95;
-      font-weight: bold;
-      font-size: 0.84em;
-      margin-right: 4px;
-    }
-
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card input[type="checkbox"] {
-      width: 18px !important;
-      height: 18px !important;
-      cursor: pointer;
-      vertical-align: middle;
-      margin-right: 4px;
-    }
-
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card button {
-      min-width: 26px;
-      min-height: 26px;
-      border-radius: 6px;
-      border: 1px solid #9ca3af;
-      background: #f8fafc;
-      font-weight: bold;
-    }
-
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card input[type="number"],
-    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card input:not([type]) {
-      max-width: 48px;
-      text-align: center;
-      border-radius: 6px;
-      border: 1px solid #9ca3af;
-      background: rgba(255,255,255,0.92);
-    }
-
-    .arsenal-t20-spell-dialog .dialog-buttons button,
-    .arsenal-t20-spell-dialog button.dialog-button,
-    .arsenal-t20-spell-dialog footer button {
-      min-height: 38px;
-      font-weight: bold;
-      font-size: 1em;
-      border-radius: 7px;
-    }
-  `;
-  document.head.appendChild(style);
-}
-
-function t20MarcarEstadoAprim(row) {
+function t20AprimSelecionado(row) {
   const checked = !!row.querySelector?.("input[type='checkbox']:checked");
   const qtd = Array.from(row.querySelectorAll?.("input[type='number'], input:not([type])") ?? [])
     .some(inp => Number(inp.value) > 0);
-  row.classList.toggle("arsenal-t20-selected", checked || qtd);
+  return checked || qtd;
 }
 
-function t20PrepararLinhaAprim(row, tipo, index) {
-  if (!row || row.dataset.arsenalCard === "1") return;
-  row.dataset.arsenalCard = "1";
-  row.classList.add("arsenal-t20-aprim-card");
-
-  if (tipo === "table") {
-    const cells = Array.from(row.querySelectorAll("td"));
-    const aplicar = cells[0];
-    const desc = cells[1] ?? cells[cells.length - 1];
-
-    if (aplicar && !aplicar.querySelector(".arsenal-t20-custo-badge")) {
-      const custo = t20AprimCustoFromText(t20ElementoTexto(aplicar) || t20ElementoTexto(row));
-      if (custo) {
-        const badge = document.createElement("span");
-        badge.className = "arsenal-t20-custo-badge";
-        badge.textContent = custo;
-        aplicar.prepend(badge);
-      }
-    }
-
-    if (desc) desc.classList.add("arsenal-t20-desc");
-  } else {
-    // Não reestrutura a linha por div; só adiciona badge no início quando possível.
-    row.classList.add("arsenal-t20-div-card");
-    const custo = t20AprimCustoFromText(t20ElementoTexto(row));
-    if (custo && !row.querySelector(".arsenal-t20-custo-badge")) {
-      const badge = document.createElement("span");
-      badge.className = "arsenal-t20-custo-badge";
-      badge.textContent = custo;
-      row.prepend(badge);
-    }
+function t20AprimAtivar(row) {
+  const cb = row.querySelector?.("input[type='checkbox']");
+  if (cb) {
+    if (!cb.checked) cb.click();
+    return true;
   }
 
-  row.querySelectorAll("input, button, select").forEach(el => {
-    el.addEventListener("change", () => t20MarcarEstadoAprim(row));
-    el.addEventListener("click", () => setTimeout(() => t20MarcarEstadoAprim(row), 30));
-  });
-  t20MarcarEstadoAprim(row);
+  const plus = Array.from(row.querySelectorAll?.("button") ?? [])
+    .find(btn => String(btn.textContent ?? "").trim() === "+");
+  if (plus) {
+    plus.click();
+    return true;
+  }
+
+  const input = row.querySelector?.("input[type='number'], input:not([type])");
+  if (input) {
+    input.value = String(Math.max(1, Number(input.value) || 0));
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }
+
+  return false;
 }
 
-function t20MelhorarDialogoUsoMagia(app, html, data = null) {
-  if (!t20DialogoMagiaAtivo()) return;
-
-  let root = html instanceof jQuery ? html[0] : html;
-  if (!root && app?.element) root = app.element instanceof jQuery ? app.element[0] : app.element;
-  if (!root && app?.appId) root = document.getElementById(`app-${app.appId}`);
-  if (!root) return;
-
-  const win = root.closest?.(".app, .window-app") ?? root;
-  if (win?.dataset?.arsenalDialogoMagia === "1") return;
-  if (!t20EhDialogoUsoMagia(app, root)) return;
-
-  const form = win?.querySelector?.("#ability-use-form, form") ?? root.querySelector?.("#ability-use-form, form") ?? root;
-  if (!form) return;
-
-  const result = t20DialogoMagiaRows(form);
-  const rows = result.rows ?? [];
-
-  if (!rows.length) {
-    const tentativas = Number(win?.dataset?.arsenalTentativasDialogo ?? 0);
-    if (win?.dataset) win.dataset.arsenalTentativasDialogo = String(tentativas + 1);
-    if (tentativas < 8) {
-      setTimeout(() => t20MelhorarDialogoUsoMagia(app, win, data), 120);
-    } else {
-      console.warn("Arsenal T20 | AbilityUseDialog detectado, mas nenhuma linha segura foi encontrada. Mantendo janela original.", {
-        titulo: app?.title ?? app?.options?.title,
-        texto: t20ElementoTexto(form).slice(0, 700),
-      });
-    }
-    return;
+function t20AprimDesativar(row) {
+  const cb = row.querySelector?.("input[type='checkbox']");
+  if (cb) {
+    if (cb.checked) cb.click();
+    return true;
   }
 
-  t20InjectDialogoMagiaCss();
-
-  win.classList?.add("arsenal-t20-spell-dialog");
-  win.style.minWidth = "820px";
-  win.style.maxWidth = "1020px";
-  win.style.width = win.style.width || "860px";
-  form.style.fontSize = "14px";
-
-  if (result.tipo === "table" && result.table) {
-    result.table.classList.add("arsenal-t20-aprim-scroll");
-    const thead = result.table.querySelector("thead");
-    if (thead) thead.style.display = "none";
-    const tbody = result.table.querySelector("tbody");
-    if (tbody) {
-      tbody.style.display = "block";
-      tbody.style.width = "100%";
-    }
-  } else {
-    const parent = rows[0].parentElement;
-    parent?.classList?.add("arsenal-t20-aprim-scroll");
+  const input = row.querySelector?.("input[type='number'], input:not([type])");
+  if (input) {
+    input.value = "0";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
   }
 
-  rows.forEach((row, index) => t20PrepararLinhaAprim(row, result.tipo, index));
-
-  if (win?.dataset) win.dataset.arsenalDialogoMagia = "1";
-  if (root?.dataset) root.dataset.arsenalDialogoMagia = "1";
+  return false;
 }
 
-Hooks.on("renderDialog", (app, html, data) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html, data), 20));
-Hooks.on("renderAbilityUseDialog", (app, html, data) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html, data), 20));
-Hooks.on("renderApplication", (app, html, data) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html, data), 20));
-Hooks.on("renderApplicationV2", (app, html, data) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html, data), 20));
+let _arsenalAprimoramentos = null;
 
-function t20ObservarDialogosMagia() {
-  if (window._arsenalT20DialogoMagiaObserver) return;
+function abrirArsenalAprimoramentos(app) {
+  if (!app) return ui.notifications.warn("Janela de magia não encontrada.");
+  if (_arsenalAprimoramentos?.rendered) _arsenalAprimoramentos.close();
+  _arsenalAprimoramentos = new ArsenalAprimoramentosDialog(app);
+  _arsenalAprimoramentos.render(true);
+}
 
-  const tentarAplicar = () => {
-    if (!t20DialogoMagiaAtivo()) return;
-    document.querySelectorAll(".window-app, .app, .ability-use-form").forEach(win => {
-      try {
-        if (win.dataset?.arsenalDialogoMagia === "1") return;
-        if (!t20EhDialogoUsoMagia(null, win)) return;
-        t20MelhorarDialogoUsoMagia(null, win);
-      } catch (e) {
-        console.warn("Arsenal T20 | erro no observador de diálogo de magia", e);
-      }
+class ArsenalAprimoramentosDialog extends Application {
+  constructor(sourceApp, options = {}) {
+    super(options);
+    this.sourceApp = sourceApp;
+    this.busca = "";
+  }
+
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: "arsenal-aprimoramentos-dialog",
+      title: "Aprimoramentos — Arsenal T20",
+      width: 460,
+      height: 620,
+      resizable: true,
+      minimizable: true,
     });
-  };
+  }
 
-  window._arsenalT20DialogoMagiaObserver = new MutationObserver(() => {
-    clearTimeout(window._arsenalT20DialogoMagiaObserverTimer);
-    window._arsenalT20DialogoMagiaObserverTimer = setTimeout(tentarAplicar, 60);
-  });
+  async getData() { return {}; }
+  get template() { return null; }
 
-  window._arsenalT20DialogoMagiaObserver.observe(document.body, { childList: true, subtree: true });
-  setInterval(tentarAplicar, 1500);
+  async _renderInner() {
+    const div = document.createElement("div");
+    div.innerHTML = this._html();
+    return $(div);
+  }
+
+  _rowsFiltradas() {
+    const q = String(this.busca ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return t20AprimRows(this.sourceApp).filter(r => {
+      const txt = `${r.custo} ${r.texto}`.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      return !q || txt.includes(q);
+    });
+  }
+
+  _html() {
+    const root = t20AprimRoot(this.sourceApp);
+    const titulo = root?.querySelector?.(".window-title")?.textContent ?? this.sourceApp?.title ?? "Magia";
+    const rows = this._rowsFiltradas();
+
+    return `<div style="height:100%;box-sizing:border-box;display:flex;flex-direction:column;background:linear-gradient(180deg,#111827,#0b1020);border:1px solid #374151;border-top:3px solid #c9a227;border-radius:8px;color:#e5e7eb;font-family:serif;padding:10px">
+      <div style="border-bottom:1px solid rgba(201,162,39,0.25);padding-bottom:8px;margin-bottom:8px">
+        <div style="font-size:0.78em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">Painel auxiliar</div>
+        <div style="font-weight:bold;color:#f2e6c9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${titulo}</div>
+        <div style="font-size:0.82em;color:#9ca3af;margin-top:2px">A janela original do sistema permanece intacta.</div>
+      </div>
+
+      <input class="t20-aprim-search" type="text" value="${this.busca ?? ""}" placeholder="Filtrar aprimoramentos..."
+        style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:7px 9px;border-radius:6px;background:#0f172a;border:1px solid #303b52;color:#e5e7eb">
+
+      <div style="overflow:auto;min-height:0;flex:1;padding-right:4px">
+        ${rows.length ? rows.map(r => {
+          const selected = t20AprimSelecionado(r.row);
+          return `<div class="t20-aprim-card" data-index="${r.index}"
+            style="margin-bottom:8px;padding:9px;border-radius:9px;border:1px solid ${selected ? "#60a5fa" : "#374151"};border-left:4px solid ${selected ? "#60a5fa" : "#8b5cf6"};background:${selected ? "linear-gradient(180deg,#172554,#111827)" : "linear-gradient(180deg,#182235,#111827)"}">
+            <div style="display:flex;align-items:flex-start;gap:8px">
+              <div style="min-width:58px;text-align:center;padding:4px 6px;border-radius:999px;background:#2c2140;border:1px solid #8b5cf6;color:#ddd6fe;font-weight:bold;font-size:0.86em">${r.custo || "PM"}</div>
+              <div style="flex:1;min-width:0;color:#e5e7eb;line-height:1.35">${r.texto || "(sem descrição)"}</div>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end">
+              <button class="t20-aprim-focus" data-index="${r.index}" style="padding:5px 8px;border-radius:6px;border:1px solid #64748b;background:#1f2937;color:#e5e7eb;cursor:pointer">Ver na janela</button>
+              <button class="t20-aprim-toggle" data-index="${r.index}" style="padding:5px 8px;border-radius:6px;border:1px solid ${selected ? "#f87171" : "#34d399"};background:${selected ? "#3b151b" : "#14351f"};color:${selected ? "#fecaca" : "#bbf7d0"};font-weight:bold;cursor:pointer">${selected ? "Remover" : "Selecionar"}</button>
+            </div>
+          </div>`;
+        }).join("") : `<div style="color:#9ca3af;text-align:center;padding:18px">Nenhum aprimoramento encontrado.</div>`}
+      </div>
+    </div>`;
+  }
+
+  activateListeners(html) {
+    super.activateListeners(html);
+
+    html.find(".t20-aprim-search").on("input", ev => {
+      this.busca = ev.currentTarget.value ?? "";
+      this.render(false);
+    });
+
+    html.find(".t20-aprim-focus").on("click", ev => {
+      const index = Number(ev.currentTarget.dataset.index);
+      const row = t20AprimRows(this.sourceApp).find(r => r.index === index)?.row;
+      if (!row) return;
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+      row.style.outline = "3px solid #8b5cf6";
+      setTimeout(() => row.style.outline = "", 1600);
+    });
+
+    html.find(".t20-aprim-toggle").on("click", ev => {
+      const index = Number(ev.currentTarget.dataset.index);
+      const row = t20AprimRows(this.sourceApp).find(r => r.index === index)?.row;
+      if (!row) return;
+      if (t20AprimSelecionado(row)) t20AprimDesativar(row);
+      else t20AprimAtivar(row);
+      setTimeout(() => this.render(false), 80);
+    });
+  }
 }
-
-Hooks.once("ready", () => setTimeout(t20ObservarDialogosMagia, 1000));
-
 
 
 Hooks.on("getAbilityUseDialogHeaderButtons", (app, buttons) => {
   try {
     buttons.unshift({
       label: "Arsenal",
-      class: "arsenal-t20-restyle-dialog",
+      class: "arsenal-t20-open-aprim-panel",
       icon: "fas fa-wand-magic-sparkles",
-      onclick: () => setTimeout(() => t20MelhorarDialogoUsoMagia(app, app.element), 20),
+      onclick: () => abrirArsenalAprimoramentos(app),
     });
   } catch {}
 });
