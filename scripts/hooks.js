@@ -149,6 +149,19 @@ Hooks.once("ready", () => {
     default: "sidebar",
   });
 
+  game.settings.register(MOD, "arsenalHudLayout", {
+    name: "Layout do Arsenal HUD",
+    hint: "Define o visual interno do HUD. O layout Cartões dá mais destaque a habilidades, magias e ataques.",
+    scope: "client",
+    config: true,
+    type: String,
+    choices: {
+      compact: "Lista compacta",
+      cards: "Cartões de habilidades"
+    },
+    default: "compact",
+  });
+
   const ativas = [];
   if (game.settings.get(MOD, "autoAtaque"))      ativas.push("Ataque");
   if (game.settings.get(MOD, "autoSalvamento"))  ativas.push("Salvamento");
@@ -4308,6 +4321,14 @@ function t20HudMode() {
   }
 }
 
+function t20HudLayout() {
+  try {
+    return game.settings.get("arsenal-t20", "arsenalHudLayout") ?? "compact";
+  } catch {
+    return "compact";
+  }
+}
+
 function t20HudTokenSelecionado() {
   return canvas.tokens?.controlled?.[0] ?? null;
 }
@@ -4727,14 +4748,14 @@ class ArsenalHUD extends Application {
 
   _aplicarTamanho(el, modo) {
     const salvo = t20HudGetSavedSize(modo);
-    const defaults = modo === "bottom" ? { width: 560, height: 190 } : { width: 270, height: 340 };
+    const defaults = modo === "bottom" ? { width: 640, height: 230 } : { width: 315, height: 390 };
     const w = Number(salvo?.width) || defaults.width;
     const h = Number(salvo?.height) || defaults.height;
 
-    el.style.width = `${Math.max(210, Math.min(window.innerWidth - 24, w))}px`;
-    el.style.height = `${Math.max(135, Math.min(window.innerHeight - 32, h))}px`;
-    el.style.minWidth = "210px";
-    el.style.minHeight = "135px";
+    el.style.width = `${Math.max(245, Math.min(window.innerWidth - 24, w))}px`;
+    el.style.height = `${Math.max(165, Math.min(window.innerHeight - 32, h))}px`;
+    el.style.minWidth = "245px";
+    el.style.minHeight = "165px";
     el.style.maxWidth = `${window.innerWidth - 12}px`;
     el.style.maxHeight = `${window.innerHeight - 12}px`;
     el.style.overflow = "hidden";
@@ -4796,6 +4817,7 @@ class ArsenalHUD extends Application {
     const grupos = t20HudItensActor(actor);
     const pericias = t20HudPericiasTreinadasActor(actor);
     const bottom = modo === "bottom";
+    const layout = t20HudLayout();
     const personagemJogador = t20HudActorEhPersonagemJogador(actor);
 
     return `<div style="
@@ -4803,11 +4825,11 @@ class ArsenalHUD extends Application {
       background:linear-gradient(180deg,#111827,#0b1020);
       border:1px solid #374151;border-top:2px solid #c9a227;
       box-shadow:0 6px 14px rgba(0,0,0,0.38);
-      border-radius:8px;color:#e5e7eb;font-family:serif;padding:7px;font-size:12px">
+      border-radius:8px;color:#e5e7eb;font-family:serif;padding:7px;font-size:14px">
       <div class="t20-hud-drag" style="display:flex;align-items:center;gap:6px;margin-bottom:6px;border-bottom:1px solid rgba(201,162,39,0.18);padding-bottom:5px;cursor:${modo === "token" ? "default" : "move"};flex-shrink:0">
-        ${img ? `<img src="${img}" style="width:25px;height:25px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.38)">` : ""}
+        ${img ? `<img src="${img}" style="width:30px;height:30px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.38)">` : ""}
         <div style="min-width:0;flex:1">
-          <div style="font-size:0.66em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">${personagemJogador ? "Favoritos" : "NPC/Ameaça"}</div>
+          <div style="font-size:0.72em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">${personagemJogador ? "Favoritos" : "NPC/Ameaça"}</div>
           <div style="color:#f2e6c9;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nome}</div>
         </div>
         ${actor ? `
@@ -4817,12 +4839,12 @@ class ArsenalHUD extends Application {
             <button class="t20-hud-action" title="Dano manual" data-action="dano" style="${this._iconBtn("#3b151b","#f87171")}">💔</button>
             <button class="t20-hud-action" title="Cura manual" data-action="cura" style="${this._iconBtn("#14351f","#4ade80")}">💚</button>
           </div>` : ""}
-        <button class="t20-hud-refresh" title="Atualizar" style="padding:2px 5px;border-radius:5px;background:#1f2937;border:1px solid #4b5563;color:#fff;cursor:pointer;font-size:11px">↻</button>
+        <button class="t20-hud-refresh" title="Atualizar" style="padding:2px 5px;border-radius:5px;background:#1f2937;border:1px solid #4b5563;color:#fff;cursor:pointer;font-size:13px">↻</button>
       </div>
 
       ${!actor ? `<div style="color:#9ca3af;padding:6px">Selecione um token para usar o HUD.</div>` : `
-        <div style="${bottom ? "display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;overflow:auto;min-height:0;flex:1;padding-right:2px" : "overflow:auto;min-height:0;flex:1;padding-right:2px"}">
-          ${this._renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador)}
+        <div style="${bottom ? "display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:7px;overflow:auto;min-height:0;flex:1;padding-right:2px" : "overflow:auto;min-height:0;flex:1;padding-right:2px"}">
+          ${this._renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador, layout)}
         </div>
 
         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:6px;flex-shrink:0;padding-right:12px">
@@ -4833,7 +4855,7 @@ class ArsenalHUD extends Application {
           <button class="t20-hud-action" data-action="limparCondicoes" style="${this._textBtn("#2d1b1b","#fca5a5")}">🧹 Limpar Cond.</button>
         </div>
 
-        <div style="margin-top:5px;font-size:0.72em;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;padding-right:12px">
+        <div style="margin-top:5px;font-size:0.78em;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;padding-right:12px">
           ${personagemJogador ? "Favoritos da ficha + perícias treinadas. Use ▲▼ para reordenar." : "NPC: ataques e habilidades. Use ▲▼ para reordenar."}
           ${sustentadas.length ? ` · Sust.: <b style="color:#f2e6c9">${sustentadas.map(s => s.nome ?? s.name ?? s.label).join(", ")}</b>` : ""}
         </div>
@@ -4845,7 +4867,7 @@ class ArsenalHUD extends Application {
     </div>`;
   }
 
-  _renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador) {
+  _renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador, layout = "compact") {
     const defs = {
       ataques:  { titulo: "⚔️ Ataques", itens: grupos.ataques, tipo: "item" },
       magias:   { titulo: "🪄 Magias", itens: grupos.magias, tipo: "item" },
@@ -4855,46 +4877,62 @@ class ArsenalHUD extends Application {
 
     return t20HudGetCategoryOrder()
       .filter(cat => cat !== "pericias" || personagemJogador)
-      .map(cat => this._secao(defs[cat].titulo, defs[cat].itens, bottom, defs[cat].tipo, cat))
+      .map(cat => this._secao(defs[cat].titulo, defs[cat].itens, bottom, defs[cat].tipo, cat, layout))
       .join("");
   }
 
-  _secao(titulo, itens, bottom, tipo = "item", cat = "") {
+  _secao(titulo, itens, bottom, tipo = "item", cat = "", layout = "compact") {
     const maxItens = 80;
     const lista = (itens ?? []).slice(0, maxItens);
-    const vazio = !lista.length ? `<div style="font-size:0.75em;color:#6b7280;padding:3px 2px">Nenhum</div>` : "";
+    const vazio = !lista.length ? `<div style="font-size:0.86em;color:#6b7280;padding:4px 2px">Nenhum</div>` : "";
+    const cards = layout === "cards";
 
-    return `<div style="${bottom ? "min-width:0" : "margin-bottom:7px"}">
-      <div style="display:flex;align-items:center;gap:3px;margin:2px 0 3px">
-        <div style="font-size:0.78em;color:#d9b85f;font-weight:bold;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${titulo}</div>
+    return `<div style="${bottom ? "min-width:0" : "margin-bottom:9px"}">
+      <div style="display:flex;align-items:center;gap:4px;margin:3px 0 5px">
+        <div style="font-size:0.92em;color:#d9b85f;font-weight:bold;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${titulo}</div>
         <button class="t20-hud-cat-move" data-cat="${cat}" data-dir="-1" title="Mover categoria para cima/esquerda"
-          style="padding:0 4px;border-radius:4px;background:#1f2937;border:1px solid #4b5563;color:#cbd5e1;cursor:pointer;font-size:0.68em">▲</button>
+          style="padding:1px 5px;border-radius:4px;background:#1f2937;border:1px solid #4b5563;color:#cbd5e1;cursor:pointer;font-size:0.78em">▲</button>
         <button class="t20-hud-cat-move" data-cat="${cat}" data-dir="1" title="Mover categoria para baixo/direita"
-          style="padding:0 4px;border-radius:4px;background:#1f2937;border:1px solid #4b5563;color:#cbd5e1;cursor:pointer;font-size:0.68em">▼</button>
+          style="padding:1px 5px;border-radius:4px;background:#1f2937;border:1px solid #4b5563;color:#cbd5e1;cursor:pointer;font-size:0.78em">▼</button>
       </div>
       ${vazio}
-      ${lista.map(item => {
-        const id = tipo === "pericia" ? item.id : item.id;
-        const label = tipo === "pericia" ? `${item.label} ${item.bonus >= 0 ? "+" : ""}${item.bonus}` : item.name;
-        const img = tipo === "pericia" ? "" : item.img;
-        return `<button class="${tipo === "pericia" ? "t20-hud-pericia" : "t20-hud-item"}"
-          data-${tipo === "pericia" ? "pericia-id" : "item-id"}="${id}" title="${label}"
-          style="display:flex;align-items:center;gap:5px;width:100%;padding:4px 5px;margin-bottom:3px;border-radius:5px;
-          background:#151c2b;border:1px solid #303b52;color:#e5e7eb;cursor:pointer;font-size:0.78em;text-align:left;min-width:0">
-          ${img ? `<img src="${img}" style="width:16px;height:16px;border-radius:3px;object-fit:cover;border:none">` : `<span style="width:16px;text-align:center">${tipo === "pericia" ? "🎲" : "•"}</span>`}
-          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</span>
-        </button>`;
-      }).join("")}
+      <div style="${cards ? "display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:6px" : ""}">
+        ${lista.map(item => {
+          const id = tipo === "pericia" ? item.id : item.id;
+          const label = tipo === "pericia" ? `${item.label} ${item.bonus >= 0 ? "+" : ""}${item.bonus}` : item.name;
+          const img = tipo === "pericia" ? "" : item.img;
+
+          if (cards) {
+            return `<button class="${tipo === "pericia" ? "t20-hud-pericia" : "t20-hud-item"}"
+              data-${tipo === "pericia" ? "pericia-id" : "item-id"}="${id}" title="${label}"
+              style="display:flex;align-items:center;gap:7px;width:100%;min-height:42px;padding:7px;margin:0;border-radius:8px;
+              background:linear-gradient(180deg,#182235,#111827);border:1px solid #374151;color:#e5e7eb;cursor:pointer;
+              font-size:0.92em;text-align:left;min-width:0;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04)">
+              ${img ? `<img src="${img}" style="width:26px;height:26px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.35)">` : `<span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:#0f172a">${tipo === "pericia" ? "🎲" : "•"}</span>`}
+              <span style="white-space:normal;overflow:hidden;text-overflow:ellipsis;line-height:1.12">${label}</span>
+            </button>`;
+          }
+
+          return `<button class="${tipo === "pericia" ? "t20-hud-pericia" : "t20-hud-item"}"
+            data-${tipo === "pericia" ? "pericia-id" : "item-id"}="${id}" title="${label}"
+            style="display:flex;align-items:center;gap:6px;width:100%;padding:6px 7px;margin-bottom:4px;border-radius:6px;
+            background:#151c2b;border:1px solid #303b52;color:#e5e7eb;cursor:pointer;font-size:0.9em;text-align:left;min-width:0">
+            ${img ? `<img src="${img}" style="width:20px;height:20px;border-radius:4px;object-fit:cover;border:none">` : `<span style="width:20px;text-align:center">${tipo === "pericia" ? "🎲" : "•"}</span>`}
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</span>
+          </button>`;
+        }).join("")}
+      </div>
     </div>`;
   }
 
+
   _textBtn(bg, fg) {
-    return `padding:4px 6px;border-radius:5px;background:${bg};border:1px solid ${fg};color:${fg};font-weight:bold;cursor:pointer;font-size:0.74em;line-height:1.05`;
+    return `padding:4px 6px;border-radius:5px;background:${bg};border:1px solid ${fg};color:${fg};font-weight:bold;cursor:pointer;font-size:0.84em;line-height:1.1`;
   }
 
 
   _iconBtn(bg, fg) {
-    return `min-width:23px;height:21px;padding:1px 4px;border-radius:5px;background:${bg};border:1px solid ${fg};color:${fg};font-weight:bold;cursor:pointer;font-size:0.72em;line-height:1`;
+    return `min-width:28px;height:25px;padding:2px 5px;border-radius:5px;background:${bg};border:1px solid ${fg};color:${fg};font-weight:bold;cursor:pointer;font-size:0.82em;line-height:1`;
   }
 
   _iniciarArraste(html) {
