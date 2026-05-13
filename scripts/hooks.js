@@ -4297,7 +4297,7 @@ Hooks.on("updateActor", async (actor, changed, options, userId) => {
 
 
 // ============================================================
-// ARSENAL HUD — atalhos de ataques, magias e poderes
+// ARSENAL HUD — atalhos de favoritos, ataques, magias e poderes
 // ============================================================
 
 function t20HudMode() {
@@ -4316,13 +4316,13 @@ function t20HudActorSelecionado() {
   return t20HudTokenSelecionado()?.actor ?? game.user.character ?? null;
 }
 
-function t20HudStorageKey(modo) {
-  return `arsenal-t20.hud.position.${game.user?.id ?? "user"}.${modo}`;
+function t20HudStorageKey(modo, tipo = "position") {
+  return `arsenal-t20.hud.${tipo}.${game.user?.id ?? "user"}.${modo}`;
 }
 
 function t20HudGetSavedPosition(modo) {
   try {
-    const raw = localStorage.getItem(t20HudStorageKey(modo));
+    const raw = localStorage.getItem(t20HudStorageKey(modo, "position"));
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -4331,7 +4331,22 @@ function t20HudGetSavedPosition(modo) {
 
 function t20HudSetSavedPosition(modo, pos) {
   try {
-    localStorage.setItem(t20HudStorageKey(modo), JSON.stringify(pos));
+    localStorage.setItem(t20HudStorageKey(modo, "position"), JSON.stringify(pos));
+  } catch {}
+}
+
+function t20HudGetSavedSize(modo) {
+  try {
+    const raw = localStorage.getItem(t20HudStorageKey(modo, "size"));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function t20HudSetSavedSize(modo, size) {
+  try {
+    localStorage.setItem(t20HudStorageKey(modo, "size"), JSON.stringify(size));
   } catch {}
 }
 
@@ -4378,13 +4393,64 @@ function t20HudClassificarItem(item) {
   return null;
 }
 
+function t20HudValorEhFavorito(valor) {
+  if (valor === true) return true;
+  if (valor === 1) return true;
+  if (typeof valor === "string" && /^(true|sim|yes|favorito|favorite|on|1)$/i.test(valor.trim())) return true;
+  if (valor && typeof valor === "object") {
+    if (t20HudValorEhFavorito(valor.value)) return true;
+    if (t20HudValorEhFavorito(valor.enabled)) return true;
+    if (t20HudValorEhFavorito(valor.checked)) return true;
+  }
+  return false;
+}
+
+function t20HudItemFavorito(item) {
+  const nomesFav = new Set([
+    "favorite", "favorites", "favorito", "favorita", "fav",
+    "isfavorite", "isfavorito", "atalho", "shortcut", "quick", "quickbar",
+    "marcado", "pinned", "pin", "hud", "tokenactionhud"
+  ]);
+
+  const checarObjeto = (obj, depth = 0) => {
+    if (!obj || typeof obj !== "object" || depth > 4) return false;
+
+    for (const [k, v] of Object.entries(obj)) {
+      const key = String(k).toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (nomesFav.has(key) && t20HudValorEhFavorito(v)) return true;
+      if (v && typeof v === "object" && checarObjeto(v, depth + 1)) return true;
+    }
+    return false;
+  };
+
+  return checarObjeto(item.flags ?? {}) || checarObjeto(item.system ?? {});
+}
+
+function t20HudActorEhPersonagemJogador(actor) {
+  if (!actor) return false;
+  if (!actor.hasPlayerOwner) return false;
+  const tipo = String(actor.type ?? "").toLowerCase();
+  return !["ameaca", "ameaça", "npc", "threat", "monster", "creature"].includes(tipo);
+}
+
 function t20HudItensActor(actor) {
   const grupos = { ataques: [], magias: [], poderes: [] };
   if (!actor) return grupos;
 
+  const personagemJogador = t20HudActorEhPersonagemJogador(actor);
+
   for (const item of actor.items ?? []) {
     const cat = t20HudClassificarItem(item);
     if (!cat) continue;
+
+    // Para personagens jogadores, o HUD mostra apenas favoritos definidos na ficha.
+    // Para NPCs/ameaças, mantém ações úteis para o GM: ataques e habilidades/poderes.
+    if (personagemJogador) {
+      if (!t20HudItemFavorito(item)) continue;
+    } else {
+      if (!["ataques", "poderes"].includes(cat)) continue;
+    }
+
     grupos[cat].push(item);
   }
 
@@ -4480,7 +4546,9 @@ function atualizarArsenalHUD() {
     fecharArsenalHUD();
     return;
   }
-  if (_arsenalHUD?.rendered) _arsenalHUD.render(false);
+  if (_arsenalHUD?.rendered) {
+    _arsenalHUD.render(false);
+  }
 }
 
 class ArsenalHUD extends Application {
@@ -4490,7 +4558,7 @@ class ArsenalHUD extends Application {
       title: "Arsenal HUD",
       width: 250,
       height: "auto",
-      resizable: false,
+      resizable: true,
       minimizable: false,
       popOut: false,
     });
@@ -4507,13 +4575,35 @@ class ArsenalHUD extends Application {
 
   render(force, options = {}) {
     const r = super.render(force, options);
-    setTimeout(() => this._reposicionar(), 50);
+    setTimeout(() => {
+      this._reposicionar();
+      this._observarTamanho();
+    }, 50);
     return r;
   }
 
   setPosition(options = {}) {
     super.setPosition(options);
     this._reposicionar();
+  }
+
+  _aplicarTamanho(el, modo) {
+    const salvo = t20HudGetSavedSize(modo);
+    const defaults = modo === "bottom"
+      ? { width: 520, height: 170 }
+      : { width: 245, height: 310 };
+
+    const w = Number(salvo?.width) || defaults.width;
+    const h = Number(salvo?.height) || defaults.height;
+
+    el.style.width = `${Math.max(190, Math.min(window.innerWidth - 40, w))}px`;
+    el.style.height = `${Math.max(110, Math.min(window.innerHeight - 80, h))}px`;
+    el.style.resize = "both";
+    el.style.overflow = "hidden";
+    el.style.minWidth = "190px";
+    el.style.minHeight = "110px";
+    el.style.maxWidth = `${window.innerWidth - 20}px`;
+    el.style.maxHeight = `${window.innerHeight - 20}px`;
   }
 
   _reposicionar() {
@@ -4530,36 +4620,37 @@ class ArsenalHUD extends Application {
     el.style.transform = "";
     el.style.bottom = "auto";
 
+    this._aplicarTamanho(el, modo);
+
     if (modo === "token" && token) {
       const c = token.center ?? { x: token.x, y: token.y };
       const world = new PIXI.Point(c.x, c.y);
       const screen = canvas.stage.worldTransform.apply(world);
+      const rect = el.getBoundingClientRect();
 
-      el.style.left = `${Math.min(window.innerWidth - 260, Math.max(72, screen.x + 22))}px`;
-      el.style.top = `${Math.min(window.innerHeight - 220, Math.max(64, screen.y - 22))}px`;
-      el.style.width = "238px";
+      el.style.left = `${Math.min(window.innerWidth - rect.width - 8, Math.max(72, screen.x + 22))}px`;
+      el.style.top = `${Math.min(window.innerHeight - rect.height - 8, Math.max(64, screen.y - 22))}px`;
       return;
     }
 
     const salvo = t20HudGetSavedPosition(modo);
     if (salvo && Number.isFinite(salvo.left) && Number.isFinite(salvo.top)) {
-      el.style.left = `${Math.min(window.innerWidth - 190, Math.max(0, salvo.left))}px`;
-      el.style.top = `${Math.min(window.innerHeight - 90, Math.max(0, salvo.top))}px`;
-      el.style.width = modo === "bottom" ? "520px" : "238px";
+      const rect = el.getBoundingClientRect();
+      el.style.left = `${Math.min(window.innerWidth - rect.width - 8, Math.max(0, salvo.left))}px`;
+      el.style.top = `${Math.min(window.innerHeight - rect.height - 8, Math.max(0, salvo.top))}px`;
       return;
     }
 
     if (modo === "bottom") {
-      el.style.left = `${Math.max(80, Math.round((window.innerWidth - 520) / 2))}px`;
-      el.style.top = `${Math.max(80, window.innerHeight - 178)}px`;
-      el.style.width = "520px";
+      const rect = el.getBoundingClientRect();
+      el.style.left = `${Math.max(80, Math.round((window.innerWidth - rect.width) / 2))}px`;
+      el.style.top = `${Math.max(80, window.innerHeight - rect.height - 78)}px`;
       return;
     }
 
     // Painel lateral padrão: compacto e fora da região da lista de jogadores.
     el.style.left = "76px";
     el.style.top = "118px";
-    el.style.width = "238px";
   }
 
   _html() {
@@ -4571,43 +4662,48 @@ class ArsenalHUD extends Application {
     const sustentadas = actor ? t20EfeitosSustentados(actor) : [];
     const grupos = t20HudItensActor(actor);
     const bottom = modo === "bottom";
+    const personagemJogador = t20HudActorEhPersonagemJogador(actor);
 
     return `<div style="
+      height:100%;box-sizing:border-box;display:flex;flex-direction:column;
       background:linear-gradient(180deg,#111827,#0b1020);
       border:1px solid #374151;border-top:2px solid #c9a227;
       box-shadow:0 6px 14px rgba(0,0,0,0.38);
       border-radius:8px;color:#e5e7eb;font-family:serif;padding:7px;font-size:12px">
-      <div class="t20-hud-drag" style="display:flex;align-items:center;gap:6px;margin-bottom:6px;border-bottom:1px solid rgba(201,162,39,0.18);padding-bottom:5px;cursor:${modo === "token" ? "default" : "move"}">
+      <div class="t20-hud-drag" style="display:flex;align-items:center;gap:6px;margin-bottom:6px;border-bottom:1px solid rgba(201,162,39,0.18);padding-bottom:5px;cursor:${modo === "token" ? "default" : "move"};flex-shrink:0">
         ${img ? `<img src="${img}" style="width:25px;height:25px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.38)">` : ""}
         <div style="min-width:0;flex:1">
-          <div style="font-size:0.66em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">Arsenal HUD</div>
+          <div style="font-size:0.66em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">${personagemJogador ? "Favoritos" : "NPC/Ameaça"}</div>
           <div style="color:#f2e6c9;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nome}</div>
         </div>
         <button class="t20-hud-refresh" title="Atualizar" style="padding:2px 5px;border-radius:5px;background:#1f2937;border:1px solid #4b5563;color:#fff;cursor:pointer;font-size:11px">↻</button>
       </div>
 
       ${!actor ? `<div style="color:#9ca3af;padding:6px">Selecione um token para usar o HUD.</div>` : `
-        <div style="${bottom ? "display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;max-height:130px;overflow:auto" : "max-height:265px;overflow:auto;padding-right:2px"}">
+        <div style="${bottom ? "display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;overflow:auto;min-height:0;flex:1" : "overflow:auto;min-height:0;flex:1;padding-right:2px"}">
           ${this._secao("⚔️ Ataques", grupos.ataques, bottom)}
           ${this._secao("🪄 Magias", grupos.magias, bottom)}
           ${this._secao("✨ Poderes", grupos.poderes, bottom)}
         </div>
 
-        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:6px">
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:6px;flex-shrink:0">
           <button class="t20-hud-action" data-action="sustentar" style="${this._miniBtn("#2f2710","#facc15")}">Sustentar</button>
           <button class="t20-hud-action" data-action="sustentadas" style="${this._miniBtn("#2c2140","#c4b5fd")}">Sust.</button>
           <button class="t20-hud-action" data-action="aura" style="${this._miniBtn("#10231f","#2dd4bf")}">Aura</button>
         </div>
 
-        <div style="margin-top:5px;font-size:0.72em;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-          ${sustentadas.length ? `Sust.: <b style="color:#f2e6c9">${sustentadas.map(s => s.nome ?? s.name ?? s.label).join(", ")}</b>` : "Sem sustentação ativa."}
+        <div style="margin-top:5px;font-size:0.72em;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">
+          ${personagemJogador
+            ? "Mostrando apenas itens favoritos da ficha."
+            : "NPC: ataques e habilidades."}
+          ${sustentadas.length ? ` · Sust.: <b style="color:#f2e6c9">${sustentadas.map(s => s.nome ?? s.name ?? s.label).join(", ")}</b>` : ""}
         </div>
       `}
     </div>`;
   }
 
   _secao(titulo, itens, bottom) {
-    const maxItens = bottom ? 5 : 7;
+    const maxItens = bottom ? 8 : 20;
     const lista = (itens ?? []).slice(0, maxItens);
     const vazio = !lista.length ? `<div style="font-size:0.75em;color:#6b7280;padding:3px 2px">Nenhum</div>` : "";
 
@@ -4641,8 +4737,9 @@ class ArsenalHUD extends Application {
 
     const move = ev => {
       if (!dragging) return;
-      const left = Math.min(window.innerWidth - 120, Math.max(0, startLeft + ev.clientX - startX));
-      const top = Math.min(window.innerHeight - 60, Math.max(0, startTop + ev.clientY - startY));
+      const rect = root.getBoundingClientRect();
+      const left = Math.min(window.innerWidth - rect.width - 8, Math.max(0, startLeft + ev.clientX - startX));
+      const top = Math.min(window.innerHeight - rect.height - 8, Math.max(0, startTop + ev.clientY - startY));
       root.style.left = `${left}px`;
       root.style.top = `${top}px`;
       root.style.bottom = "auto";
@@ -4673,10 +4770,31 @@ class ArsenalHUD extends Application {
     });
   }
 
+  _observarTamanho() {
+    const root = this.element?.[0];
+    if (!root || root._arsenalResizeObserver) return;
+
+    let debounce = null;
+    const obs = new ResizeObserver(entries => {
+      const rect = entries?.[0]?.contentRect;
+      if (!rect) return;
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        t20HudSetSavedSize(t20HudMode(), {
+          width: Math.round(root.getBoundingClientRect().width),
+          height: Math.round(root.getBoundingClientRect().height),
+        });
+      }, 250);
+    });
+    obs.observe(root);
+    root._arsenalResizeObserver = obs;
+  }
+
   activateListeners(html) {
     super.activateListeners(html);
 
     this._iniciarArraste(html);
+    this._observarTamanho();
 
     html.find(".t20-hud-refresh").on("click", () => this.render(false));
 
