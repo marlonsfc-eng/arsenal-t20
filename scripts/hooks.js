@@ -134,6 +134,21 @@ Hooks.once("ready", () => {
     default: true,
   });
 
+  game.settings.register(MOD, "arsenalHudMode", {
+    name: "Arsenal HUD",
+    hint: "Define como o HUD rápido do Arsenal aparece para este usuário.",
+    scope: "client",
+    config: true,
+    type: String,
+    choices: {
+      off: "Desativado",
+      sidebar: "Painel lateral",
+      token: "Perto do token",
+      bottom: "Barra inferior"
+    },
+    default: "sidebar",
+  });
+
   const ativas = [];
   if (game.settings.get(MOD, "autoAtaque"))      ativas.push("Ataque");
   if (game.settings.get(MOD, "autoSalvamento"))  ativas.push("Salvamento");
@@ -4279,6 +4294,466 @@ Hooks.on("updateActor", async (actor, changed, options, userId) => {
     userId,
   });
 });
+
+
+// ============================================================
+// ARSENAL HUD — ações rápidas por token
+// ============================================================
+
+function t20HudMode() {
+  try {
+    return game.settings.get("arsenal-t20", "arsenalHudMode") ?? "sidebar";
+  } catch {
+    return "sidebar";
+  }
+}
+
+function t20HudTokenSelecionado() {
+  return canvas.tokens?.controlled?.[0] ?? null;
+}
+
+function t20HudActorSelecionado() {
+  return t20HudTokenSelecionado()?.actor ?? game.user.character ?? null;
+}
+
+let _arsenalHUD = null;
+
+function abrirArsenalHUD(force = false) {
+  const modo = t20HudMode();
+  if (modo === "off") {
+    if (_arsenalHUD?.rendered) _arsenalHUD.close();
+    return;
+  }
+
+  if (!_arsenalHUD) _arsenalHUD = new ArsenalHUD();
+
+  if (!_arsenalHUD.rendered || force) {
+    _arsenalHUD.render(true);
+  } else {
+    _arsenalHUD.render(false);
+  }
+}
+
+function fecharArsenalHUD() {
+  if (_arsenalHUD?.rendered) _arsenalHUD.close();
+}
+
+function atualizarArsenalHUD() {
+  const modo = t20HudMode();
+  if (modo === "off") {
+    fecharArsenalHUD();
+    return;
+  }
+  if (_arsenalHUD?.rendered) {
+    _arsenalHUD.render(false);
+  }
+}
+
+async function t20HudGastarPM(actor) {
+  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+
+  const valor = await new Promise(resolve => {
+    new Dialog({
+      title: "Gastar PM",
+      content: `<form>
+        <p>Informe quantos PM serão gastos por <b>${actor.name}</b>.</p>
+        <div class="form-group">
+          <label>PM</label>
+          <input type="number" name="pm" value="1" min="0" step="1" autofocus>
+        </div>
+      </form>`,
+      buttons: {
+        ok: {
+          label: "Gastar",
+          callback: html => {
+            const val = Number(html.find?.('[name="pm"]').val?.() ?? html.querySelector?.('[name="pm"]')?.value ?? 0);
+            resolve(Math.max(0, Math.floor(val || 0)));
+          }
+        },
+        cancel: { label: "Cancelar", callback: () => resolve(null) }
+      },
+      default: "ok",
+      close: () => resolve(null),
+    }).render(true);
+  });
+
+  if (valor === null || valor <= 0) return;
+  await t20AplicarPMDireto(actor, valor);
+  ui.notifications.info(`${actor.name}: ${valor} PM gasto(s).`);
+}
+
+async function t20HudRecuperarPM(actor) {
+  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+
+  const valor = await new Promise(resolve => {
+    new Dialog({
+      title: "Recuperar PM",
+      content: `<form>
+        <p>Informe quantos PM serão recuperados por <b>${actor.name}</b>.</p>
+        <div class="form-group">
+          <label>PM</label>
+          <input type="number" name="pm" value="1" min="0" step="1" autofocus>
+        </div>
+      </form>`,
+      buttons: {
+        ok: {
+          label: "Recuperar",
+          callback: html => {
+            const val = Number(html.find?.('[name="pm"]').val?.() ?? html.querySelector?.('[name="pm"]')?.value ?? 0);
+            resolve(Math.max(0, Math.floor(val || 0)));
+          }
+        },
+        cancel: { label: "Cancelar", callback: () => resolve(null) }
+      },
+      default: "ok",
+      close: () => resolve(null),
+    }).render(true);
+  });
+
+  if (valor === null || valor <= 0) return;
+  await t20ReverterPMDireto(actor, valor);
+  ui.notifications.info(`${actor.name}: ${valor} PM recuperado(s).`);
+}
+
+async function t20HudDanoManual(actor) {
+  const token = t20HudTokenSelecionado();
+  if (!token?.actor) return ui.notifications.warn("Selecione um token para aplicar dano.");
+
+  const valor = await new Promise(resolve => {
+    new Dialog({
+      title: "Aplicar Dano Manual",
+      content: `<form>
+        <p>Aplicar dano em <b>${token.name}</b>.</p>
+        <div class="form-group">
+          <label>Dano</label>
+          <input type="number" name="dano" value="1" min="0" step="1" autofocus>
+        </div>
+      </form>`,
+      buttons: {
+        ok: {
+          label: "Aplicar",
+          callback: html => {
+            const val = Number(html.find?.('[name="dano"]').val?.() ?? html.querySelector?.('[name="dano"]')?.value ?? 0);
+            resolve(Math.max(0, Math.floor(val || 0)));
+          }
+        },
+        cancel: { label: "Cancelar", callback: () => resolve(null) }
+      },
+      default: "ok",
+      close: () => resolve(null),
+    }).render(true);
+  });
+
+  if (valor === null || valor <= 0) return;
+  await t20AplicarDanoDireto(token.actor, valor);
+  await ChatMessage.create({
+    content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #b94a58;padding:8px 11px;border-radius:6px;color:#d7dcea">
+      💔 <b>${token.name}</b> sofreu <b>${valor}</b> de dano manual.
+    </div>`
+  });
+}
+
+async function t20HudCurarManual(actor) {
+  const token = t20HudTokenSelecionado();
+  if (!token?.actor) return ui.notifications.warn("Selecione um token para curar.");
+
+  const valor = await new Promise(resolve => {
+    new Dialog({
+      title: "Aplicar Cura Manual",
+      content: `<form>
+        <p>Aplicar cura em <b>${token.name}</b>.</p>
+        <div class="form-group">
+          <label>Cura</label>
+          <input type="number" name="cura" value="1" min="0" step="1" autofocus>
+        </div>
+      </form>`,
+      buttons: {
+        ok: {
+          label: "Curar",
+          callback: html => {
+            const val = Number(html.find?.('[name="cura"]').val?.() ?? html.querySelector?.('[name="cura"]')?.value ?? 0);
+            resolve(Math.max(0, Math.floor(val || 0)));
+          }
+        },
+        cancel: { label: "Cancelar", callback: () => resolve(null) }
+      },
+      default: "ok",
+      close: () => resolve(null),
+    }).render(true);
+  });
+
+  if (valor === null || valor <= 0) return;
+
+  const hpPath = "system.attributes.pv.value";
+  const maxPath = "system.attributes.pv.max";
+  const pvAtual = Number(foundry.utils.getProperty(token.actor, hpPath));
+  const pvMax = Number(foundry.utils.getProperty(token.actor, maxPath) ?? pvAtual);
+  if (!Number.isFinite(pvAtual)) return ui.notifications.warn("PV não encontrado.");
+
+  await token.actor.update({ [hpPath]: Math.min(pvMax, pvAtual + valor) });
+  await ChatMessage.create({
+    content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #4ade80;padding:8px 11px;border-radius:6px;color:#d7dcea">
+      💚 <b>${token.name}</b> recuperou <b>${valor}</b> PV.
+    </div>`
+  });
+}
+
+async function t20HudSustentarManual(actor) {
+  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+
+  const nome = await new Promise(resolve => {
+    new Dialog({
+      title: "Sustentar efeito",
+      content: `<form>
+        <p>Informe o nome da magia ou poder sustentado por <b>${actor.name}</b>.</p>
+        <div class="form-group">
+          <label>Nome</label>
+          <input type="text" name="nome" value="Magia sustentada" autofocus>
+        </div>
+      </form>`,
+      buttons: {
+        ok: {
+          label: "Sustentar",
+          callback: html => {
+            const val = String(html.find?.('[name="nome"]').val?.() ?? html.querySelector?.('[name="nome"]')?.value ?? "").trim();
+            resolve(val || null);
+          }
+        },
+        cancel: { label: "Cancelar", callback: () => resolve(null) }
+      },
+      default: "ok",
+      close: () => resolve(null),
+    }).render(true);
+  });
+
+  if (!nome) return;
+
+  await t20RegistrarSustentada(actor, {
+    name: nome,
+    duration: "Sustentada",
+    description: { value: "Duração: Sustentada" },
+  }, { content: `Duração: Sustentada ${nome}` }, {
+    force: true,
+    solicitante: game.user.name,
+  });
+
+  atualizarArsenalHUD();
+}
+
+async function t20HudRemoverTodasCondicoes(actor) {
+  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+  const efeitos = Array.from(actor.effects ?? []).filter(e => {
+    const id = e.statuses?.first?.() ?? e.statuses?.values?.().next?.().value ?? e.flags?.core?.statusId;
+    return id || CONFIG.statusEffects.some(s => s.id === e.name || s.name === e.name);
+  });
+
+  if (!efeitos.length) return ui.notifications.info(`${actor.name} não possui condições detectadas.`);
+  await actor.deleteEmbeddedDocuments("ActiveEffect", efeitos.map(e => e.id));
+  ui.notifications.info(`${efeitos.length} condição(ões) removida(s) de ${actor.name}.`);
+}
+
+class ArsenalHUD extends Application {
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: "arsenal-hud",
+      title: "Arsenal HUD",
+      width: 310,
+      height: "auto",
+      resizable: false,
+      minimizable: true,
+      popOut: false,
+    });
+  }
+
+  async getData() { return {}; }
+  get template() { return null; }
+
+  async _renderInner() {
+    const div = document.createElement("div");
+    div.innerHTML = this._html();
+    return $(div);
+  }
+
+  setPosition(options = {}) {
+    super.setPosition(options);
+    this._reposicionar();
+  }
+
+  render(force, options = {}) {
+    const r = super.render(force, options);
+    setTimeout(() => this._reposicionar(), 50);
+    return r;
+  }
+
+  _reposicionar() {
+    const el = this.element?.[0] ?? document.getElementById("arsenal-hud");
+    if (!el) return;
+
+    const modo = t20HudMode();
+    const token = t20HudTokenSelecionado();
+
+    el.classList.add("arsenal-hud-root");
+    el.style.position = "fixed";
+    el.style.zIndex = "120";
+    el.style.pointerEvents = "auto";
+
+    if (modo === "token" && token) {
+      const c = token.center ?? { x: token.x, y: token.y };
+      const p = canvas.app?.renderer?.plugins?.interaction?.mapPositionToPoint
+        ? null
+        : null;
+
+      // Conversão canvas → tela: usa o stage transform do Foundry.
+      const world = new PIXI.Point(c.x, c.y);
+      const screen = canvas.stage.worldTransform.apply(world);
+
+      el.style.left = `${Math.min(window.innerWidth - 330, Math.max(90, screen.x + 28))}px`;
+      el.style.top = `${Math.min(window.innerHeight - 260, Math.max(70, screen.y - 20))}px`;
+      el.style.width = "300px";
+      return;
+    }
+
+    if (modo === "bottom") {
+      el.style.left = "50%";
+      el.style.transform = "translateX(-50%)";
+      el.style.bottom = "70px";
+      el.style.top = "auto";
+      el.style.width = "720px";
+      return;
+    }
+
+    // Sidebar padrão.
+    el.style.transform = "";
+    el.style.left = "76px";
+    el.style.top = "132px";
+    el.style.bottom = "auto";
+    el.style.width = "310px";
+  }
+
+  _html() {
+    const modo = t20HudMode();
+    const token = t20HudTokenSelecionado();
+    const actor = token?.actor ?? game.user.character;
+    const nome = actor?.name ?? "Nenhum token";
+    const img = token?.document?.texture?.src ?? actor?.img ?? "";
+    const sustentadas = actor ? t20EfeitosSustentados(actor) : [];
+
+    const bottom = modo === "bottom";
+    const grid = bottom
+      ? "display:grid;grid-template-columns:repeat(6,minmax(90px,1fr));gap:6px"
+      : "display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px";
+
+    return `<div style="
+      background:linear-gradient(180deg,#111827,#0b1020);
+      border:1px solid #374151;border-top:3px solid #c9a227;
+      box-shadow:0 8px 20px rgba(0,0,0,0.45);
+      border-radius:9px;color:#e5e7eb;font-family:serif;padding:10px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;border-bottom:1px solid rgba(201,162,39,0.22);padding-bottom:7px">
+        ${img ? `<img src="${img}" style="width:34px;height:34px;border-radius:6px;object-fit:cover;border:1px solid rgba(201,162,39,0.45)">` : ""}
+        <div style="min-width:0;flex:1">
+          <div style="font-size:0.78em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">Arsenal HUD</div>
+          <div style="color:#f2e6c9;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nome}</div>
+        </div>
+        <button class="t20-hud-refresh" title="Atualizar" style="padding:3px 6px;border-radius:5px;background:#1f2937;border:1px solid #4b5563;color:#fff;cursor:pointer">↻</button>
+      </div>
+
+      ${!actor ? `<div style="color:#9ca3af;padding:8px">Selecione um token para usar o HUD.</div>` : `
+        <div style="${grid}">
+          <button class="t20-hud-action" data-action="condicoes" style="${this._btnStyle("#3a2a00","#c9a227")}">☠️ Condições</button>
+          <button class="t20-hud-action" data-action="recursos" style="${this._btnStyle("#10223a","#93c5fd")}">📊 Recursos</button>
+          <button class="t20-hud-action" data-action="sustentadas" style="${this._btnStyle("#2c2140","#c4b5fd")}">🪄 Sustentadas</button>
+          <button class="t20-hud-action" data-action="aura" style="${this._btnStyle("#10231f","#2dd4bf")}">🛡️ Aura</button>
+          <button class="t20-hud-action" data-action="gastarPM" style="${this._btnStyle("#251b44","#a78bfa")}">🔷 Gastar PM</button>
+          <button class="t20-hud-action" data-action="recuperarPM" style="${this._btnStyle("#14213a","#60a5fa")}">🔷 Recuperar PM</button>
+          <button class="t20-hud-action" data-action="dano" style="${this._btnStyle("#3b151b","#f87171")}">💔 Dano</button>
+          <button class="t20-hud-action" data-action="cura" style="${this._btnStyle("#14351f","#4ade80")}">💚 Cura</button>
+          <button class="t20-hud-action" data-action="sustentar" style="${this._btnStyle("#2f2710","#facc15")}">🪄 Sustentar</button>
+          <button class="t20-hud-action" data-action="limparCondicoes" style="${this._btnStyle("#2d1b1b","#fca5a5")}">🧹 Limpar Cond.</button>
+        </div>
+        <div style="margin-top:8px;font-size:0.78em;color:#9ca3af">
+          ${sustentadas.length ? `Sustentando: <b style="color:#f2e6c9">${sustentadas.map(s => s.nome ?? s.name ?? s.label).join(", ")}</b>` : "Nenhuma sustentação ativa detectada."}
+        </div>
+      `}
+    </div>`;
+  }
+
+  _btnStyle(bg, fg) {
+    return `padding:7px 8px;border-radius:6px;background:${bg};border:1px solid ${fg};color:${fg};font-weight:bold;cursor:pointer;font-size:0.82em;box-shadow:0 2px 6px rgba(0,0,0,0.22)`;
+  }
+
+  activateListeners(html) {
+    super.activateListeners(html);
+
+    html.find(".t20-hud-refresh").on("click", () => this.render(false));
+
+    html.find(".t20-hud-action").on("click", async ev => {
+      const action = ev.currentTarget.dataset.action;
+      const token = t20HudTokenSelecionado();
+      const actor = token?.actor ?? game.user.character;
+
+      switch (action) {
+        case "condicoes":
+          return abrirPainelCondicoes();
+        case "recursos":
+          return abrirPainelRecursosArsenal();
+        case "sustentadas":
+          return abrirPainelSustentadas();
+        case "aura":
+          return t20ToggleAuraSagrada();
+        case "gastarPM":
+          return t20HudGastarPM(actor);
+        case "recuperarPM":
+          return t20HudRecuperarPM(actor);
+        case "dano":
+          return t20HudDanoManual(actor);
+        case "cura":
+          return t20HudCurarManual(actor);
+        case "sustentar":
+          return t20HudSustentarManual(actor);
+        case "limparCondicoes":
+          return t20HudRemoverTodasCondicoes(actor);
+      }
+    });
+  }
+}
+
+Hooks.once("ready", () => {
+  if (t20HudMode() !== "off") {
+    setTimeout(() => abrirArsenalHUD(true), 1200);
+  }
+});
+
+Hooks.on("controlToken", () => atualizarArsenalHUD());
+Hooks.on("updateToken", () => atualizarArsenalHUD());
+Hooks.on("canvasReady", () => atualizarArsenalHUD());
+
+Hooks.on("getSceneControlButtons", (controls) => {
+  if (Array.isArray(controls)) {
+    const tokens = controls.find(c => c.name === "token");
+    if (tokens) {
+      tokens.tools.push({
+        name: "arsenal-hud",
+        title: "Arsenal HUD",
+        icon: "fas fa-layer-group",
+        button: true,
+        onClick: () => abrirArsenalHUD(true),
+      });
+    }
+  } else {
+    const tokens = controls.token ?? controls.tokens;
+    if (tokens) {
+      tokens.tools["arsenal-hud"] = {
+        name: "arsenal-hud",
+        title: "Arsenal HUD",
+        icon: "fas fa-layer-group",
+        button: true,
+        onChange: () => abrirArsenalHUD(true),
+        order: 104,
+      };
+    }
+  }
+});
+
 
 // ── Card de controle de PM ───────────────────────────────────
 
