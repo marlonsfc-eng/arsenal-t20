@@ -629,7 +629,16 @@ async function atualizarCardConsolidadoDoBotao(btn, sucesso, danoFinal) {
     }
 
     const card = btn.closest(".t20-card");
-    const novoConteudo = card?.outerHTML ?? msg.content;
+    let novoConteudo = card?.outerHTML ?? msg.content;
+
+    // Não persistir data-listener-added no HTML salvo da mensagem.
+    // Caso contrário, após atualizar o card, os botões restantes parecem já ter listener
+    // e deixam de funcionar para outros alvos da mesma magia em área.
+    if (typeof novoConteudo === "string") {
+      novoConteudo = novoConteudo.replace(/\sdata-listener-added="[^"]*"/g, "");
+      novoConteudo = novoConteudo.replace(/\sdata-listener-added='[^']*'/g, "");
+      novoConteudo = novoConteudo.replace(/\sdata-listener-added\b/g, "");
+    }
 
     if (game.user.isGM) {
       await msg.update({ content: novoConteudo });
@@ -1259,6 +1268,10 @@ function t20AtualizarAurasVisuais() {
     layer.name = "arsenal-t20-aura-layer";
     layer.sortableChildren = true;
     layer.zIndex = -10;
+    // Não captura clique/mouse: a aura é apenas visual e não deve bloquear seleção de tokens.
+    layer.interactive = false;
+    layer.interactiveChildren = false;
+    layer.eventMode = "none";
     parentLayer.addChild(layer);
     canvas.arsenalT20AuraLayer = layer;
 
@@ -1275,6 +1288,9 @@ function t20AtualizarAurasVisuais() {
         const center = token.center ?? { x: token.x, y: token.y };
 
         const g = new PIXI.Graphics();
+        g.interactive = false;
+        g.interactiveChildren = false;
+        g.eventMode = "none";
         g.lineStyle(3, 0x2dd4bf, 0.85);
         g.beginFill(0x2dd4bf, 0.12);
         g.drawCircle(center.x, center.y, raioPx);
@@ -2273,13 +2289,15 @@ Hooks.on("renderChatMessageHTML", (message, html) => {
   // html is HTMLElement directly in v13+
   html.querySelectorAll(".t20-salvar").forEach(btn => {
     btn.dataset.messageId = message.id;
-    if (btn.dataset.listenerAdded) return;
+    if (btn._arsenalListenerAdded) return;
+    btn._arsenalListenerAdded = true;
     btn.dataset.listenerAdded = "1";
     btn.addEventListener("click", () => rolarSalvamento(btn));
   });
   html.querySelectorAll(".t20-custom").forEach(btn => {
     btn.dataset.messageId = message.id;
-    if (btn.dataset.listenerAdded) return;
+    if (btn._arsenalListenerAdded) return;
+    btn._arsenalListenerAdded = true;
     btn.dataset.listenerAdded = "1";
     btn.addEventListener("click", () => abrirDialogCustom(btn));
   });
@@ -3448,14 +3466,16 @@ Hooks.on("renderChatMessageHTML", (message, html) => {
 
   html.querySelectorAll(".t20-pm-sustentar").forEach(btn => {
     btn.dataset.messageId = message.id;
-    if (btn.dataset.listenerAdded) return;
+    if (btn._arsenalListenerAdded) return;
+    btn._arsenalListenerAdded = true;
     btn.dataset.listenerAdded = "1";
     btn.addEventListener("click", () => t20AtivarSustentacaoBotao(btn));
   });
 
   html.querySelectorAll(".t20-turno-encerrar-sustentada").forEach(btn => {
     btn.dataset.messageId = message.id;
-    if (btn.dataset.listenerAdded) return;
+    if (btn._arsenalListenerAdded) return;
+    btn._arsenalListenerAdded = true;
     btn.dataset.listenerAdded = "1";
     btn.addEventListener("click", async () => {
       const actor = await fromUuid(btn.dataset.actor);
@@ -3469,14 +3489,16 @@ Hooks.on("renderChatMessageHTML", (message, html) => {
 
   html.querySelectorAll(".t20-aplicar, .t20-metade").forEach(btn => {
     btn.dataset.messageId = message.id;
-    if (btn.dataset.listenerAdded) return;
+    if (btn._arsenalListenerAdded) return;
+    btn._arsenalListenerAdded = true;
     btn.dataset.listenerAdded = "1";
     btn.addEventListener("click", () => aplicarDano(btn));
   });
 
   html.querySelectorAll(".t20-defesa-ativa").forEach(btn => {
     btn.dataset.messageId = message.id;
-    if (btn.dataset.listenerAdded) return;
+    if (btn._arsenalListenerAdded) return;
+    btn._arsenalListenerAdded = true;
     btn.dataset.listenerAdded = "1";
     btn.addEventListener("click", () => defesaAtivaDano(btn));
   });
