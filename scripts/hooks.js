@@ -175,6 +175,15 @@ Hooks.once("ready", () => {
     default: "grimoire",
   });
 
+  game.settings.register(MOD, "melhorarDialogoMagias", {
+    name: "Melhorar janela de aprimoramentos de magia",
+    hint: "Reorganiza visualmente a janela de configuração de uso de magia do sistema T20, mantendo a lógica original do sistema.",
+    scope: "client",
+    config: true,
+    type: Boolean,
+    default: true,
+  });
+
   const ativas = [];
   if (game.settings.get(MOD, "autoAtaque"))      ativas.push("Ataque");
   if (game.settings.get(MOD, "autoSalvamento"))  ativas.push("Salvamento");
@@ -4683,17 +4692,13 @@ class ArsenalGrimorio extends Application {
 
       <div style="overflow:auto;min-height:0">
         ${magias.length ? magias.map(item => `
-          <div style="display:flex;align-items:center;gap:6px;width:100%;padding:6px;margin-bottom:5px;border-radius:7px;
-            background:linear-gradient(180deg,#182235,#111827);border:1px solid #374151;color:#e5e7eb;min-width:0">
-            <button class="t20-grimorio-magia" data-item-id="${item.id}" title="Conjurar ${item.name}"
-              style="display:flex;align-items:center;gap:8px;flex:1;padding:2px;border:none;background:transparent;color:#e5e7eb;cursor:pointer;
-              font-size:0.92em;text-align:left;min-width:0">
-              ${item.img ? `<img src="${item.img}" style="width:28px;height:28px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.35)">` : `<span style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:#0f172a">🪄</span>`}
-              <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</span>
-            </button>
-            <button class="t20-grimorio-aprimorar" data-item-id="${item.id}" title="Aumentos/aprimoramentos"
-              style="width:30px;height:30px;border-radius:6px;background:#2c2140;border:1px solid #8b5cf6;color:#ddd6fe;cursor:pointer;font-weight:bold">⚙</button>
-          </div>`).join("") : `<div style="color:#9ca3af;padding:12px;text-align:center">Nenhuma magia encontrada neste círculo.</div>`}
+          <button class="t20-grimorio-magia" data-item-id="${item.id}" title="${item.name}"
+            style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;margin-bottom:5px;border-radius:7px;
+            background:linear-gradient(180deg,#182235,#111827);border:1px solid #374151;color:#e5e7eb;cursor:pointer;
+            font-size:0.92em;text-align:left;min-width:0">
+            ${item.img ? `<img src="${item.img}" style="width:28px;height:28px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.35)">` : `<span style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:#0f172a">🪄</span>`}
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</span>
+          </button>`).join("") : `<div style="color:#9ca3af;padding:12px;text-align:center">Nenhuma magia encontrada neste círculo.</div>`}
       </div>
     </div>`;
   }
@@ -4708,12 +4713,6 @@ class ArsenalGrimorio extends Application {
 
     html.find(".t20-grimorio-magia").on("click", async ev => {
       await t20HudUsarItem(this.actor, ev.currentTarget.dataset.itemId);
-    });
-
-    html.find(".t20-grimorio-aprimorar").on("click", async ev => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      await t20HudAbrirAprimoramentos(this.actor, ev.currentTarget.dataset.itemId);
     });
   }
 }
@@ -4827,321 +4826,6 @@ async function t20HudUsarItem(actor, itemId) {
     item.sheet?.render?.(true);
   }
 }
-
-
-// ============================================================
-// GRIMÓRIO — APRIMORAMENTOS/AUMENTOS DE MAGIA
-// ============================================================
-
-const T20_HUD_APRIMORAMENTOS_PENDENTES = new Map();
-
-function t20HudStripHtml(str) {
-  const s = String(str ?? "");
-  try {
-    const div = document.createElement("div");
-    div.innerHTML = s;
-    return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
-  } catch {
-    return s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-  }
-}
-
-function t20HudNorm(str) {
-  return t20HudStripHtml(str)
-    .toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\w\s+-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function t20HudParseCustoPM(...valores) {
-  for (const v of valores) {
-    if (v === null || v === undefined) continue;
-    if (typeof v === "number" && Number.isFinite(v)) return v;
-    const s = t20HudStripHtml(v);
-    const m = s.match(/([+-]?\d+)\s*PM/i);
-    if (m) return Number(m[1]);
-    const n = Number(s);
-    if (Number.isFinite(n)) return n;
-  }
-  return null;
-}
-
-function t20HudTextoAprimoramento(obj) {
-  if (!obj) return "";
-  const partes = [
-    obj.name, obj.label, obj.nome, obj.titulo, obj.title,
-    obj.text, obj.texto, obj.effect, obj.efeito, obj.description, obj.descricao,
-    obj.value, obj.html,
-    obj.description?.value, obj.descricao?.value,
-    obj.system?.description?.value, obj.system?.descricao?.value,
-    obj.system?.name, obj.system?.label, obj.system?.text, obj.system?.texto,
-  ].filter(Boolean).map(t20HudStripHtml);
-
-  return partes.filter(Boolean).join(" — ").trim();
-}
-
-function t20HudAprimoramentoDeObjeto(obj, path = "") {
-  if (!obj || typeof obj !== "object") return null;
-
-  const custo = t20HudParseCustoPM(
-    obj.custo, obj.cost, obj.pm, obj.mana, obj.valor, obj.value,
-    obj.system?.custo, obj.system?.cost, obj.system?.pm, obj.system?.mana,
-    obj.label, obj.name, obj.nome, obj.text, obj.texto
-  );
-
-  const texto = t20HudTextoAprimoramento(obj);
-  if (!texto && custo === null) return null;
-
-  const raw = texto || t20HudStripHtml(obj.name ?? obj.label ?? path);
-  const custoTexto = custo !== null ? `${custo >= 0 ? "+" : ""}${custo} PM` : "";
-  const semCusto = raw.replace(/^[•\-\s]*/, "").replace(/^[+-]?\d+\s*PM\s*[:\-–—]?\s*/i, "").trim();
-  const nome = t20HudStripHtml(obj.name ?? obj.nome ?? obj.label ?? semCusto.split(/[:—–-]/)[0] ?? "Aprimoramento").trim();
-
-  return {
-    id: foundry.utils.randomID?.() ?? `${Date.now()}-${Math.random()}`,
-    nome: nome || "Aprimoramento",
-    texto: semCusto || raw,
-    custo,
-    custoTexto,
-    path,
-    norm: t20HudNorm(`${nome} ${semCusto} ${custoTexto}`),
-  };
-}
-
-function t20HudExtrairAprimoramentosDeTexto(texto) {
-  const saida = [];
-  const limpo = t20HudStripHtml(String(texto ?? "")
-    .replace(/<\/p>|<\/li>|<br\s*\/?>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "\n• "));
-
-  const linhas = limpo
-    .split(/\n|(?=•\s*[+-]?\d+\s*PM)|(?=\s[+-]?\d+\s*PM\s*[:\-–—])/i)
-    .map(s => s.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-
-  for (const linha of linhas) {
-    const m = linha.match(/^[•\-\s]*([+-]?\d+)\s*PM\s*[:\-–—]?\s*(.+)$/i);
-    if (!m) continue;
-    const custo = Number(m[1]);
-    const desc = m[2].trim();
-    const nome = desc.split(/[:—–-]/)[0].slice(0, 80).trim() || `${custo >= 0 ? "+" : ""}${custo} PM`;
-    saida.push({
-      id: foundry.utils.randomID?.() ?? `${Date.now()}-${Math.random()}`,
-      nome,
-      texto: desc,
-      custo,
-      custoTexto: `${custo >= 0 ? "+" : ""}${custo} PM`,
-      path: "description",
-      norm: t20HudNorm(`${nome} ${desc} ${custo} PM`),
-    });
-  }
-
-  return saida;
-}
-
-function t20HudExtrairAprimoramentosMagia(item) {
-  const encontrados = [];
-  const vistos = new Set();
-
-  const add = (apr) => {
-    if (!apr) return;
-    const key = t20HudNorm(`${apr.custo ?? ""} ${apr.nome ?? ""} ${apr.texto ?? ""}`).slice(0, 180);
-    if (!key || vistos.has(key)) return;
-    vistos.add(key);
-    encontrados.push(apr);
-  };
-
-  // 1) Tenta achar objetos estruturados nos dados do item.
-  const visitar = (obj, path = "", depth = 0) => {
-    if (!obj || typeof obj !== "object" || depth > 5) return;
-
-    if (Array.isArray(obj)) {
-      for (let i = 0; i < obj.length; i++) {
-        const v = obj[i];
-        if (v && typeof v === "object") {
-          const candidato = t20HudAprimoramentoDeObjeto(v, `${path}.${i}`);
-          const txt = t20HudTextoAprimoramento(v);
-          const pareceAprim = /pm|aprimor|aumento|efeito|magia|dano|alvo|alcance|dura/i.test(txt);
-          if (candidato && (candidato.custo !== null || pareceAprim)) add(candidato);
-          visitar(v, `${path}.${i}`, depth + 1);
-        } else if (typeof v === "string") {
-          for (const apr of t20HudExtrairAprimoramentosDeTexto(v)) add(apr);
-        }
-      }
-      return;
-    }
-
-    for (const [k, v] of Object.entries(obj)) {
-      if (["effects", "items", "ownership", "permission"].includes(k)) continue;
-      const p = path ? `${path}.${k}` : k;
-
-      if (typeof v === "string") {
-        if (/PM|aprimor|aumento/i.test(v)) {
-          for (const apr of t20HudExtrairAprimoramentosDeTexto(v)) add(apr);
-        }
-      } else if (v && typeof v === "object") {
-        visitar(v, p, depth + 1);
-      }
-    }
-  };
-
-  visitar(item?.system ?? {}, "system", 0);
-
-  // 2) Fallback pela descrição textual.
-  for (const txt of [
-    item?.system?.description?.value,
-    item?.system?.descricao?.value,
-    item?.system?.description,
-    item?.system?.descricao,
-    item?.description,
-  ]) {
-    for (const apr of t20HudExtrairAprimoramentosDeTexto(txt)) add(apr);
-  }
-
-  return encontrados
-    .filter(a => a.texto || a.nome)
-    .sort((a, b) => (a.custo ?? 999) - (b.custo ?? 999) || String(a.nome).localeCompare(String(b.nome), "pt-BR"));
-}
-
-function t20HudDialogRowText(row) {
-  return t20HudNorm(row?.innerText ?? row?.textContent ?? "");
-}
-
-function t20HudAplicarSelecoesNoDialogo(app, html) {
-  try {
-    const pendentes = Array.from(T20_HUD_APRIMORAMENTOS_PENDENTES.values())
-      .filter(p => Date.now() - p.timestamp < 12000);
-
-    if (!pendentes.length) return;
-
-    const title = t20HudNorm(app?.title ?? app?.options?.title ?? "");
-    const pend = pendentes.find(p => title.includes(t20HudNorm(p.itemName).slice(0, 40)) || title.includes("configuracao de uso de magia"));
-    if (!pend) return;
-
-    const root = html instanceof jQuery ? html[0] : html;
-    if (!root) return;
-
-    for (const sel of pend.selecoes ?? []) {
-      const alvoNorm = t20HudNorm(`${sel.nome} ${sel.texto}`).slice(0, 90);
-      const custoNorm = sel.custo !== null && sel.custo !== undefined ? `${sel.custo} pm` : "";
-
-      const rows = Array.from(root.querySelectorAll("tr, .form-group, .row, li, label, div"));
-      const row = rows.find(r => {
-        const txt = t20HudDialogRowText(r);
-        if (!txt) return false;
-        if (custoNorm && !txt.includes(custoNorm.replace("+", "")) && !txt.includes(custoNorm)) return false;
-        const pedacos = alvoNorm.split(" ").filter(w => w.length >= 5).slice(0, 5);
-        return pedacos.length ? pedacos.some(w => txt.includes(w)) : true;
-      });
-
-      if (!row) continue;
-
-      const qtd = Math.max(1, Number(sel.qtd ?? 1) || 1);
-      const cb = row.querySelector('input[type="checkbox"]');
-      if (cb && !cb.checked) {
-        cb.click();
-      }
-
-      const plus = Array.from(row.querySelectorAll("button"))
-        .find(b => String(b.textContent ?? "").trim() === "+" || b.className?.toString?.().includes("plus"));
-      if (plus) {
-        for (let i = 0; i < qtd; i++) plus.click();
-      } else {
-        const number = row.querySelector('input[type="number"]');
-        if (number) {
-          number.value = String(qtd);
-          number.dispatchEvent(new Event("change", { bubbles: true }));
-          number.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-      }
-    }
-
-    ui.notifications.info(`Arsenal T20: aprimoramentos aplicados em ${pend.itemName}.`);
-    T20_HUD_APRIMORAMENTOS_PENDENTES.delete(pend.key);
-  } catch (e) {
-    console.warn("Arsenal T20 | erro ao aplicar aprimoramentos no diálogo", e);
-  }
-}
-
-Hooks.on("renderDialog", (app, html) => t20HudAplicarSelecoesNoDialogo(app, html));
-Hooks.on("renderApplication", (app, html) => t20HudAplicarSelecoesNoDialogo(app, html));
-
-async function t20HudAbrirAprimoramentos(actor, itemId) {
-  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
-  const item = actor.items?.get?.(itemId);
-  if (!item) return ui.notifications.warn("Magia não encontrada.");
-
-  const aprimoramentos = t20HudExtrairAprimoramentosMagia(item);
-  if (!aprimoramentos.length) {
-    ui.notifications.warn(`Nenhum aprimoramento detectado para ${item.name}.`);
-    return;
-  }
-
-  const linhas = aprimoramentos.map((a, idx) => `
-    <div style="display:grid;grid-template-columns:34px 58px 1fr 58px;gap:6px;align-items:start;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.08)">
-      <input type="checkbox" class="t20-apr-check" data-idx="${idx}" style="margin-top:5px">
-      <div style="color:${(a.custo ?? 0) < 0 ? "#93c5fd" : "#facc15"};font-weight:bold;white-space:nowrap">${a.custoTexto || "-"}</div>
-      <div>
-        <div style="color:#f2e6c9;font-weight:bold">${a.nome}</div>
-        <div style="font-size:0.86em;color:#cbd5e1;line-height:1.25">${a.texto}</div>
-      </div>
-      <input type="number" class="t20-apr-qtd" data-idx="${idx}" value="1" min="1" max="20"
-        style="width:50px;background:#0f172a;border:1px solid #374151;color:#e5e7eb;border-radius:4px;padding:3px">
-    </div>`).join("");
-
-  new Dialog({
-    title: `Aprimoramentos — ${item.name}`,
-    content: `<div style="background:#111827;color:#e5e7eb;padding:10px;border-radius:8px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        ${item.img ? `<img src="${item.img}" style="width:34px;height:34px;border-radius:6px;border:1px solid #374151">` : ""}
-        <div>
-          <div style="font-weight:bold;color:#f2e6c9">${item.name}</div>
-          <div style="font-size:0.85em;color:#9ca3af">Selecione os aumentos. Ao conjurar, o Arsenal tentará marcar a caixa automática do sistema.</div>
-        </div>
-      </div>
-      <div style="max-height:430px;overflow:auto">${linhas}</div>
-      <div style="font-size:0.78em;color:#9ca3af;margin-top:8px">
-        Observação: alguns aprimoramentos repetíveis usam o campo de quantidade; para aprimoramentos simples, deixe 1.
-      </div>
-    </div>`,
-    buttons: {
-      cast: {
-        label: "Conjurar com aumentos",
-        callback: html => {
-          const root = html instanceof jQuery ? html[0] : html;
-          const selecionados = [];
-          root.querySelectorAll(".t20-apr-check:checked").forEach(cb => {
-            const idx = Number(cb.dataset.idx);
-            const apr = aprimoramentos[idx];
-            const qtd = Number(root.querySelector(`.t20-apr-qtd[data-idx="${idx}"]`)?.value ?? 1) || 1;
-            selecionados.push({ ...apr, qtd });
-          });
-
-          const key = `${actor.id}.${item.id}.${Date.now()}`;
-          T20_HUD_APRIMORAMENTOS_PENDENTES.set(key, {
-            key,
-            actorId: actor.id,
-            itemId: item.id,
-            itemName: item.name,
-            selecoes: selecionados,
-            timestamp: Date.now(),
-          });
-
-          t20HudUsarItem(actor, item.id);
-        }
-      },
-      normal: {
-        label: "Conjurar sem aumentos",
-        callback: () => t20HudUsarItem(actor, item.id),
-      },
-      cancel: { label: "Cancelar" }
-    },
-    default: "cast",
-  }, { width: 680 }).render(true);
-}
-
 
 async function t20HudGastarPM(actor) {
   if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
@@ -5721,6 +5405,219 @@ Hooks.on("getSceneControlButtons", (controls) => {
     }
   }
 });
+
+
+// ============================================================
+// MELHORIA VISUAL — DIÁLOGO DE APRIMORAMENTOS DE MAGIA
+// ============================================================
+
+function t20DialogoMagiaAtivo() {
+  try {
+    return !!game.settings.get("arsenal-t20", "melhorarDialogoMagias");
+  } catch {
+    return true;
+  }
+}
+
+function t20EhDialogoUsoMagia(app, root) {
+  const titulo = String(app?.title ?? app?.options?.title ?? root?.querySelector?.(".window-title")?.textContent ?? "");
+  if (/configura[cç][aã]o de uso de magia/i.test(titulo)) return true;
+  if (/uso de magia/i.test(titulo) && root?.querySelector?.("table")) return true;
+  return false;
+}
+
+function t20ExtrairCustoLinhaMagia(row) {
+  const texto = String(row?.innerText ?? row?.textContent ?? "").replace(/\s+/g, " ").trim();
+  const aplicar = row?.querySelector?.("td:first-child, th:first-child")?.innerText ?? "";
+  const mAplicar = String(aplicar).match(/([+-]?\d+)\s*PM/i);
+  if (mAplicar) return `${Number(mAplicar[1]) >= 0 ? "+" : ""}${Number(mAplicar[1])} PM`;
+  const m = texto.match(/([+-]?\d+)\s*PM/i);
+  if (m) return `${Number(m[1]) >= 0 ? "+" : ""}${Number(m[1])} PM`;
+  return "";
+}
+
+function t20MelhorarDialogoUsoMagia(app, html) {
+  if (!t20DialogoMagiaAtivo()) return;
+
+  const root = html instanceof jQuery ? html[0] : html;
+  if (!root || root.dataset?.arsenalDialogoMagia === "1") return;
+  if (!t20EhDialogoUsoMagia(app, root)) return;
+
+  root.dataset.arsenalDialogoMagia = "1";
+
+  const win = root.closest?.(".app, .window-app") ?? root.parentElement;
+  if (win) {
+    win.style.minWidth = "720px";
+    win.style.maxWidth = "920px";
+  }
+
+  const form = root.querySelector("form") ?? root;
+  form.style.fontSize = "14px";
+
+  const table = root.querySelector("table");
+  if (!table) return;
+
+  table.classList.add("arsenal-t20-magia-table");
+  table.style.display = "block";
+  table.style.width = "100%";
+  table.style.borderCollapse = "separate";
+  table.style.borderSpacing = "0";
+  table.style.maxHeight = "58vh";
+  table.style.overflowY = "auto";
+  table.style.paddingRight = "6px";
+
+  const thead = table.querySelector("thead");
+  if (thead) thead.style.display = "none";
+
+  const tbody = table.querySelector("tbody") ?? table;
+  tbody.style.display = "block";
+  tbody.style.width = "100%";
+
+  const rows = Array.from(tbody.querySelectorAll("tr")).filter(row => row.querySelector("td"));
+  rows.forEach((row, index) => {
+    if (row.dataset.arsenalCard === "1") return;
+    row.dataset.arsenalCard = "1";
+
+    const cells = Array.from(row.querySelectorAll("td"));
+    const aplicar = cells[0];
+    const nome = cells[1] ?? cells[cells.length - 1];
+
+    const custo = t20ExtrairCustoLinhaMagia(row);
+    const controles = aplicar ? Array.from(aplicar.querySelectorAll("input, button, select")).length : 0;
+    const selecionavel = !!aplicar?.querySelector?.('input[type="checkbox"], input[type="number"], button');
+
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "minmax(110px, 150px) 1fr";
+    row.style.gap = "10px";
+    row.style.alignItems = "start";
+    row.style.margin = "0 0 8px 0";
+    row.style.padding = "10px";
+    row.style.border = "1px solid rgba(55,65,81,0.75)";
+    row.style.borderRadius = "10px";
+    row.style.background = index % 2 === 0
+      ? "linear-gradient(180deg, rgba(17,24,39,0.12), rgba(15,23,42,0.05))"
+      : "linear-gradient(180deg, rgba(30,41,59,0.12), rgba(15,23,42,0.05))";
+    row.style.boxShadow = "inset 0 1px 0 rgba(255,255,255,0.05)";
+
+    if (aplicar) {
+      aplicar.style.display = "flex";
+      aplicar.style.alignItems = "center";
+      aplicar.style.justifyContent = "center";
+      aplicar.style.gap = "6px";
+      aplicar.style.padding = "6px";
+      aplicar.style.borderRadius = "8px";
+      aplicar.style.background = "rgba(15,23,42,0.10)";
+      aplicar.style.border = "1px solid rgba(55,65,81,0.45)";
+      aplicar.style.minHeight = "48px";
+      aplicar.style.whiteSpace = "nowrap";
+      aplicar.style.fontWeight = "bold";
+      aplicar.style.color = custo.startsWith("-") ? "#2563eb" : "#7c2d12";
+
+      const badge = document.createElement("div");
+      badge.className = "arsenal-t20-custo-badge";
+      badge.textContent = custo || (selecionavel ? "Aumento" : "");
+      badge.style.fontSize = "0.86em";
+      badge.style.color = custo.startsWith("-") ? "#1d4ed8" : "#92400e";
+      badge.style.marginRight = controles ? "4px" : "0";
+      if (custo || selecionavel) aplicar.prepend(badge);
+
+      aplicar.querySelectorAll("input[type='checkbox']").forEach(cb => {
+        cb.style.width = "18px";
+        cb.style.height = "18px";
+        cb.style.cursor = "pointer";
+      });
+
+      aplicar.querySelectorAll("button").forEach(btn => {
+        btn.style.minWidth = "28px";
+        btn.style.height = "28px";
+        btn.style.borderRadius = "6px";
+        btn.style.border = "1px solid #6b7280";
+        btn.style.background = "#f3f4f6";
+        btn.style.cursor = "pointer";
+        btn.style.fontWeight = "bold";
+      });
+
+      aplicar.querySelectorAll("input[type='number'], input:not([type])").forEach(input => {
+        input.style.width = "44px";
+        input.style.textAlign = "center";
+        input.style.borderRadius = "6px";
+        input.style.border = "1px solid #6b7280";
+      });
+    }
+
+    if (nome) {
+      nome.style.display = "block";
+      nome.style.padding = "2px 4px";
+      nome.style.lineHeight = "1.45";
+      nome.style.fontSize = "0.98em";
+      nome.style.color = "#111827";
+    }
+
+    const baseBg = row.style.background;
+    const atualizarEstado = () => {
+      const checked = !!row.querySelector("input[type='checkbox']:checked");
+      const qtd = Array.from(row.querySelectorAll("input[type='number'], input:not([type])"))
+        .some(inp => Number(inp.value) > 0);
+      row.style.outline = (checked || qtd) ? "2px solid rgba(37,99,235,0.65)" : "none";
+      row.style.background = (checked || qtd)
+        ? "linear-gradient(180deg, rgba(219,234,254,0.55), rgba(191,219,254,0.35))"
+        : baseBg;
+    };
+
+    row.querySelectorAll("input, button, select").forEach(el => {
+      el.addEventListener("change", atualizarEstado);
+      el.addEventListener("click", () => setTimeout(atualizarEstado, 30));
+    });
+    atualizarEstado();
+  });
+
+  if (!root.querySelector(".arsenal-t20-magia-toolbar")) {
+    const toolbar = document.createElement("div");
+    toolbar.className = "arsenal-t20-magia-toolbar";
+    toolbar.style.display = "flex";
+    toolbar.style.gap = "8px";
+    toolbar.style.alignItems = "center";
+    toolbar.style.margin = "6px 0 10px";
+    toolbar.style.padding = "8px";
+    toolbar.style.border = "1px solid rgba(55,65,81,0.55)";
+    toolbar.style.borderRadius = "8px";
+    toolbar.style.background = "rgba(15,23,42,0.08)";
+
+    toolbar.innerHTML = `
+      <input type="text" placeholder="Filtrar aprimoramentos..."
+        style="flex:1;padding:7px 9px;border-radius:6px;border:1px solid #9ca3af;background:rgba(255,255,255,0.8)">
+      <button type="button" data-action="limpar"
+        style="padding:7px 9px;border-radius:6px;border:1px solid #9ca3af;background:#f3f4f6;cursor:pointer">Limpar</button>
+    `;
+
+    table.parentElement?.insertBefore(toolbar, table);
+
+    const filtro = toolbar.querySelector("input");
+    filtro?.addEventListener("input", () => {
+      const q = String(filtro.value ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      rows.forEach(row => {
+        const txt = String(row.innerText ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        row.style.display = !q || txt.includes(q) ? "grid" : "none";
+      });
+    });
+
+    toolbar.querySelector("[data-action='limpar']")?.addEventListener("click", () => {
+      filtro.value = "";
+      filtro.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  root.querySelectorAll(".dialog-buttons button, button.dialog-button").forEach(btn => {
+    btn.style.minHeight = "38px";
+    btn.style.fontWeight = "bold";
+    btn.style.fontSize = "1em";
+    btn.style.borderRadius = "7px";
+  });
+}
+
+Hooks.on("renderDialog", (app, html) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html), 20));
+Hooks.on("renderApplication", (app, html) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html), 20));
+
 
 // ── Card de controle de PM ───────────────────────────────────
 
