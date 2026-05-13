@@ -5585,21 +5585,40 @@ function t20ElementoTexto(el) {
 
 function t20AprimRoot(app) {
   let root = null;
-  if (app?.element) root = app.element instanceof jQuery ? app.element[0] : app.element;
+
+  // Foundry/Tormenta20 AbilityUseDialog costuma guardar o elemento em _element,
+  // não necessariamente em element.
+  const candidatos = [
+    app?.element,
+    app?._element,
+    app?.form,
+  ].filter(Boolean);
+
+  for (const c of candidatos) {
+    if (!c) continue;
+    root = c instanceof jQuery ? c[0] : c;
+    if (root?.querySelector || root?.classList) break;
+  }
+
   if (!root && app?.appId) root = document.getElementById(`app-${app.appId}`);
+  if (!root && app?.id) root = document.getElementById(String(app.id));
+
   return root;
 }
 
 function t20AprimForm(app) {
   const root = t20AprimRoot(app);
-  return root?.querySelector?.("#ability-use-form, form") ?? null;
+  if (!root) return null;
+  if (root.matches?.("#ability-use-form, form")) return root;
+  return root.querySelector?.("#ability-use-form, form") ?? null;
 }
 
 function t20AprimRows(app) {
-  const form = t20AprimForm(app);
+  const root = t20AprimRoot(app);
+  const form = t20AprimForm(app) ?? root;
   if (!form) return [];
 
-  const rows = Array.from(form.querySelectorAll("table tbody tr, table tr"))
+  let rows = Array.from(form.querySelectorAll("table tbody tr, table tr, tr"))
     .filter(row => {
       const txt = t20ElementoTexto(row);
       if (!txt || !/PM\b/i.test(txt)) return false;
@@ -5608,12 +5627,28 @@ function t20AprimRows(app) {
       return row.querySelector("input, button");
     });
 
+  // Fallback para estruturas sem tabela real.
+  if (!rows.length) {
+    rows = Array.from(form.querySelectorAll(".form-group, .form-fields, .form-row, .flexrow, div"))
+      .filter(el => {
+        const txt = t20ElementoTexto(el);
+        if (!txt || !/PM\b/i.test(txt)) return false;
+        if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção|Dano\s*:/i.test(txt)) return false;
+        return el.querySelector("input, button");
+      });
+
+    rows = rows.filter(el => !rows.some(other => other !== el && el.contains(other)));
+  }
+
   return rows.map((row, index) => {
     const cells = Array.from(row.querySelectorAll("td"));
-    const aplicar = cells[0] ?? row;
+    const aplicar = cells[0] ?? row.querySelector("input, button")?.closest("td, div") ?? row;
     const desc = cells[1] ?? cells[cells.length - 1] ?? row;
-    const custo = String(t20ElementoTexto(aplicar).match(/([+-]?\d+)\s*PM/i)?.[0] ?? "");
-    const texto = t20ElementoTexto(desc) || t20ElementoTexto(row).replace(t20ElementoTexto(aplicar), "").trim();
+    const custo = String(t20ElementoTexto(aplicar).match(/([+-]?\d+)\s*PM/i)?.[0] ?? t20ElementoTexto(row).match(/([+-]?\d+)\s*PM/i)?.[0] ?? "");
+    const aplicarTxt = t20ElementoTexto(aplicar);
+    const texto = (t20ElementoTexto(desc) || t20ElementoTexto(row).replace(aplicarTxt, "").trim())
+      .replace(/^Aplicar\s+Nome\s*/i, "")
+      .trim();
     return { index, row, aplicar, desc, custo, texto };
   });
 }
@@ -5722,6 +5757,7 @@ class ArsenalAprimoramentosDialog extends Application {
         <div style="font-size:0.78em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">Painel auxiliar</div>
         <div style="font-weight:bold;color:#f2e6c9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${titulo}</div>
         <div style="font-size:0.82em;color:#9ca3af;margin-top:2px">A janela original do sistema permanece intacta.</div>
+        <button class="t20-aprim-refresh" style="margin-top:7px;padding:4px 8px;border-radius:6px;border:1px solid #64748b;background:#1f2937;color:#e5e7eb;cursor:pointer">Atualizar lista</button>
       </div>
 
       <input class="t20-aprim-search" type="text" value="${this.busca ?? ""}" placeholder="Filtrar aprimoramentos..."
@@ -5751,6 +5787,11 @@ class ArsenalAprimoramentosDialog extends Application {
 
     html.find(".t20-aprim-search").on("input", ev => {
       this.busca = ev.currentTarget.value ?? "";
+      this.render(false);
+    });
+
+    html.find(".t20-aprim-refresh").on("click", ev => {
+      ev.preventDefault();
       this.render(false);
     });
 
