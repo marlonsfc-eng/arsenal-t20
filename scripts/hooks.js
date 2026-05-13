@@ -4297,7 +4297,7 @@ Hooks.on("updateActor", async (actor, changed, options, userId) => {
 
 
 // ============================================================
-// ARSENAL HUD — atalhos de favoritos, ataques, magias e poderes
+// ARSENAL HUD — atalhos de favoritos, ataques, poderes, magias e perícias
 // ============================================================
 
 function t20HudMode() {
@@ -4324,46 +4324,32 @@ function t20HudGetSavedPosition(modo) {
   try {
     const raw = localStorage.getItem(t20HudStorageKey(modo, "position"));
     return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function t20HudSetSavedPosition(modo, pos) {
-  try {
-    localStorage.setItem(t20HudStorageKey(modo, "position"), JSON.stringify(pos));
-  } catch {}
+  try { localStorage.setItem(t20HudStorageKey(modo, "position"), JSON.stringify(pos)); } catch {}
 }
 
 function t20HudGetSavedSize(modo) {
   try {
     const raw = localStorage.getItem(t20HudStorageKey(modo, "size"));
     return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function t20HudSetSavedSize(modo, size) {
-  try {
-    localStorage.setItem(t20HudStorageKey(modo, "size"), JSON.stringify(size));
-  } catch {}
+  try { localStorage.setItem(t20HudStorageKey(modo, "size"), JSON.stringify(size)); } catch {}
 }
 
 function t20HudItemTexto(item) {
   return [
-    item.type,
-    item.name,
-    item.system?.tipo,
-    item.system?.type,
-    item.system?.categoria,
-    item.system?.category,
-    item.system?.subtype,
-    item.system?.subtipo,
-    item.system?.description?.value,
-    item.system?.descricao,
-    item.system?.ativacao?.execucao,
-    item.system?.activation?.type,
+    item.type, item.name,
+    item.system?.tipo, item.system?.type,
+    item.system?.categoria, item.system?.category,
+    item.system?.subtype, item.system?.subtipo,
+    item.system?.description?.value, item.system?.descricao,
+    item.system?.ativacao?.execucao, item.system?.activation?.type,
   ].filter(Boolean).join(" ").toLowerCase();
 }
 
@@ -4394,8 +4380,7 @@ function t20HudClassificarItem(item) {
 }
 
 function t20HudValorEhFavorito(valor) {
-  if (valor === true) return true;
-  if (valor === 1) return true;
+  if (valor === true || valor === 1) return true;
   if (typeof valor === "string" && /^(true|sim|yes|favorito|favorite|on|1)$/i.test(valor.trim())) return true;
   if (valor && typeof valor === "object") {
     if (t20HudValorEhFavorito(valor.value)) return true;
@@ -4443,8 +4428,8 @@ function t20HudItensActor(actor) {
     const cat = t20HudClassificarItem(item);
     if (!cat) continue;
 
-    // Para personagens jogadores, o HUD mostra apenas favoritos definidos na ficha.
-    // Para NPCs/ameaças, mantém ações úteis para o GM: ataques e habilidades/poderes.
+    // Personagem jogador: somente favoritos da ficha.
+    // NPC/ameaça: mantém ataques e habilidades/poderes para o GM.
     if (personagemJogador) {
       if (!t20HudItemFavorito(item)) continue;
     } else {
@@ -4459,6 +4444,75 @@ function t20HudItensActor(actor) {
   }
 
   return grupos;
+}
+
+const T20_HUD_PERICIAS_LABELS = {
+  acro: "Acrobacia", ades: "Adestramento", atua: "Atuação", cava: "Cavalgar",
+  conh: "Conhecimento", cura: "Cura", dipl: "Diplomacia", enga: "Enganação",
+  fort: "Fortitude", furt: "Furtividade", inic: "Iniciativa", inti: "Intimidação",
+  intu: "Intuição", inve: "Investigação", joga: "Jogatina", luta: "Luta",
+  mist: "Misticismo", nobr: "Nobreza", ofic: "Ofício", perc: "Percepção",
+  pilo: "Pilotagem", pont: "Pontaria", refl: "Reflexos", reli: "Religião",
+  sobr: "Sobrevivência", vond: "Vontade", vont: "Vontade",
+};
+
+function t20HudParsePericia(raw) {
+  if (typeof raw === "string") {
+    try { return JSON.parse(raw); } catch { return { value: Number(raw) || 0 }; }
+  }
+  return raw ?? {};
+}
+
+function t20HudPericiaTreinada(p) {
+  if (!p || typeof p !== "object") return false;
+  const vals = [
+    p.treinado, p.treinada, p.trained, p.training, p.isTrained,
+    p.proficient, p.proficiencia, p.prof, p.favorite, p.favorito
+  ];
+  if (vals.some(v => v === true || v === 1 || /^(true|sim|yes|trained|treinado|proficient)$/i.test(String(v ?? "")))) return true;
+
+  const nivel = p.nivel ?? p.level ?? p.rank ?? p.graduacao ?? p.grau ?? p.treino;
+  if (typeof nivel === "string" && /(treinad|trained|proficient|expert|mestre)/i.test(nivel)) return true;
+  if (Number(nivel) > 0) return true;
+
+  return false;
+}
+
+function t20HudBonusPericia(p) {
+  const n = Number(p?.total ?? p?.value ?? p?.mod ?? p?.bonus ?? p?.modificador ?? p?.valor ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function t20HudPericiasTreinadasActor(actor) {
+  if (!actor || !t20HudActorEhPersonagemJogador(actor)) return [];
+  const pericias = actor.system?.pericias ?? actor.system?.skills ?? {};
+  const lista = [];
+
+  for (const [id, raw] of Object.entries(pericias)) {
+    const p = t20HudParsePericia(raw);
+    if (!t20HudPericiaTreinada(p)) continue;
+
+    const label = p.label ?? p.name ?? p.nome ?? T20_HUD_PERICIAS_LABELS[id] ?? id;
+    const bonus = t20HudBonusPericia(p);
+    lista.push({ id, label, bonus });
+  }
+
+  return lista.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+}
+
+async function t20HudRolarPericia(actor, periciaId) {
+  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+
+  const raw = actor.system?.pericias?.[periciaId] ?? actor.system?.skills?.[periciaId];
+  const p = t20HudParsePericia(raw);
+  const label = p.label ?? p.name ?? p.nome ?? T20_HUD_PERICIAS_LABELS[periciaId] ?? periciaId;
+  const bonus = t20HudBonusPericia(p);
+
+  const roll = await new Roll(`1d20 + ${bonus}`).evaluate();
+  await roll.toMessage({
+    speaker: ChatMessage.getSpeaker({ actor }),
+    flavor: `<b>${label}</b> — ${actor.name}`,
+  });
 }
 
 async function t20HudUsarItem(actor, itemId) {
@@ -4479,46 +4533,99 @@ async function t20HudUsarItem(actor, itemId) {
   }
 }
 
-async function t20HudSustentarManual(actor) {
+async function t20HudGastarPM(actor) {
   if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
-
-  const nome = await new Promise(resolve => {
+  const valor = await new Promise(resolve => {
     new Dialog({
-      title: "Sustentar efeito",
-      content: `<form>
-        <p>Informe o nome da magia ou poder sustentado por <b>${actor.name}</b>.</p>
-        <div class="form-group">
-          <label>Nome</label>
-          <input type="text" name="nome" value="Magia sustentada" autofocus>
-        </div>
-      </form>`,
+      title: "Gastar PM",
+      content: `<form><div class="form-group"><label>PM</label><input type="number" name="pm" value="1" min="0" step="1" autofocus></div></form>`,
       buttons: {
-        ok: {
-          label: "Sustentar",
-          callback: html => {
-            const val = String(html.find?.('[name="nome"]').val?.() ?? html.querySelector?.('[name="nome"]')?.value ?? "").trim();
-            resolve(val || null);
-          }
-        },
+        ok: { label: "Gastar", callback: html => resolve(Math.max(0, Math.floor(Number(html.find?.('[name="pm"]').val?.() ?? html.querySelector?.('[name="pm"]')?.value ?? 0) || 0))) },
         cancel: { label: "Cancelar", callback: () => resolve(null) }
       },
       default: "ok",
       close: () => resolve(null),
     }).render(true);
   });
+  if (valor === null || valor <= 0) return;
+  await t20AplicarPMDireto(actor, valor);
+  ui.notifications.info(`${actor.name}: ${valor} PM gasto(s).`);
+}
 
-  if (!nome) return;
-
-  await t20RegistrarSustentada(actor, {
-    name: nome,
-    duration: "Sustentada",
-    description: { value: "Duração: Sustentada" },
-  }, { content: `Duração: Sustentada ${nome}` }, {
-    force: true,
-    solicitante: game.user.name,
+async function t20HudRecuperarPM(actor) {
+  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+  const valor = await new Promise(resolve => {
+    new Dialog({
+      title: "Recuperar PM",
+      content: `<form><div class="form-group"><label>PM</label><input type="number" name="pm" value="1" min="0" step="1" autofocus></div></form>`,
+      buttons: {
+        ok: { label: "Recuperar", callback: html => resolve(Math.max(0, Math.floor(Number(html.find?.('[name="pm"]').val?.() ?? html.querySelector?.('[name="pm"]')?.value ?? 0) || 0))) },
+        cancel: { label: "Cancelar", callback: () => resolve(null) }
+      },
+      default: "ok",
+      close: () => resolve(null),
+    }).render(true);
   });
+  if (valor === null || valor <= 0) return;
+  await t20ReverterPMDireto(actor, valor);
+  ui.notifications.info(`${actor.name}: ${valor} PM recuperado(s).`);
+}
 
-  atualizarArsenalHUD();
+async function t20HudDanoManual(actor) {
+  const token = t20HudTokenSelecionado();
+  if (!token?.actor) return ui.notifications.warn("Selecione um token para aplicar dano.");
+  const valor = await new Promise(resolve => {
+    new Dialog({
+      title: "Aplicar Dano Manual",
+      content: `<form><div class="form-group"><label>Dano</label><input type="number" name="dano" value="1" min="0" step="1" autofocus></div></form>`,
+      buttons: {
+        ok: { label: "Aplicar", callback: html => resolve(Math.max(0, Math.floor(Number(html.find?.('[name="dano"]').val?.() ?? html.querySelector?.('[name="dano"]')?.value ?? 0) || 0))) },
+        cancel: { label: "Cancelar", callback: () => resolve(null) }
+      },
+      default: "ok",
+      close: () => resolve(null),
+    }).render(true);
+  });
+  if (valor === null || valor <= 0) return;
+  await t20AplicarDanoDireto(token.actor, valor);
+  await ChatMessage.create({ content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #b94a58;padding:8px 11px;border-radius:6px;color:#d7dcea">💔 <b>${token.name}</b> sofreu <b>${valor}</b> de dano manual.</div>` });
+}
+
+async function t20HudCurarManual(actor) {
+  const token = t20HudTokenSelecionado();
+  if (!token?.actor) return ui.notifications.warn("Selecione um token para curar.");
+  const valor = await new Promise(resolve => {
+    new Dialog({
+      title: "Aplicar Cura Manual",
+      content: `<form><div class="form-group"><label>Cura</label><input type="number" name="cura" value="1" min="0" step="1" autofocus></div></form>`,
+      buttons: {
+        ok: { label: "Curar", callback: html => resolve(Math.max(0, Math.floor(Number(html.find?.('[name="cura"]').val?.() ?? html.querySelector?.('[name="cura"]')?.value ?? 0) || 0))) },
+        cancel: { label: "Cancelar", callback: () => resolve(null) }
+      },
+      default: "ok",
+      close: () => resolve(null),
+    }).render(true);
+  });
+  if (valor === null || valor <= 0) return;
+
+  const hpPath = "system.attributes.pv.value";
+  const maxPath = "system.attributes.pv.max";
+  const pvAtual = Number(foundry.utils.getProperty(token.actor, hpPath));
+  const pvMax = Number(foundry.utils.getProperty(token.actor, maxPath) ?? pvAtual);
+  if (!Number.isFinite(pvAtual)) return ui.notifications.warn("PV não encontrado.");
+  await token.actor.update({ [hpPath]: Math.min(pvMax, pvAtual + valor) });
+  await ChatMessage.create({ content: `<div style="background:#171b26;border:1px solid #2b3347;border-left:4px solid #4ade80;padding:8px 11px;border-radius:6px;color:#d7dcea">💚 <b>${token.name}</b> recuperou <b>${valor}</b> PV.</div>` });
+}
+
+async function t20HudRemoverTodasCondicoes(actor) {
+  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+  const efeitos = Array.from(actor.effects ?? []).filter(e => {
+    const id = e.statuses?.first?.() ?? e.statuses?.values?.().next?.().value ?? e.flags?.core?.statusId;
+    return id || CONFIG.statusEffects.some(s => s.id === e.name || s.name === e.name);
+  });
+  if (!efeitos.length) return ui.notifications.info(`${actor.name} não possui condições detectadas.`);
+  await actor.deleteEmbeddedDocuments("ActiveEffect", efeitos.map(e => e.id));
+  ui.notifications.info(`${efeitos.length} condição(ões) removida(s) de ${actor.name}.`);
 }
 
 let _arsenalHUD = null;
@@ -4529,9 +4636,7 @@ function abrirArsenalHUD(force = false) {
     if (_arsenalHUD?.rendered) _arsenalHUD.close();
     return;
   }
-
   if (!_arsenalHUD) _arsenalHUD = new ArsenalHUD();
-
   if (!_arsenalHUD.rendered || force) _arsenalHUD.render(true);
   else _arsenalHUD.render(false);
 }
@@ -4546,9 +4651,7 @@ function atualizarArsenalHUD() {
     fecharArsenalHUD();
     return;
   }
-  if (_arsenalHUD?.rendered) {
-    _arsenalHUD.render(false);
-  }
+  if (_arsenalHUD?.rendered) _arsenalHUD.render(false);
 }
 
 class ArsenalHUD extends Application {
@@ -4556,9 +4659,9 @@ class ArsenalHUD extends Application {
     return foundry.utils.mergeObject(super.defaultOptions, {
       id: "arsenal-hud",
       title: "Arsenal HUD",
-      width: 250,
+      width: 260,
       height: "auto",
-      resizable: true,
+      resizable: false,
       minimizable: false,
       popOut: false,
     });
@@ -4577,7 +4680,7 @@ class ArsenalHUD extends Application {
     const r = super.render(force, options);
     setTimeout(() => {
       this._reposicionar();
-      this._observarTamanho();
+      this._iniciarResize();
     }, 50);
     return r;
   }
@@ -4589,21 +4692,17 @@ class ArsenalHUD extends Application {
 
   _aplicarTamanho(el, modo) {
     const salvo = t20HudGetSavedSize(modo);
-    const defaults = modo === "bottom"
-      ? { width: 520, height: 170 }
-      : { width: 245, height: 310 };
-
+    const defaults = modo === "bottom" ? { width: 560, height: 190 } : { width: 270, height: 340 };
     const w = Number(salvo?.width) || defaults.width;
     const h = Number(salvo?.height) || defaults.height;
 
-    el.style.width = `${Math.max(190, Math.min(window.innerWidth - 40, w))}px`;
-    el.style.height = `${Math.max(110, Math.min(window.innerHeight - 80, h))}px`;
-    el.style.resize = "both";
+    el.style.width = `${Math.max(210, Math.min(window.innerWidth - 24, w))}px`;
+    el.style.height = `${Math.max(135, Math.min(window.innerHeight - 32, h))}px`;
+    el.style.minWidth = "210px";
+    el.style.minHeight = "135px";
+    el.style.maxWidth = `${window.innerWidth - 12}px`;
+    el.style.maxHeight = `${window.innerHeight - 12}px`;
     el.style.overflow = "hidden";
-    el.style.minWidth = "190px";
-    el.style.minHeight = "110px";
-    el.style.maxWidth = `${window.innerWidth - 20}px`;
-    el.style.maxHeight = `${window.innerHeight - 20}px`;
   }
 
   _reposicionar() {
@@ -4648,7 +4747,6 @@ class ArsenalHUD extends Application {
       return;
     }
 
-    // Painel lateral padrão: compacto e fora da região da lista de jogadores.
     el.style.left = "76px";
     el.style.top = "118px";
   }
@@ -4661,11 +4759,12 @@ class ArsenalHUD extends Application {
     const img = token?.document?.texture?.src ?? actor?.img ?? "";
     const sustentadas = actor ? t20EfeitosSustentados(actor) : [];
     const grupos = t20HudItensActor(actor);
+    const pericias = t20HudPericiasTreinadasActor(actor);
     const bottom = modo === "bottom";
     const personagemJogador = t20HudActorEhPersonagemJogador(actor);
 
     return `<div style="
-      height:100%;box-sizing:border-box;display:flex;flex-direction:column;
+      height:100%;box-sizing:border-box;display:flex;flex-direction:column;position:relative;
       background:linear-gradient(180deg,#111827,#0b1020);
       border:1px solid #374151;border-top:2px solid #c9a227;
       box-shadow:0 6px 14px rgba(0,0,0,0.38);
@@ -4676,52 +4775,66 @@ class ArsenalHUD extends Application {
           <div style="font-size:0.66em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">${personagemJogador ? "Favoritos" : "NPC/Ameaça"}</div>
           <div style="color:#f2e6c9;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nome}</div>
         </div>
+        ${actor ? `
+          <div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end;max-width:55%;margin-right:3px">
+            <button class="t20-hud-action" title="Condições" data-action="condicoes" style="${this._iconBtn("#3a2a00","#c9a227")}">☠️</button>
+            <button class="t20-hud-action" title="Recursos" data-action="recursos" style="${this._iconBtn("#10223a","#93c5fd")}">📊</button>
+            <button class="t20-hud-action" title="Sustentadas" data-action="sustentadas" style="${this._iconBtn("#2c2140","#c4b5fd")}">🪄</button>
+            <button class="t20-hud-action" title="Aura" data-action="aura" style="${this._iconBtn("#10231f","#2dd4bf")}">🛡️</button>
+            <button class="t20-hud-action" title="Gastar PM" data-action="gastarPM" style="${this._iconBtn("#251b44","#a78bfa")}">🔷−</button>
+            <button class="t20-hud-action" title="Recuperar PM" data-action="recuperarPM" style="${this._iconBtn("#14213a","#60a5fa")}">🔷+</button>
+            <button class="t20-hud-action" title="Dano manual" data-action="dano" style="${this._iconBtn("#3b151b","#f87171")}">💔</button>
+            <button class="t20-hud-action" title="Cura manual" data-action="cura" style="${this._iconBtn("#14351f","#4ade80")}">💚</button>
+            <button class="t20-hud-action" title="Limpar condições" data-action="limparCondicoes" style="${this._iconBtn("#2d1b1b","#fca5a5")}">🧹</button>
+          </div>` : ""}
         <button class="t20-hud-refresh" title="Atualizar" style="padding:2px 5px;border-radius:5px;background:#1f2937;border:1px solid #4b5563;color:#fff;cursor:pointer;font-size:11px">↻</button>
       </div>
 
       ${!actor ? `<div style="color:#9ca3af;padding:6px">Selecione um token para usar o HUD.</div>` : `
-        <div style="${bottom ? "display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;overflow:auto;min-height:0;flex:1" : "overflow:auto;min-height:0;flex:1;padding-right:2px"}">
-          ${this._secao("⚔️ Ataques", grupos.ataques, bottom)}
-          ${this._secao("🪄 Magias", grupos.magias, bottom)}
-          ${this._secao("✨ Poderes", grupos.poderes, bottom)}
+        <div style="${bottom ? "display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;overflow:auto;min-height:0;flex:1;padding-right:2px" : "overflow:auto;min-height:0;flex:1;padding-right:2px"}">
+          ${this._secao("⚔️ Ataques", grupos.ataques, bottom, "item")}
+          ${this._secao("🪄 Magias", grupos.magias, bottom, "item")}
+          ${this._secao("✨ Poderes", grupos.poderes, bottom, "item")}
+          ${personagemJogador ? this._secao("🎲 Perícias treinadas", pericias, bottom, "pericia") : ""}
         </div>
 
-        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:6px;flex-shrink:0">
-          <button class="t20-hud-action" data-action="sustentar" style="${this._miniBtn("#2f2710","#facc15")}">Sustentar</button>
-          <button class="t20-hud-action" data-action="sustentadas" style="${this._miniBtn("#2c2140","#c4b5fd")}">Sust.</button>
-          <button class="t20-hud-action" data-action="aura" style="${this._miniBtn("#10231f","#2dd4bf")}">Aura</button>
-        </div>
-
-        <div style="margin-top:5px;font-size:0.72em;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">
-          ${personagemJogador
-            ? "Mostrando apenas itens favoritos da ficha."
-            : "NPC: ataques e habilidades."}
+        <div style="margin-top:5px;font-size:0.72em;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;padding-right:12px">
+          ${personagemJogador ? "Favoritos da ficha + perícias treinadas." : "NPC: ataques e habilidades."}
           ${sustentadas.length ? ` · Sust.: <b style="color:#f2e6c9">${sustentadas.map(s => s.nome ?? s.name ?? s.label).join(", ")}</b>` : ""}
         </div>
       `}
+      <div class="t20-hud-resize" title="Redimensionar"
+        style="position:absolute;right:2px;bottom:2px;width:14px;height:14px;cursor:nwse-resize;
+          border-right:2px solid rgba(201,162,39,0.75);border-bottom:2px solid rgba(201,162,39,0.75);
+          opacity:0.9"></div>
     </div>`;
   }
 
-  _secao(titulo, itens, bottom) {
-    const maxItens = bottom ? 8 : 20;
+  _secao(titulo, itens, bottom, tipo = "item") {
+    const maxItens = 80;
     const lista = (itens ?? []).slice(0, maxItens);
     const vazio = !lista.length ? `<div style="font-size:0.75em;color:#6b7280;padding:3px 2px">Nenhum</div>` : "";
 
     return `<div style="${bottom ? "min-width:0" : "margin-bottom:7px"}">
       <div style="font-size:0.78em;color:#d9b85f;font-weight:bold;margin:2px 0 3px">${titulo}</div>
       ${vazio}
-      ${lista.map(item => `
-        <button class="t20-hud-item" data-item-id="${item.id}" title="${item.name}"
+      ${lista.map(item => {
+        const id = tipo === "pericia" ? item.id : item.id;
+        const label = tipo === "pericia" ? `${item.label} ${item.bonus >= 0 ? "+" : ""}${item.bonus}` : item.name;
+        const img = tipo === "pericia" ? "" : item.img;
+        return `<button class="${tipo === "pericia" ? "t20-hud-pericia" : "t20-hud-item"}"
+          data-${tipo === "pericia" ? "pericia-id" : "item-id"}="${id}" title="${label}"
           style="display:flex;align-items:center;gap:5px;width:100%;padding:4px 5px;margin-bottom:3px;border-radius:5px;
           background:#151c2b;border:1px solid #303b52;color:#e5e7eb;cursor:pointer;font-size:0.78em;text-align:left;min-width:0">
-          ${item.img ? `<img src="${item.img}" style="width:16px;height:16px;border-radius:3px;object-fit:cover;border:none">` : `<span style="width:16px;text-align:center">•</span>`}
-          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</span>
-        </button>`).join("")}
+          ${img ? `<img src="${img}" style="width:16px;height:16px;border-radius:3px;object-fit:cover;border:none">` : `<span style="width:16px;text-align:center">${tipo === "pericia" ? "🎲" : "•"}</span>`}
+          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</span>
+        </button>`;
+      }).join("")}
     </div>`;
   }
 
-  _miniBtn(bg, fg) {
-    return `padding:4px 6px;border-radius:5px;background:${bg};border:1px solid ${fg};color:${fg};font-weight:bold;cursor:pointer;font-size:0.74em;line-height:1`;
+  _iconBtn(bg, fg) {
+    return `min-width:23px;height:21px;padding:1px 4px;border-radius:5px;background:${bg};border:1px solid ${fg};color:${fg};font-weight:bold;cursor:pointer;font-size:0.72em;line-height:1`;
   }
 
   _iniciarArraste(html) {
@@ -4770,31 +4883,54 @@ class ArsenalHUD extends Application {
     });
   }
 
-  _observarTamanho() {
+  _iniciarResize() {
     const root = this.element?.[0];
-    if (!root || root._arsenalResizeObserver) return;
+    const handle = root?.querySelector?.(".t20-hud-resize");
+    if (!root || !handle || handle._arsenalResizeReady) return;
+    handle._arsenalResizeReady = true;
 
-    let debounce = null;
-    const obs = new ResizeObserver(entries => {
-      const rect = entries?.[0]?.contentRect;
-      if (!rect) return;
-      clearTimeout(debounce);
-      debounce = setTimeout(() => {
-        t20HudSetSavedSize(t20HudMode(), {
-          width: Math.round(root.getBoundingClientRect().width),
-          height: Math.round(root.getBoundingClientRect().height),
-        });
-      }, 250);
+    let resizing = false;
+    let startX = 0, startY = 0, startW = 0, startH = 0;
+
+    const move = ev => {
+      if (!resizing) return;
+      const w = Math.max(210, Math.min(window.innerWidth - root.getBoundingClientRect().left - 8, startW + ev.clientX - startX));
+      const h = Math.max(135, Math.min(window.innerHeight - root.getBoundingClientRect().top - 8, startH + ev.clientY - startY));
+      root.style.width = `${w}px`;
+      root.style.height = `${h}px`;
+    };
+
+    const up = () => {
+      if (!resizing) return;
+      resizing = false;
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      const rect = root.getBoundingClientRect();
+      t20HudSetSavedSize(t20HudMode(), {
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+    };
+
+    handle.addEventListener("mousedown", ev => {
+      resizing = true;
+      startX = ev.clientX;
+      startY = ev.clientY;
+      const rect = root.getBoundingClientRect();
+      startW = rect.width;
+      startH = rect.height;
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+      ev.preventDefault();
+      ev.stopPropagation();
     });
-    obs.observe(root);
-    root._arsenalResizeObserver = obs;
   }
 
   activateListeners(html) {
     super.activateListeners(html);
 
     this._iniciarArraste(html);
-    this._observarTamanho();
+    this._iniciarResize();
 
     html.find(".t20-hud-refresh").on("click", () => this.render(false));
 
@@ -4804,17 +4940,25 @@ class ArsenalHUD extends Application {
       await t20HudUsarItem(actor, itemId);
     });
 
+    html.find(".t20-hud-pericia").on("click", async ev => {
+      const actor = t20HudActorSelecionado();
+      await t20HudRolarPericia(actor, ev.currentTarget.dataset.periciaId);
+    });
+
     html.find(".t20-hud-action").on("click", async ev => {
       const action = ev.currentTarget.dataset.action;
       const actor = t20HudActorSelecionado();
 
       switch (action) {
-        case "sustentadas":
-          return abrirPainelSustentadas();
-        case "aura":
-          return t20ToggleAuraSagrada();
-        case "sustentar":
-          return t20HudSustentarManual(actor);
+        case "condicoes": return abrirPainelCondicoes();
+        case "recursos": return abrirPainelRecursosArsenal();
+        case "sustentadas": return abrirPainelSustentadas();
+        case "aura": return t20ToggleAuraSagrada();
+        case "gastarPM": return t20HudGastarPM(actor);
+        case "recuperarPM": return t20HudRecuperarPM(actor);
+        case "dano": return t20HudDanoManual(actor);
+        case "cura": return t20HudCurarManual(actor);
+        case "limparCondicoes": return t20HudRemoverTodasCondicoes(actor);
       }
     });
   }
