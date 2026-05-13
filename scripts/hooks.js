@@ -125,6 +125,15 @@ Hooks.once("ready", () => {
     default: true,
   });
 
+  game.settings.register(MOD, "auraAnimation", {
+    name: "Animação de Auras",
+    hint: "Exibe uma animação leve de emanação ondulante nas auras dinâmicas. Desative se quiser reduzir efeitos visuais ou melhorar desempenho.",
+    scope: "client",
+    config: true,
+    type: Boolean,
+    default: true,
+  });
+
   const ativas = [];
   if (game.settings.get(MOD, "autoAtaque"))      ativas.push("Ataque");
   if (game.settings.get(MOD, "autoSalvamento"))  ativas.push("Salvamento");
@@ -1250,9 +1259,30 @@ async function t20ToggleAuraSagrada() {
   });
 }
 
+function t20AuraAnimacaoAtiva() {
+  try {
+    return !!game.settings.get("arsenal-t20", "auraAnimation");
+  } catch {
+    return true;
+  }
+}
+
+function t20PararAnimacaoAuras() {
+  try {
+    if (canvas?.arsenalT20AuraTicker) {
+      canvas.app?.ticker?.remove(canvas.arsenalT20AuraTicker);
+      canvas.arsenalT20AuraTicker = null;
+    }
+  } catch (e) {
+    console.warn("Arsenal T20 | erro ao parar animação de aura", e);
+  }
+}
+
 function t20AtualizarAurasVisuais() {
   try {
     if (!canvas?.ready || !window.PIXI) return;
+
+    t20PararAnimacaoAuras();
 
     if (canvas.arsenalT20AuraLayer) {
       canvas.arsenalT20AuraLayer.destroy({ children: true });
@@ -1275,6 +1305,9 @@ function t20AtualizarAurasVisuais() {
     parentLayer.addChild(layer);
     canvas.arsenalT20AuraLayer = layer;
 
+    const animar = t20AuraAnimacaoAtiva();
+    const animados = [];
+
     const gridSize = canvas.grid?.size ?? canvas.scene?.grid?.size ?? 100;
     const sceneDistance = Number(canvas.scene?.grid?.distance ?? 1) || 1;
 
@@ -1287,16 +1320,90 @@ function t20AtualizarAurasVisuais() {
         const raioPx = (raio / sceneDistance) * gridSize;
         const center = token.center ?? { x: token.x, y: token.y };
 
-        const g = new PIXI.Graphics();
-        g.interactive = false;
-        g.interactiveChildren = false;
-        g.eventMode = "none";
-        g.lineStyle(3, 0x2dd4bf, 0.85);
-        g.beginFill(0x2dd4bf, 0.12);
-        g.drawCircle(center.x, center.y, raioPx);
-        g.endFill();
-        layer.addChild(g);
+        // Círculo base: preenchimento leve e borda estável.
+        const base = new PIXI.Graphics();
+        base.interactive = false;
+        base.interactiveChildren = false;
+        base.eventMode = "none";
+        base.lineStyle(3, 0x2dd4bf, 0.72);
+        base.beginFill(0x2dd4bf, 0.08);
+        base.drawCircle(center.x, center.y, raioPx);
+        base.endFill();
+        layer.addChild(base);
+
+        // Núcleo sutil próximo ao conjurador, ajuda a identificar a origem da aura.
+        const nucleo = new PIXI.Graphics();
+        nucleo.interactive = false;
+        nucleo.interactiveChildren = false;
+        nucleo.eventMode = "none";
+        nucleo.beginFill(0xfacc15, 0.18);
+        nucleo.drawCircle(center.x, center.y, Math.max(10, gridSize * 0.18));
+        nucleo.endFill();
+        layer.addChild(nucleo);
+
+        if (animar) {
+          // Duas ondas suaves, desenhadas como círculos locais escalados.
+          // Usamos posição no centro + drawCircle(0,0,raio) para animar escala sem recalcular geometria.
+          const ondas = [];
+          for (let i = 0; i < 2; i++) {
+            const onda = new PIXI.Graphics();
+            onda.interactive = false;
+            onda.interactiveChildren = false;
+            onda.eventMode = "none";
+            onda.x = center.x;
+            onda.y = center.y;
+            onda.lineStyle(2, i === 0 ? 0x7dd3fc : 0xfacc15, 0.45);
+            onda.drawCircle(0, 0, raioPx);
+            layer.addChild(onda);
+            ondas.push({ grafico: onda, fase: i * 0.5 });
+          }
+
+          animados.push({
+            tokenId: token.id,
+            raioPx,
+            base,
+            nucleo,
+            ondas,
+            tempo: Math.random(),
+          });
+        }
       }
+    }
+
+    if (animar && animados.length) {
+      const ticker = (delta) => {
+        try {
+          const dt = Math.min(0.08, (delta || 1) / 60);
+          for (const item of animados) {
+            const token = canvas.tokens?.get(item.tokenId);
+            if (!token) continue;
+            const center = token.center ?? { x: token.x, y: token.y };
+
+            // Reposiciona tudo para acompanhar o token sem recriar a camada a cada movimento fino.
+            item.nucleo.clear();
+            item.nucleo.beginFill(0xfacc15, 0.14 + 0.06 * Math.sin(performance.now() / 420));
+            item.nucleo.drawCircle(center.x, center.y, Math.max(10, gridSize * 0.18));
+            item.nucleo.endFill();
+
+            item.tempo = (item.tempo + dt * 0.22) % 1;
+
+            for (const o of item.ondas) {
+              const t = (item.tempo + o.fase) % 1;
+              const escala = 0.72 + t * 0.34;
+              const alpha = Math.max(0, 0.42 * (1 - t));
+              o.grafico.x = center.x;
+              o.grafico.y = center.y;
+              o.grafico.scale.set(escala);
+              o.grafico.alpha = alpha;
+            }
+          }
+        } catch (e) {
+          console.warn("Arsenal T20 | erro no ticker da aura", e);
+        }
+      };
+
+      canvas.arsenalT20AuraTicker = ticker;
+      canvas.app?.ticker?.add(ticker);
     }
   } catch (e) {
     console.warn("Arsenal T20 | erro ao desenhar auras", e);
@@ -1308,6 +1415,7 @@ Hooks.once("ready", () => {
 });
 
 Hooks.on("canvasReady", () => t20AtualizarAurasVisuais());
+Hooks.on("tearDownCanvas", () => t20PararAnimacaoAuras());
 Hooks.on("updateToken", () => t20AtualizarAurasVisuais());
 Hooks.on("deleteToken", () => t20AtualizarAurasVisuais());
 Hooks.on("controlToken", () => t20AtualizarAurasVisuais());
