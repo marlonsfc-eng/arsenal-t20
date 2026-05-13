@@ -5583,67 +5583,170 @@ function t20ElementoTexto(el) {
   return String(el?.innerText ?? el?.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 
-function t20EhLinhaAprimoramentoMagia(el) {
-  if (!el || el.nodeType !== 1) return false;
-  const txt = t20ElementoTexto(el);
-  if (!txt || txt.length < 3) return false;
-  if (!/PM\b/i.test(txt)) return false;
-  if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção/i.test(txt)) return false;
-  if (el.matches?.("form, table, tbody, thead")) return false;
+function t20DialogoMagiaCandidatos(form) {
+  if (!form) return [];
 
-  const temControle = !!el.querySelector?.('input[type="checkbox"], input[type="number"], button');
-  const temDescricao = txt.replace(/[+\-]?\d+\s*PM/gi, "").trim().length > 4;
-  return temControle && temDescricao;
-}
+  const filhos = Array.from(form.children ?? []);
+  let candidatos = filhos.filter(el => {
+    const txt = t20ElementoTexto(el);
+    if (!txt || !/PM\b/i.test(txt)) return false;
+    if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção/i.test(txt)) return false;
+    return !!el.querySelector?.('input[type="checkbox"], input[type="number"], button');
+  });
 
-function t20LinhasAprimoramentosDiv(form) {
-  const preferidas = Array.from(form.querySelectorAll(":scope > .form-group, :scope > .form-fields, :scope > .form-row, :scope > div"))
-    .filter(t20EhLinhaAprimoramentoMagia);
+  // Se o sistema colocar os aprimoramentos dentro de um bloco intermediário, pega filhos desse bloco.
+  if (candidatos.length < 3) {
+    const blocos = Array.from(form.querySelectorAll(":scope > div, :scope > section, :scope > fieldset"));
+    for (const bloco of blocos) {
+      const internos = Array.from(bloco.children ?? []).filter(el => {
+        const txt = t20ElementoTexto(el);
+        if (!txt || !/PM\b/i.test(txt)) return false;
+        if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção/i.test(txt)) return false;
+        return !!el.querySelector?.('input[type="checkbox"], input[type="number"], button');
+      });
+      if (internos.length > candidatos.length) candidatos = internos;
+    }
+  }
 
-  let linhas = preferidas.length ? preferidas : Array.from(form.querySelectorAll(".form-group, .form-fields, .form-row, .flexrow, div"))
-    .filter(t20EhLinhaAprimoramentoMagia);
+  // Remove elementos que sejam ancestrais de outros candidatos para evitar bagunçar o layout.
+  candidatos = candidatos.filter(el => !candidatos.some(other => other !== el && el.contains(other)));
 
-  // Remove ancestrais quando um filho também foi detectado.
-  linhas = linhas.filter(el => !linhas.some(other => other !== el && el.contains(other)));
-
-  // Remove duplicatas.
   const vistos = new Set();
-  return linhas.filter(el => {
+  return candidatos.filter(el => {
     if (vistos.has(el)) return false;
     vistos.add(el);
     return true;
   });
 }
 
-function t20AplicarToolbarDialogoMagia(root, container, linhas) {
-  if (root.querySelector(".arsenal-t20-magia-toolbar")) return;
+function t20InjectDialogoMagiaCss() {
+  if (document.getElementById("arsenal-t20-dialogo-magia-css")) return;
+
+  const style = document.createElement("style");
+  style.id = "arsenal-t20-dialogo-magia-css";
+  style.textContent = `
+    .arsenal-t20-spell-dialog {
+      min-width: 780px !important;
+      max-width: 980px !important;
+    }
+
+    .arsenal-t20-spell-dialog #ability-use-form {
+      font-size: 14px;
+    }
+
+    .arsenal-t20-spell-dialog .arsenal-t20-magia-lista {
+      max-height: 56vh;
+      overflow-y: auto;
+      padding-right: 8px;
+      margin: 8px 0 12px;
+    }
+
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card {
+      margin: 0 0 8px 0 !important;
+      padding: 10px 12px !important;
+      border: 1px solid rgba(55, 65, 81, 0.60) !important;
+      border-left: 4px solid #8b5cf6 !important;
+      border-radius: 10px !important;
+      background: linear-gradient(180deg, rgba(255,255,255,0.70), rgba(245,241,231,0.55)) !important;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 3px rgba(0,0,0,0.10) !important;
+      line-height: 1.38 !important;
+    }
+
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card:hover {
+      border-left-color: #c9a227 !important;
+      background: linear-gradient(180deg, rgba(255,250,240,0.88), rgba(246,234,212,0.70)) !important;
+    }
+
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card:has(input[type="checkbox"]:checked),
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card:has(input[type="number"][value]:not([value="0"])) {
+      outline: 2px solid rgba(37,99,235,0.45);
+      background: linear-gradient(180deg, rgba(219,234,254,0.72), rgba(191,219,254,0.46)) !important;
+    }
+
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card input[type="checkbox"] {
+      width: 18px !important;
+      height: 18px !important;
+      cursor: pointer;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card button {
+      min-width: 26px;
+      min-height: 26px;
+      border-radius: 6px;
+      border: 1px solid #9ca3af;
+      background: #f8fafc;
+      font-weight: bold;
+    }
+
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card input[type="number"],
+    .arsenal-t20-spell-dialog .arsenal-t20-aprim-card input:not([type]) {
+      max-width: 48px;
+      text-align: center;
+      border-radius: 6px;
+      border: 1px solid #9ca3af;
+      background: rgba(255,255,255,0.85);
+    }
+
+    .arsenal-t20-spell-dialog .arsenal-t20-magia-toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin: 6px 0 10px;
+      padding: 8px;
+      border: 1px solid rgba(55,65,81,0.45);
+      border-radius: 8px;
+      background: rgba(15,23,42,0.08);
+    }
+
+    .arsenal-t20-spell-dialog .arsenal-t20-magia-toolbar input {
+      flex: 1;
+      padding: 7px 9px;
+      border-radius: 6px;
+      border: 1px solid #9ca3af;
+      background: rgba(255,255,255,0.86);
+    }
+
+    .arsenal-t20-spell-dialog .arsenal-t20-magia-toolbar button {
+      padding: 7px 9px;
+      border-radius: 6px;
+      border: 1px solid #9ca3af;
+      background: #f3f4f6;
+      cursor: pointer;
+    }
+
+    .arsenal-t20-spell-dialog footer button,
+    .arsenal-t20-spell-dialog .dialog-buttons button,
+    .arsenal-t20-spell-dialog button.dialog-button {
+      min-height: 38px;
+      font-weight: bold;
+      font-size: 1em;
+      border-radius: 7px;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function t20CriarToolbarDialogoMagia(win, form, linhas) {
+  if (!linhas.length || form.querySelector(".arsenal-t20-magia-toolbar")) return;
 
   const toolbar = document.createElement("div");
   toolbar.className = "arsenal-t20-magia-toolbar";
-  toolbar.style.display = "flex";
-  toolbar.style.gap = "8px";
-  toolbar.style.alignItems = "center";
-  toolbar.style.margin = "6px 0 10px";
-  toolbar.style.padding = "8px";
-  toolbar.style.border = "1px solid rgba(55,65,81,0.55)";
-  toolbar.style.borderRadius = "8px";
-  toolbar.style.background = "rgba(15,23,42,0.08)";
-
   toolbar.innerHTML = `
-    <input type="text" placeholder="Filtrar aprimoramentos..."
-      style="flex:1;padding:7px 9px;border-radius:6px;border:1px solid #9ca3af;background:rgba(255,255,255,0.8)">
-    <button type="button" data-action="limpar"
-      style="padding:7px 9px;border-radius:6px;border:1px solid #9ca3af;background:#f3f4f6;cursor:pointer">Limpar</button>
+    <input type="text" placeholder="Filtrar aprimoramentos...">
+    <button type="button" data-action="limpar">Limpar</button>
   `;
 
-  container?.parentElement?.insertBefore(toolbar, container);
+  const primeiraLinha = linhas[0];
+  primeiraLinha.parentElement?.insertBefore(toolbar, primeiraLinha);
 
   const filtro = toolbar.querySelector("input");
   filtro?.addEventListener("input", () => {
     const q = String(filtro.value ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     linhas.forEach(row => {
       const txt = t20ElementoTexto(row).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      row.style.display = !q || txt.includes(q) ? (row.dataset.arsenalDisplay || "grid") : "none";
+      row.style.display = !q || txt.includes(q) ? "" : "none";
     });
   });
 
@@ -5651,102 +5754,6 @@ function t20AplicarToolbarDialogoMagia(root, container, linhas) {
     filtro.value = "";
     filtro.dispatchEvent(new Event("input", { bubbles: true }));
   });
-}
-
-function t20MelhorarLinhaAprimoramento(row, aplicar, nome, index) {
-  if (!row || row.dataset.arsenalCard === "1") return;
-  row.dataset.arsenalCard = "1";
-
-  const custo = t20ExtrairCustoLinhaMagia(row);
-  const controles = aplicar ? Array.from(aplicar.querySelectorAll("input, button, select")).length : 0;
-  const selecionavel = !!aplicar?.querySelector?.('input[type="checkbox"], input[type="number"], button');
-
-  row.style.display = "grid";
-  row.dataset.arsenalDisplay = "grid";
-  row.style.gridTemplateColumns = "minmax(110px, 150px) 1fr";
-  row.style.gap = "10px";
-  row.style.alignItems = "start";
-  row.style.margin = "0 0 8px 0";
-  row.style.padding = "10px";
-  row.style.border = "1px solid rgba(55,65,81,0.75)";
-  row.style.borderRadius = "10px";
-  row.style.background = index % 2 === 0
-    ? "linear-gradient(180deg, rgba(17,24,39,0.12), rgba(15,23,42,0.05))"
-    : "linear-gradient(180deg, rgba(30,41,59,0.12), rgba(15,23,42,0.05))";
-  row.style.boxShadow = "inset 0 1px 0 rgba(255,255,255,0.05)";
-
-  if (aplicar) {
-    aplicar.style.display = "flex";
-    aplicar.style.alignItems = "center";
-    aplicar.style.justifyContent = "center";
-    aplicar.style.gap = "6px";
-    aplicar.style.padding = "6px";
-    aplicar.style.borderRadius = "8px";
-    aplicar.style.background = "rgba(15,23,42,0.10)";
-    aplicar.style.border = "1px solid rgba(55,65,81,0.45)";
-    aplicar.style.minHeight = "48px";
-    aplicar.style.whiteSpace = "nowrap";
-    aplicar.style.fontWeight = "bold";
-    aplicar.style.color = custo.startsWith("-") ? "#2563eb" : "#7c2d12";
-
-    if (!aplicar.querySelector(".arsenal-t20-custo-badge")) {
-      const badge = document.createElement("div");
-      badge.className = "arsenal-t20-custo-badge";
-      badge.textContent = custo || (selecionavel ? "Aumento" : "");
-      badge.style.fontSize = "0.86em";
-      badge.style.color = custo.startsWith("-") ? "#1d4ed8" : "#92400e";
-      badge.style.marginRight = controles ? "4px" : "0";
-      if (custo || selecionavel) aplicar.prepend(badge);
-    }
-
-    aplicar.querySelectorAll("input[type='checkbox']").forEach(cb => {
-      cb.style.width = "18px";
-      cb.style.height = "18px";
-      cb.style.cursor = "pointer";
-    });
-
-    aplicar.querySelectorAll("button").forEach(btn => {
-      btn.style.minWidth = "28px";
-      btn.style.height = "28px";
-      btn.style.borderRadius = "6px";
-      btn.style.border = "1px solid #6b7280";
-      btn.style.background = "#f3f4f6";
-      btn.style.cursor = "pointer";
-      btn.style.fontWeight = "bold";
-    });
-
-    aplicar.querySelectorAll("input[type='number'], input:not([type])").forEach(input => {
-      input.style.width = "44px";
-      input.style.textAlign = "center";
-      input.style.borderRadius = "6px";
-      input.style.border = "1px solid #6b7280";
-    });
-  }
-
-  if (nome) {
-    nome.style.display = "block";
-    nome.style.padding = "2px 4px";
-    nome.style.lineHeight = "1.45";
-    nome.style.fontSize = "0.98em";
-    nome.style.color = "#111827";
-  }
-
-  const baseBg = row.style.background;
-  const atualizarEstado = () => {
-    const checked = !!row.querySelector("input[type='checkbox']:checked");
-    const qtd = Array.from(row.querySelectorAll("input[type='number'], input:not([type])"))
-      .some(inp => Number(inp.value) > 0);
-    row.style.outline = (checked || qtd) ? "2px solid rgba(37,99,235,0.65)" : "none";
-    row.style.background = (checked || qtd)
-      ? "linear-gradient(180deg, rgba(219,234,254,0.55), rgba(191,219,254,0.35))"
-      : baseBg;
-  };
-
-  row.querySelectorAll("input, button, select").forEach(el => {
-    el.addEventListener("change", atualizarEstado);
-    el.addEventListener("click", () => setTimeout(atualizarEstado, 30));
-  });
-  atualizarEstado();
 }
 
 function t20MelhorarDialogoUsoMagia(app, html, data = null) {
@@ -5767,101 +5774,45 @@ function t20MelhorarDialogoUsoMagia(app, html, data = null) {
     return;
   }
 
-  if (win) {
-    win.style.minWidth = "760px";
-    win.style.maxWidth = "980px";
-    win.style.width = win.style.width || "820px";
+  const linhas = t20DialogoMagiaCandidatos(form);
+
+  // Se não encontrar linhas, não mexe no layout. Isso evita piorar a janela.
+  if (!linhas.length) {
+    const tentativas = Number(win?.dataset?.arsenalTentativasDialogo ?? 0);
+    if (win?.dataset) win.dataset.arsenalTentativasDialogo = String(tentativas + 1);
+    if (tentativas < 8) {
+      setTimeout(() => t20MelhorarDialogoUsoMagia(app, win, data), 120);
+    } else {
+      console.warn("Arsenal T20 | AbilityUseDialog detectado, mas nenhuma linha de aprimoramento foi encontrada.", {
+        titulo: app?.title ?? app?.options?.title,
+        texto: t20ElementoTexto(form).slice(0, 700),
+      });
+    }
+    return;
   }
+
+  t20InjectDialogoMagiaCss();
+
+  win.classList?.add("arsenal-t20-spell-dialog");
+  if (win) {
+    win.style.minWidth = "780px";
+    win.style.maxWidth = "980px";
+    win.style.width = win.style.width || "840px";
+  }
+
   form.style.fontSize = "14px";
 
-  let table = form.querySelector?.("table") ?? win?.querySelector?.("table") ?? root.querySelector?.("table");
-  let rows = [];
-  let container = table;
+  linhas.forEach((linha) => {
+    linha.classList.add("arsenal-t20-aprim-card");
+  });
 
-  if (table) {
-    table.classList.add("arsenal-t20-magia-table");
-    table.style.display = "block";
-    table.style.width = "100%";
-    table.style.borderCollapse = "separate";
-    table.style.borderSpacing = "0";
-    table.style.maxHeight = "58vh";
-    table.style.overflowY = "auto";
-    table.style.paddingRight = "6px";
-
-    const thead = table.querySelector("thead");
-    if (thead) thead.style.display = "none";
-
-    const tbody = table.querySelector("tbody") ?? table;
-    tbody.style.display = "block";
-    tbody.style.width = "100%";
-    rows = Array.from(tbody.querySelectorAll("tr")).filter(row => row.querySelector("td"));
-
-    rows.forEach((row, index) => {
-      const cells = Array.from(row.querySelectorAll("td"));
-      t20MelhorarLinhaAprimoramento(row, cells[0], cells[1] ?? cells[cells.length - 1], index);
-    });
-  } else {
-    rows = t20LinhasAprimoramentosDiv(form);
-    container = form;
-
-    if (!rows.length) {
-      // A janela do T20 usa HTML por divs; quando ela renderiza tarde, tentamos de novo algumas vezes.
-      const tentativas = Number(win?.dataset?.arsenalTentativasDialogo ?? 0);
-      if (win?.dataset) win.dataset.arsenalTentativasDialogo = String(tentativas + 1);
-      if (tentativas < 8) {
-        setTimeout(() => t20MelhorarDialogoUsoMagia(app, win, data), 120);
-      } else {
-        console.warn("Arsenal T20 | AbilityUseDialog detectado, mas nenhuma linha de aprimoramento foi encontrada.", {
-          titulo: app?.title ?? app?.options?.title,
-          texto: t20ElementoTexto(form).slice(0, 500),
-        });
-      }
-      return;
-    }
-
-    form.style.maxHeight = "62vh";
-    form.style.overflowY = "auto";
-    form.style.paddingRight = "6px";
-
-    rows.forEach((row, index) => {
-      const filhos = Array.from(row.children ?? []);
-      let aplicar = filhos.find(ch => ch.querySelector?.('input[type="checkbox"], input[type="number"], button')) ?? row;
-      let nome = filhos.find(ch => ch !== aplicar && t20ElementoTexto(ch).length > 4) ?? row;
-
-      // Em linhas com controles e texto misturados no mesmo div, separa visualmente usando os elementos existentes.
-      if (aplicar === row && nome === row) {
-        const controls = Array.from(row.querySelectorAll('input[type="checkbox"], input[type="number"], button'));
-        if (controls.length) {
-          const controlWrap = document.createElement("div");
-          const textWrap = document.createElement("div");
-          controlWrap.className = "arsenal-t20-inline-controls";
-          textWrap.className = "arsenal-t20-inline-desc";
-
-          // Move controles para wrapper e deixa texto renderizado do próprio row no wrapper de descrição.
-          controls.forEach(c => controlWrap.appendChild(c));
-          const txt = t20ElementoTexto(row);
-          textWrap.textContent = txt.replace(/^[+\-]?\d+\s*PM\s*/i, "").trim();
-
-          row.innerHTML = "";
-          row.appendChild(controlWrap);
-          row.appendChild(textWrap);
-          aplicar = controlWrap;
-          nome = textWrap;
-        }
-      }
-
-      t20MelhorarLinhaAprimoramento(row, aplicar, nome, index);
-    });
+  // Coloca a área de aprimoramentos em uma lista rolável sem mover controles internos.
+  const parent = linhas[0].parentElement;
+  if (parent && !parent.classList.contains("arsenal-t20-magia-lista")) {
+    parent.classList.add("arsenal-t20-magia-lista");
   }
 
-  t20AplicarToolbarDialogoMagia(root, container, rows);
-
-  root.querySelectorAll(".dialog-buttons button, button.dialog-button, footer button").forEach(btn => {
-    btn.style.minHeight = "38px";
-    btn.style.fontWeight = "bold";
-    btn.style.fontSize = "1em";
-    btn.style.borderRadius = "7px";
-  });
+  t20CriarToolbarDialogoMagia(win, form, linhas);
 
   if (win?.dataset) win.dataset.arsenalDialogoMagia = "1";
   if (root?.dataset) root.dataset.arsenalDialogoMagia = "1";
