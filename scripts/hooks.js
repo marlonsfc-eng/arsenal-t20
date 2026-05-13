@@ -173,7 +173,13 @@ Hooks.once("ready", () => {
       arcane: "Arcano/Roxo",
       emerald: "Esmeralda",
       crimson: "Carmesim",
-      steel: "Aço Azul"
+      steel: "Aço Azul",
+      parchment: "Pergaminho Claro",
+      ivoryGold: "Marfim/Dourado",
+      sky: "Céu Claro",
+      jadeLight: "Jade Claro",
+      roseLight: "Rosa Claro",
+      slateLight: "Ardósia Clara"
     },
     default: "darkGold",
   });
@@ -4405,10 +4411,41 @@ function t20HudTheme() {
       border:"#39506e", accent:"#60a5fa", accent2:"#93c5fd",
       text:"#eff6ff", title:"#dbeafe", muted:"#9fb8d6"
     },
+
+    // Temas claros
+    parchment: {
+      bg1:"#f2e6cf", bg2:"#dcc49b", panel:"#fff7e8", panel2:"#f6ead4",
+      border:"#9a7a45", accent:"#8b5e1b", accent2:"#6f4510",
+      text:"#2b2114", title:"#3b2608", muted:"#6b5b45"
+    },
+    ivoryGold: {
+      bg1:"#fffaf0", bg2:"#efe3c7", panel:"#fffdf7", panel2:"#f5ead2",
+      border:"#b99754", accent:"#b7791f", accent2:"#8a4b0f",
+      text:"#2f2615", title:"#3f2d0c", muted:"#76674d"
+    },
+    sky: {
+      bg1:"#e8f4ff", bg2:"#cfe7fb", panel:"#f8fbff", panel2:"#e2f0fb",
+      border:"#7aa7c7", accent:"#2563eb", accent2:"#1d4ed8",
+      text:"#102033", title:"#0f2e55", muted:"#506579"
+    },
+    jadeLight: {
+      bg1:"#e7f8ef", bg2:"#c8ead7", panel:"#f6fff9", panel2:"#dff5e9",
+      border:"#79ad8f", accent:"#047857", accent2:"#065f46",
+      text:"#10251b", title:"#073b2b", muted:"#4f6f5d"
+    },
+    roseLight: {
+      bg1:"#fff0f3", bg2:"#f7d2dc", panel:"#fff8fa", panel2:"#f8e1e8",
+      border:"#c98799", accent:"#be123c", accent2:"#9f1239",
+      text:"#32131c", title:"#4a1020", muted:"#7b5662"
+    },
+    slateLight: {
+      bg1:"#f1f5f9", bg2:"#dbe4ee", panel:"#ffffff", panel2:"#e8eef6",
+      border:"#94a3b8", accent:"#334155", accent2:"#1e293b",
+      text:"#0f172a", title:"#111827", muted:"#64748b"
+    },
   };
   return temas[key] ?? temas.darkGold;
 }
-
 function t20HudTokenSelecionado() {
   return canvas.tokens?.controlled?.[0] ?? null;
 }
@@ -5542,7 +5579,177 @@ function t20ExtrairCustoLinhaMagia(row) {
   return "";
 }
 
-function t20MelhorarDialogoUsoMagia(app, html) {
+function t20ElementoTexto(el) {
+  return String(el?.innerText ?? el?.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+function t20EhLinhaAprimoramentoMagia(el) {
+  if (!el || el.nodeType !== 1) return false;
+  const txt = t20ElementoTexto(el);
+  if (!txt || txt.length < 3) return false;
+  if (!/PM\b/i.test(txt)) return false;
+  if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção/i.test(txt)) return false;
+  if (el.matches?.("form, table, tbody, thead")) return false;
+
+  const temControle = !!el.querySelector?.('input[type="checkbox"], input[type="number"], button');
+  const temDescricao = txt.replace(/[+\-]?\d+\s*PM/gi, "").trim().length > 4;
+  return temControle && temDescricao;
+}
+
+function t20LinhasAprimoramentosDiv(form) {
+  const preferidas = Array.from(form.querySelectorAll(":scope > .form-group, :scope > .form-fields, :scope > .form-row, :scope > div"))
+    .filter(t20EhLinhaAprimoramentoMagia);
+
+  let linhas = preferidas.length ? preferidas : Array.from(form.querySelectorAll(".form-group, .form-fields, .form-row, .flexrow, div"))
+    .filter(t20EhLinhaAprimoramentoMagia);
+
+  // Remove ancestrais quando um filho também foi detectado.
+  linhas = linhas.filter(el => !linhas.some(other => other !== el && el.contains(other)));
+
+  // Remove duplicatas.
+  const vistos = new Set();
+  return linhas.filter(el => {
+    if (vistos.has(el)) return false;
+    vistos.add(el);
+    return true;
+  });
+}
+
+function t20AplicarToolbarDialogoMagia(root, container, linhas) {
+  if (root.querySelector(".arsenal-t20-magia-toolbar")) return;
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "arsenal-t20-magia-toolbar";
+  toolbar.style.display = "flex";
+  toolbar.style.gap = "8px";
+  toolbar.style.alignItems = "center";
+  toolbar.style.margin = "6px 0 10px";
+  toolbar.style.padding = "8px";
+  toolbar.style.border = "1px solid rgba(55,65,81,0.55)";
+  toolbar.style.borderRadius = "8px";
+  toolbar.style.background = "rgba(15,23,42,0.08)";
+
+  toolbar.innerHTML = `
+    <input type="text" placeholder="Filtrar aprimoramentos..."
+      style="flex:1;padding:7px 9px;border-radius:6px;border:1px solid #9ca3af;background:rgba(255,255,255,0.8)">
+    <button type="button" data-action="limpar"
+      style="padding:7px 9px;border-radius:6px;border:1px solid #9ca3af;background:#f3f4f6;cursor:pointer">Limpar</button>
+  `;
+
+  container?.parentElement?.insertBefore(toolbar, container);
+
+  const filtro = toolbar.querySelector("input");
+  filtro?.addEventListener("input", () => {
+    const q = String(filtro.value ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    linhas.forEach(row => {
+      const txt = t20ElementoTexto(row).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      row.style.display = !q || txt.includes(q) ? (row.dataset.arsenalDisplay || "grid") : "none";
+    });
+  });
+
+  toolbar.querySelector("[data-action='limpar']")?.addEventListener("click", () => {
+    filtro.value = "";
+    filtro.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+function t20MelhorarLinhaAprimoramento(row, aplicar, nome, index) {
+  if (!row || row.dataset.arsenalCard === "1") return;
+  row.dataset.arsenalCard = "1";
+
+  const custo = t20ExtrairCustoLinhaMagia(row);
+  const controles = aplicar ? Array.from(aplicar.querySelectorAll("input, button, select")).length : 0;
+  const selecionavel = !!aplicar?.querySelector?.('input[type="checkbox"], input[type="number"], button');
+
+  row.style.display = "grid";
+  row.dataset.arsenalDisplay = "grid";
+  row.style.gridTemplateColumns = "minmax(110px, 150px) 1fr";
+  row.style.gap = "10px";
+  row.style.alignItems = "start";
+  row.style.margin = "0 0 8px 0";
+  row.style.padding = "10px";
+  row.style.border = "1px solid rgba(55,65,81,0.75)";
+  row.style.borderRadius = "10px";
+  row.style.background = index % 2 === 0
+    ? "linear-gradient(180deg, rgba(17,24,39,0.12), rgba(15,23,42,0.05))"
+    : "linear-gradient(180deg, rgba(30,41,59,0.12), rgba(15,23,42,0.05))";
+  row.style.boxShadow = "inset 0 1px 0 rgba(255,255,255,0.05)";
+
+  if (aplicar) {
+    aplicar.style.display = "flex";
+    aplicar.style.alignItems = "center";
+    aplicar.style.justifyContent = "center";
+    aplicar.style.gap = "6px";
+    aplicar.style.padding = "6px";
+    aplicar.style.borderRadius = "8px";
+    aplicar.style.background = "rgba(15,23,42,0.10)";
+    aplicar.style.border = "1px solid rgba(55,65,81,0.45)";
+    aplicar.style.minHeight = "48px";
+    aplicar.style.whiteSpace = "nowrap";
+    aplicar.style.fontWeight = "bold";
+    aplicar.style.color = custo.startsWith("-") ? "#2563eb" : "#7c2d12";
+
+    if (!aplicar.querySelector(".arsenal-t20-custo-badge")) {
+      const badge = document.createElement("div");
+      badge.className = "arsenal-t20-custo-badge";
+      badge.textContent = custo || (selecionavel ? "Aumento" : "");
+      badge.style.fontSize = "0.86em";
+      badge.style.color = custo.startsWith("-") ? "#1d4ed8" : "#92400e";
+      badge.style.marginRight = controles ? "4px" : "0";
+      if (custo || selecionavel) aplicar.prepend(badge);
+    }
+
+    aplicar.querySelectorAll("input[type='checkbox']").forEach(cb => {
+      cb.style.width = "18px";
+      cb.style.height = "18px";
+      cb.style.cursor = "pointer";
+    });
+
+    aplicar.querySelectorAll("button").forEach(btn => {
+      btn.style.minWidth = "28px";
+      btn.style.height = "28px";
+      btn.style.borderRadius = "6px";
+      btn.style.border = "1px solid #6b7280";
+      btn.style.background = "#f3f4f6";
+      btn.style.cursor = "pointer";
+      btn.style.fontWeight = "bold";
+    });
+
+    aplicar.querySelectorAll("input[type='number'], input:not([type])").forEach(input => {
+      input.style.width = "44px";
+      input.style.textAlign = "center";
+      input.style.borderRadius = "6px";
+      input.style.border = "1px solid #6b7280";
+    });
+  }
+
+  if (nome) {
+    nome.style.display = "block";
+    nome.style.padding = "2px 4px";
+    nome.style.lineHeight = "1.45";
+    nome.style.fontSize = "0.98em";
+    nome.style.color = "#111827";
+  }
+
+  const baseBg = row.style.background;
+  const atualizarEstado = () => {
+    const checked = !!row.querySelector("input[type='checkbox']:checked");
+    const qtd = Array.from(row.querySelectorAll("input[type='number'], input:not([type])"))
+      .some(inp => Number(inp.value) > 0);
+    row.style.outline = (checked || qtd) ? "2px solid rgba(37,99,235,0.65)" : "none";
+    row.style.background = (checked || qtd)
+      ? "linear-gradient(180deg, rgba(219,234,254,0.55), rgba(191,219,254,0.35))"
+      : baseBg;
+  };
+
+  row.querySelectorAll("input, button, select").forEach(el => {
+    el.addEventListener("change", atualizarEstado);
+    el.addEventListener("click", () => setTimeout(atualizarEstado, 30));
+  });
+  atualizarEstado();
+}
+
+function t20MelhorarDialogoUsoMagia(app, html, data = null) {
   if (!t20DialogoMagiaAtivo()) return;
 
   let root = html instanceof jQuery ? html[0] : html;
@@ -5554,186 +5761,116 @@ function t20MelhorarDialogoUsoMagia(app, html) {
   if (win?.dataset?.arsenalDialogoMagia === "1") return;
   if (!t20EhDialogoUsoMagia(app, root)) return;
 
-  if (win?.dataset) win.dataset.arsenalDialogoMagia = "1";
-  if (root?.dataset) root.dataset.arsenalDialogoMagia = "1";
+  const form = win?.querySelector?.("#ability-use-form, form") ?? root.querySelector?.("#ability-use-form, form") ?? root;
+  if (!form) {
+    console.warn("Arsenal T20 | AbilityUseDialog detectado, mas formulário não foi encontrado.");
+    return;
+  }
 
   if (win) {
     win.style.minWidth = "760px";
     win.style.maxWidth = "980px";
     win.style.width = win.style.width || "820px";
   }
-
-  const form = win?.querySelector?.("#ability-use-form, form") ?? root.querySelector?.("#ability-use-form, form") ?? root;
   form.style.fontSize = "14px";
 
-  const table = form.querySelector?.("table") ?? win?.querySelector?.("table") ?? root.querySelector?.("table");
-  if (!table) {
-    console.warn("Arsenal T20 | AbilityUseDialog detectado, mas tabela de aprimoramentos não foi encontrada.");
-    return;
-  }
+  let table = form.querySelector?.("table") ?? win?.querySelector?.("table") ?? root.querySelector?.("table");
+  let rows = [];
+  let container = table;
 
-  table.classList.add("arsenal-t20-magia-table");
-  table.style.display = "block";
-  table.style.width = "100%";
-  table.style.borderCollapse = "separate";
-  table.style.borderSpacing = "0";
-  table.style.maxHeight = "58vh";
-  table.style.overflowY = "auto";
-  table.style.paddingRight = "6px";
+  if (table) {
+    table.classList.add("arsenal-t20-magia-table");
+    table.style.display = "block";
+    table.style.width = "100%";
+    table.style.borderCollapse = "separate";
+    table.style.borderSpacing = "0";
+    table.style.maxHeight = "58vh";
+    table.style.overflowY = "auto";
+    table.style.paddingRight = "6px";
 
-  const thead = table.querySelector("thead");
-  if (thead) thead.style.display = "none";
+    const thead = table.querySelector("thead");
+    if (thead) thead.style.display = "none";
 
-  const tbody = table.querySelector("tbody") ?? table;
-  tbody.style.display = "block";
-  tbody.style.width = "100%";
+    const tbody = table.querySelector("tbody") ?? table;
+    tbody.style.display = "block";
+    tbody.style.width = "100%";
+    rows = Array.from(tbody.querySelectorAll("tr")).filter(row => row.querySelector("td"));
 
-  const rows = Array.from(tbody.querySelectorAll("tr")).filter(row => row.querySelector("td"));
-  rows.forEach((row, index) => {
-    if (row.dataset.arsenalCard === "1") return;
-    row.dataset.arsenalCard = "1";
+    rows.forEach((row, index) => {
+      const cells = Array.from(row.querySelectorAll("td"));
+      t20MelhorarLinhaAprimoramento(row, cells[0], cells[1] ?? cells[cells.length - 1], index);
+    });
+  } else {
+    rows = t20LinhasAprimoramentosDiv(form);
+    container = form;
 
-    const cells = Array.from(row.querySelectorAll("td"));
-    const aplicar = cells[0];
-    const nome = cells[1] ?? cells[cells.length - 1];
-
-    const custo = t20ExtrairCustoLinhaMagia(row);
-    const controles = aplicar ? Array.from(aplicar.querySelectorAll("input, button, select")).length : 0;
-    const selecionavel = !!aplicar?.querySelector?.('input[type="checkbox"], input[type="number"], button');
-
-    row.style.display = "grid";
-    row.style.gridTemplateColumns = "minmax(110px, 150px) 1fr";
-    row.style.gap = "10px";
-    row.style.alignItems = "start";
-    row.style.margin = "0 0 8px 0";
-    row.style.padding = "10px";
-    row.style.border = "1px solid rgba(55,65,81,0.75)";
-    row.style.borderRadius = "10px";
-    row.style.background = index % 2 === 0
-      ? "linear-gradient(180deg, rgba(17,24,39,0.12), rgba(15,23,42,0.05))"
-      : "linear-gradient(180deg, rgba(30,41,59,0.12), rgba(15,23,42,0.05))";
-    row.style.boxShadow = "inset 0 1px 0 rgba(255,255,255,0.05)";
-
-    if (aplicar) {
-      aplicar.style.display = "flex";
-      aplicar.style.alignItems = "center";
-      aplicar.style.justifyContent = "center";
-      aplicar.style.gap = "6px";
-      aplicar.style.padding = "6px";
-      aplicar.style.borderRadius = "8px";
-      aplicar.style.background = "rgba(15,23,42,0.10)";
-      aplicar.style.border = "1px solid rgba(55,65,81,0.45)";
-      aplicar.style.minHeight = "48px";
-      aplicar.style.whiteSpace = "nowrap";
-      aplicar.style.fontWeight = "bold";
-      aplicar.style.color = custo.startsWith("-") ? "#2563eb" : "#7c2d12";
-
-      const badge = document.createElement("div");
-      badge.className = "arsenal-t20-custo-badge";
-      badge.textContent = custo || (selecionavel ? "Aumento" : "");
-      badge.style.fontSize = "0.86em";
-      badge.style.color = custo.startsWith("-") ? "#1d4ed8" : "#92400e";
-      badge.style.marginRight = controles ? "4px" : "0";
-      if (custo || selecionavel) aplicar.prepend(badge);
-
-      aplicar.querySelectorAll("input[type='checkbox']").forEach(cb => {
-        cb.style.width = "18px";
-        cb.style.height = "18px";
-        cb.style.cursor = "pointer";
-      });
-
-      aplicar.querySelectorAll("button").forEach(btn => {
-        btn.style.minWidth = "28px";
-        btn.style.height = "28px";
-        btn.style.borderRadius = "6px";
-        btn.style.border = "1px solid #6b7280";
-        btn.style.background = "#f3f4f6";
-        btn.style.cursor = "pointer";
-        btn.style.fontWeight = "bold";
-      });
-
-      aplicar.querySelectorAll("input[type='number'], input:not([type])").forEach(input => {
-        input.style.width = "44px";
-        input.style.textAlign = "center";
-        input.style.borderRadius = "6px";
-        input.style.border = "1px solid #6b7280";
-      });
+    if (!rows.length) {
+      // A janela do T20 usa HTML por divs; quando ela renderiza tarde, tentamos de novo algumas vezes.
+      const tentativas = Number(win?.dataset?.arsenalTentativasDialogo ?? 0);
+      if (win?.dataset) win.dataset.arsenalTentativasDialogo = String(tentativas + 1);
+      if (tentativas < 8) {
+        setTimeout(() => t20MelhorarDialogoUsoMagia(app, win, data), 120);
+      } else {
+        console.warn("Arsenal T20 | AbilityUseDialog detectado, mas nenhuma linha de aprimoramento foi encontrada.", {
+          titulo: app?.title ?? app?.options?.title,
+          texto: t20ElementoTexto(form).slice(0, 500),
+        });
+      }
+      return;
     }
 
-    if (nome) {
-      nome.style.display = "block";
-      nome.style.padding = "2px 4px";
-      nome.style.lineHeight = "1.45";
-      nome.style.fontSize = "0.98em";
-      nome.style.color = "#111827";
-    }
+    form.style.maxHeight = "62vh";
+    form.style.overflowY = "auto";
+    form.style.paddingRight = "6px";
 
-    const baseBg = row.style.background;
-    const atualizarEstado = () => {
-      const checked = !!row.querySelector("input[type='checkbox']:checked");
-      const qtd = Array.from(row.querySelectorAll("input[type='number'], input:not([type])"))
-        .some(inp => Number(inp.value) > 0);
-      row.style.outline = (checked || qtd) ? "2px solid rgba(37,99,235,0.65)" : "none";
-      row.style.background = (checked || qtd)
-        ? "linear-gradient(180deg, rgba(219,234,254,0.55), rgba(191,219,254,0.35))"
-        : baseBg;
-    };
+    rows.forEach((row, index) => {
+      const filhos = Array.from(row.children ?? []);
+      let aplicar = filhos.find(ch => ch.querySelector?.('input[type="checkbox"], input[type="number"], button')) ?? row;
+      let nome = filhos.find(ch => ch !== aplicar && t20ElementoTexto(ch).length > 4) ?? row;
 
-    row.querySelectorAll("input, button, select").forEach(el => {
-      el.addEventListener("change", atualizarEstado);
-      el.addEventListener("click", () => setTimeout(atualizarEstado, 30));
-    });
-    atualizarEstado();
-  });
+      // Em linhas com controles e texto misturados no mesmo div, separa visualmente usando os elementos existentes.
+      if (aplicar === row && nome === row) {
+        const controls = Array.from(row.querySelectorAll('input[type="checkbox"], input[type="number"], button'));
+        if (controls.length) {
+          const controlWrap = document.createElement("div");
+          const textWrap = document.createElement("div");
+          controlWrap.className = "arsenal-t20-inline-controls";
+          textWrap.className = "arsenal-t20-inline-desc";
 
-  if (!root.querySelector(".arsenal-t20-magia-toolbar")) {
-    const toolbar = document.createElement("div");
-    toolbar.className = "arsenal-t20-magia-toolbar";
-    toolbar.style.display = "flex";
-    toolbar.style.gap = "8px";
-    toolbar.style.alignItems = "center";
-    toolbar.style.margin = "6px 0 10px";
-    toolbar.style.padding = "8px";
-    toolbar.style.border = "1px solid rgba(55,65,81,0.55)";
-    toolbar.style.borderRadius = "8px";
-    toolbar.style.background = "rgba(15,23,42,0.08)";
+          // Move controles para wrapper e deixa texto renderizado do próprio row no wrapper de descrição.
+          controls.forEach(c => controlWrap.appendChild(c));
+          const txt = t20ElementoTexto(row);
+          textWrap.textContent = txt.replace(/^[+\-]?\d+\s*PM\s*/i, "").trim();
 
-    toolbar.innerHTML = `
-      <input type="text" placeholder="Filtrar aprimoramentos..."
-        style="flex:1;padding:7px 9px;border-radius:6px;border:1px solid #9ca3af;background:rgba(255,255,255,0.8)">
-      <button type="button" data-action="limpar"
-        style="padding:7px 9px;border-radius:6px;border:1px solid #9ca3af;background:#f3f4f6;cursor:pointer">Limpar</button>
-    `;
+          row.innerHTML = "";
+          row.appendChild(controlWrap);
+          row.appendChild(textWrap);
+          aplicar = controlWrap;
+          nome = textWrap;
+        }
+      }
 
-    table.parentElement?.insertBefore(toolbar, table);
-
-    const filtro = toolbar.querySelector("input");
-    filtro?.addEventListener("input", () => {
-      const q = String(filtro.value ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      rows.forEach(row => {
-        const txt = String(row.innerText ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        row.style.display = !q || txt.includes(q) ? "grid" : "none";
-      });
-    });
-
-    toolbar.querySelector("[data-action='limpar']")?.addEventListener("click", () => {
-      filtro.value = "";
-      filtro.dispatchEvent(new Event("input", { bubbles: true }));
+      t20MelhorarLinhaAprimoramento(row, aplicar, nome, index);
     });
   }
 
-  root.querySelectorAll(".dialog-buttons button, button.dialog-button").forEach(btn => {
+  t20AplicarToolbarDialogoMagia(root, container, rows);
+
+  root.querySelectorAll(".dialog-buttons button, button.dialog-button, footer button").forEach(btn => {
     btn.style.minHeight = "38px";
     btn.style.fontWeight = "bold";
     btn.style.fontSize = "1em";
     btn.style.borderRadius = "7px";
   });
+
+  if (win?.dataset) win.dataset.arsenalDialogoMagia = "1";
+  if (root?.dataset) root.dataset.arsenalDialogoMagia = "1";
 }
 
-Hooks.on("renderDialog", (app, html) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html), 20));
-Hooks.on("renderAbilityUseDialog", (app, html) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html), 20));
-Hooks.on("renderApplication", (app, html) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html), 20));
-Hooks.on("renderApplicationV2", (app, html) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html), 20));
+Hooks.on("renderDialog", (app, html, data) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html, data), 20));
+Hooks.on("renderAbilityUseDialog", (app, html, data) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html, data), 20));
+Hooks.on("renderApplication", (app, html, data) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html, data), 20));
+Hooks.on("renderApplicationV2", (app, html, data) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html, data), 20));
 
 function t20ObservarDialogosMagia() {
   if (window._arsenalT20DialogoMagiaObserver) return;
