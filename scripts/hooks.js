@@ -162,6 +162,22 @@ Hooks.once("ready", () => {
     default: "cards",
   });
 
+  game.settings.register(MOD, "arsenalHudColorTheme", {
+    name: "Cor do Arsenal HUD",
+    hint: "Define a paleta visual do HUD para este usuário.",
+    scope: "client",
+    config: true,
+    type: String,
+    choices: {
+      darkGold: "Escuro/Dourado",
+      arcane: "Arcano/Roxo",
+      emerald: "Esmeralda",
+      crimson: "Carmesim",
+      steel: "Aço Azul"
+    },
+    default: "darkGold",
+  });
+
   game.settings.register(MOD, "arsenalHudSpellMode", {
     name: "Magias no Arsenal HUD",
     hint: "Define como magias aparecem no HUD. Grimório por círculo troca a lista de magias por cards de 1º a 5º círculo que abrem uma janela separada.",
@@ -4359,6 +4375,40 @@ function t20HudSpellMode() {
   }
 }
 
+function t20HudTheme() {
+  let key = "darkGold";
+  try { key = game.settings.get("arsenal-t20", "arsenalHudColorTheme") ?? "darkGold"; } catch {}
+
+  const temas = {
+    darkGold: {
+      bg1:"#111827", bg2:"#0b1020", panel:"#151c2b", panel2:"#182235",
+      border:"#374151", accent:"#c9a227", accent2:"#d9b85f",
+      text:"#e5e7eb", title:"#f2e6c9", muted:"#9ca3af"
+    },
+    arcane: {
+      bg1:"#161326", bg2:"#0d0a18", panel:"#21183a", panel2:"#2c2140",
+      border:"#514174", accent:"#a78bfa", accent2:"#c4b5fd",
+      text:"#ede9fe", title:"#f5f3ff", muted:"#b6a9d6"
+    },
+    emerald: {
+      bg1:"#0f211b", bg2:"#071510", panel:"#123126", panel2:"#164030",
+      border:"#2f5f4b", accent:"#34d399", accent2:"#86efac",
+      text:"#ecfdf5", title:"#d1fae5", muted:"#9ac7b5"
+    },
+    crimson: {
+      bg1:"#241014", bg2:"#14080b", panel:"#32141b", panel2:"#451923",
+      border:"#6f2c39", accent:"#f87171", accent2:"#fca5a5",
+      text:"#fff1f2", title:"#ffe4e6", muted:"#d6a5ab"
+    },
+    steel: {
+      bg1:"#101827", bg2:"#0b1220", panel:"#142033", panel2:"#1b2b43",
+      border:"#39506e", accent:"#60a5fa", accent2:"#93c5fd",
+      text:"#eff6ff", title:"#dbeafe", muted:"#9fb8d6"
+    },
+  };
+  return temas[key] ?? temas.darkGold;
+}
+
 function t20HudTokenSelecionado() {
   return canvas.tokens?.controlled?.[0] ?? null;
 }
@@ -4404,6 +4454,21 @@ function t20HudIsCollapsed() {
 function t20HudSetCollapsed(value) {
   try {
     localStorage.setItem(`arsenal-t20.hud.collapsed.${game.user?.id ?? "user"}`, value ? "1" : "0");
+  } catch {}
+}
+
+
+function t20HudSecaoRecolhida(cat) {
+  try {
+    return localStorage.getItem(`arsenal-t20.hud.sectionCollapsed.${game.user?.id ?? "user"}.${cat}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function t20HudSetSecaoRecolhida(cat, value) {
+  try {
+    localStorage.setItem(`arsenal-t20.hud.sectionCollapsed.${game.user?.id ?? "user"}.${cat}`, value ? "1" : "0");
   } catch {}
 }
 
@@ -4986,14 +5051,14 @@ class ArsenalHUD extends Application {
 
   _aplicarTamanho(el, modo) {
     const salvo = t20HudGetSavedSize(modo);
-    const defaults = modo === "bottom" ? { width: 640, height: 230 } : { width: 315, height: 390 };
+    const defaults = modo === "bottom" ? { width: 660, height: 250 } : { width: 330, height: 420 };
     const w = Number(salvo?.width) || defaults.width;
-    const h = t20HudIsCollapsed() ? 58 : (Number(salvo?.height) || defaults.height);
+    const h = t20HudIsCollapsed() ? 68 : (Number(salvo?.height) || defaults.height);
 
-    el.style.width = `${Math.max(245, Math.min(window.innerWidth - 24, w))}px`;
-    el.style.height = `${t20HudIsCollapsed() ? 58 : Math.max(165, Math.min(window.innerHeight - 32, h))}px`;
-    el.style.minWidth = "245px";
-    el.style.minHeight = "165px";
+    el.style.width = `${Math.max(260, Math.min(window.innerWidth - 24, w))}px`;
+    el.style.height = `${t20HudIsCollapsed() ? 68 : Math.max(180, Math.min(window.innerHeight - 32, h))}px`;
+    el.style.minWidth = "260px";
+    el.style.minHeight = t20HudIsCollapsed() ? "68px" : "180px";
     el.style.maxWidth = `${window.innerWidth - 12}px`;
     el.style.maxHeight = `${window.innerHeight - 12}px`;
     el.style.overflow = "hidden";
@@ -5059,31 +5124,34 @@ class ArsenalHUD extends Application {
     const layout = t20HudLayout();
     const collapsed = t20HudIsCollapsed();
     const personagemJogador = t20HudActorEhPersonagemJogador(actor);
+    const th = t20HudTheme();
 
     return `<div style="
       height:100%;box-sizing:border-box;display:flex;flex-direction:column;position:relative;
-      background:linear-gradient(180deg,#111827,#0b1020);
-      border:1px solid #374151;border-top:2px solid #c9a227;
+      background:linear-gradient(180deg,${th.bg1},${th.bg2});
+      border:1px solid ${th.border};border-top:2px solid ${th.accent};
       box-shadow:0 6px 14px rgba(0,0,0,0.38);
-      border-radius:8px;color:#e5e7eb;font-family:serif;padding:7px;font-size:14px">
-      <div class="t20-hud-drag" style="display:flex;align-items:center;gap:6px;margin-bottom:6px;border-bottom:1px solid rgba(201,162,39,0.18);padding-bottom:5px;cursor:${modo === "token" ? "default" : "move"};flex-shrink:0">
-        ${img ? `<img src="${img}" style="width:30px;height:30px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.38)">` : ""}
-        <div style="min-width:0;flex:1">
-          <div style="color:#f2e6c9;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.05">${nome}</div>
-          <div style="font-size:0.78em;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px">${recursos}</div>
+      border-radius:8px;color:${th.text};font-family:serif;padding:7px;font-size:14px">
+      <div class="t20-hud-drag" style="display:grid;grid-template-columns:auto 1fr auto;gap:7px;margin-bottom:6px;border-bottom:1px solid ${th.accent}44;padding-bottom:6px;cursor:${modo === "token" ? "default" : "move"};flex-shrink:0">
+        ${img ? `<img src="${img}" style="grid-row:1 / span 2;width:34px;height:34px;border-radius:6px;object-fit:cover;border:1px solid ${th.accent}66">` : ""}
+        <div style="min-width:0;align-self:end">
+          <div style="color:${th.title};font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.05">${nome}</div>
         </div>
+        <div style="display:flex;gap:4px;align-items:start;justify-content:flex-end">
+          <button class="t20-hud-refresh" title="Atualizar" style="${this._smallCtrl(th)}">↻</button>
+          <button class="t20-hud-minimize" title="${collapsed ? "Expandir HUD" : "Minimizar HUD"}" style="${this._smallCtrl(th)}">${collapsed ? "▣" : "—"}</button>
+        </div>
+        <div style="min-width:0;font-size:0.82em;color:${th.muted};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${recursos}</div>
         ${actor ? `
-          <div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end;max-width:48%;margin-right:3px">
-            <button class="t20-hud-action" title="Recuperar PM" data-action="recuperarPM" style="${this._iconBtn("#14213a","#60a5fa")}">🔷+</button>
-            <button class="t20-hud-action" title="Gastar PM" data-action="gastarPM" style="${this._iconBtn("#251b44","#a78bfa")}">🔷−</button>
+          <div style="display:flex;gap:4px;justify-content:flex-end;align-items:center">
+            <button class="t20-hud-action" title="Recuperar PM" data-action="recuperarPM" style="${this._iconBtn("#14213a","#60a5fa")}">PM+</button>
+            <button class="t20-hud-action" title="Gastar PM" data-action="gastarPM" style="${this._iconBtn("#251b44","#a78bfa")}">PM−</button>
             <button class="t20-hud-action" title="Dano manual" data-action="dano" style="${this._iconBtn("#3b151b","#f87171")}">💔</button>
             <button class="t20-hud-action" title="Cura manual" data-action="cura" style="${this._iconBtn("#14351f","#4ade80")}">💚</button>
           </div>` : ""}
-        <button class="t20-hud-refresh" title="Atualizar" style="padding:2px 5px;border-radius:5px;background:#1f2937;border:1px solid #4b5563;color:#fff;cursor:pointer;font-size:13px">↻</button>
-        <button class="t20-hud-minimize" title="${collapsed ? "Expandir HUD" : "Minimizar HUD"}" style="padding:2px 6px;border-radius:5px;background:#1f2937;border:1px solid #4b5563;color:#fff;cursor:pointer;font-size:13px">${collapsed ? "▣" : "—"}</button>
       </div>
 
-      ${collapsed ? "" : (!actor ? `<div style="color:#9ca3af;padding:6px">Selecione um token para usar o HUD.</div>` : `
+      ${collapsed ? "" : (!actor ? `<div style="color:${th.muted};padding:6px">Selecione um token para usar o HUD.</div>` : `
         <div style="${bottom ? "display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:7px;overflow:auto;min-height:0;flex:1;padding-right:2px" : "overflow:auto;min-height:0;flex:1;padding-right:2px"}">
           ${this._renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador, layout, actor)}
         </div>
@@ -5096,14 +5164,14 @@ class ArsenalHUD extends Application {
           <button class="t20-hud-action" data-action="limparCondicoes" style="${this._textBtn("#2d1b1b","#fca5a5")}">🧹 Limpar Cond.</button>
         </div>
 
-        <div style="margin-top:5px;font-size:0.78em;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;padding-right:12px">
+        <div style="margin-top:5px;font-size:0.78em;color:${th.muted};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;padding-right:12px">
           ${personagemJogador ? "Grimório + habilidades/poderes ativáveis + favoritos. Use ▲▼ para reordenar." : "NPC: ataques e habilidades. Use ▲▼ para reordenar."}
-          ${sustentadas.length ? ` · Sust.: <b style="color:#f2e6c9">${sustentadas.map(s => s.nome ?? s.name ?? s.label).join(", ")}</b>` : ""}
+          ${sustentadas.length ? ` · Sust.: <b style="color:${th.title}">${sustentadas.map(s => s.nome ?? s.name ?? s.label).join(", ")}</b>` : ""}
         </div>
       `)}
       <div class="t20-hud-resize" title="Redimensionar"
         style="position:absolute;right:2px;bottom:2px;width:14px;height:14px;cursor:nwse-resize;
-          border-right:2px solid rgba(201,162,39,0.75);border-bottom:2px solid rgba(201,162,39,0.75);
+          border-right:2px solid ${th.accent};border-bottom:2px solid ${th.accent};
           opacity:0.9"></div>
     </div>`;
   }
@@ -5128,52 +5196,59 @@ class ArsenalHUD extends Application {
       .join("");
   }
 
+  _secaoHeader(titulo, cat, qtd = null) {
+    const th = t20HudTheme();
+    const recolhida = t20HudSecaoRecolhida(cat);
+    return `<div style="display:flex;align-items:center;gap:4px;margin:3px 0 5px">
+      <button class="t20-hud-sec-toggle" data-cat="${cat}" title="${recolhida ? "Expandir" : "Recolher"}"
+        style="padding:1px 6px;border-radius:4px;background:${th.panel};border:1px solid ${th.border};color:${th.accent2};cursor:pointer;font-size:0.78em">${recolhida ? "▸" : "▾"}</button>
+      <div style="font-size:0.92em;color:${th.accent2};font-weight:bold;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${titulo}${qtd !== null ? ` <span style="font-size:0.82em;color:${th.muted}">(${qtd})</span>` : ""}</div>
+      <button class="t20-hud-cat-move" data-cat="${cat}" data-dir="-1" title="Mover categoria para cima/esquerda"
+        style="padding:1px 5px;border-radius:4px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-size:0.78em">▲</button>
+      <button class="t20-hud-cat-move" data-cat="${cat}" data-dir="1" title="Mover categoria para baixo/direita"
+        style="padding:1px 5px;border-radius:4px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-size:0.78em">▼</button>
+    </div>`;
+  }
+
   _secaoGrimorio(actor, bottom, layout = "compact") {
     const grupos = t20HudMagiasPorCirculo(actor);
     const cards = layout === "cards";
     const circulos = [1, 2, 3, 4, 5];
+    const total = circulos.reduce((s, c) => s + (grupos[c]?.length ?? 0), 0);
+    const recolhida = t20HudSecaoRecolhida("magias");
+    const th = t20HudTheme();
 
     return `<div style="${bottom ? "min-width:0" : "margin-bottom:9px"}">
-      <div style="display:flex;align-items:center;gap:4px;margin:3px 0 5px">
-        <div style="font-size:0.92em;color:#d9b85f;font-weight:bold;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🪄 Grimório</div>
-        <button class="t20-hud-cat-move" data-cat="magias" data-dir="-1" title="Mover categoria para cima/esquerda"
-          style="padding:1px 5px;border-radius:4px;background:#1f2937;border:1px solid #4b5563;color:#cbd5e1;cursor:pointer;font-size:0.78em">▲</button>
-        <button class="t20-hud-cat-move" data-cat="magias" data-dir="1" title="Mover categoria para baixo/direita"
-          style="padding:1px 5px;border-radius:4px;background:#1f2937;border:1px solid #4b5563;color:#cbd5e1;cursor:pointer;font-size:0.78em">▼</button>
-      </div>
-      <div style="display:grid;grid-template-columns:${cards ? "repeat(auto-fit,minmax(118px,1fr))" : "repeat(auto-fit,minmax(92px,1fr))"};gap:6px">
+      ${this._secaoHeader("🪄 Grimório", "magias", total)}
+      ${recolhida ? "" : `<div style="display:grid;grid-template-columns:${cards ? "repeat(auto-fit,minmax(118px,1fr))" : "repeat(auto-fit,minmax(92px,1fr))"};gap:6px">
         ${circulos.map(c => {
           const qtd = grupos[c]?.length ?? 0;
           const disabled = qtd <= 0;
           return `<button class="t20-hud-grimorio-circulo" data-circulo="${c}" ${disabled ? "disabled" : ""}
             style="min-height:${cards ? "54px" : "42px"};padding:7px;border-radius:8px;
-            background:${disabled ? "#111827" : "linear-gradient(180deg,#2c2140,#171226)"};
-            border:1px solid ${disabled ? "#273142" : "#8b5cf6"};color:${disabled ? "#6b7280" : "#ddd6fe"};
+            background:${disabled ? th.panel : `linear-gradient(180deg,${th.panel2},${th.panel})`};
+            border:1px solid ${disabled ? th.border : th.accent};color:${disabled ? th.muted : th.text};
             cursor:${disabled ? "not-allowed" : "pointer"};font-weight:bold;text-align:center;font-size:${cards ? "0.92em" : "0.86em"};
             box-shadow:${disabled ? "none" : "inset 0 1px 0 rgba(255,255,255,0.05)"}">
             <div>${c}º Círculo</div>
-            <div style="font-size:0.78em;color:${disabled ? "#4b5563" : "#c4b5fd"}">${qtd} magia(s)</div>
+            <div style="font-size:0.78em;color:${disabled ? th.muted : th.accent2}">${qtd} magia(s)</div>
           </button>`;
         }).join("")}
-      </div>
+      </div>`}
     </div>`;
   }
 
   _secao(titulo, itens, bottom, tipo = "item", cat = "", layout = "compact") {
     const maxItens = 80;
     const lista = (itens ?? []).slice(0, maxItens);
-    const vazio = !lista.length ? `<div style="font-size:0.86em;color:#6b7280;padding:4px 2px">Nenhum</div>` : "";
+    const vazio = !lista.length ? `<div style="font-size:0.86em;color:${t20HudTheme().muted};padding:4px 2px">Nenhum</div>` : "";
     const cards = layout === "cards";
+    const th = t20HudTheme();
+    const recolhida = t20HudSecaoRecolhida(cat);
 
     return `<div style="${bottom ? "min-width:0" : "margin-bottom:9px"}">
-      <div style="display:flex;align-items:center;gap:4px;margin:3px 0 5px">
-        <div style="font-size:0.92em;color:#d9b85f;font-weight:bold;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${titulo}</div>
-        <button class="t20-hud-cat-move" data-cat="${cat}" data-dir="-1" title="Mover categoria para cima/esquerda"
-          style="padding:1px 5px;border-radius:4px;background:#1f2937;border:1px solid #4b5563;color:#cbd5e1;cursor:pointer;font-size:0.78em">▲</button>
-        <button class="t20-hud-cat-move" data-cat="${cat}" data-dir="1" title="Mover categoria para baixo/direita"
-          style="padding:1px 5px;border-radius:4px;background:#1f2937;border:1px solid #4b5563;color:#cbd5e1;cursor:pointer;font-size:0.78em">▼</button>
-      </div>
-      ${vazio}
+      ${this._secaoHeader(titulo, cat, lista.length)}
+      ${recolhida ? "" : `${vazio}
       <div style="${cards ? "display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:6px" : ""}">
         ${lista.map(item => {
           const id = tipo === "pericia" ? item.id : item.id;
@@ -5184,9 +5259,9 @@ class ArsenalHUD extends Application {
             return `<button class="${tipo === "pericia" ? "t20-hud-pericia" : "t20-hud-item"}"
               data-${tipo === "pericia" ? "pericia-id" : "item-id"}="${id}" title="${label}"
               style="display:flex;align-items:center;gap:7px;width:100%;min-height:42px;padding:7px;margin:0;border-radius:8px;
-              background:linear-gradient(180deg,#182235,#111827);border:1px solid #374151;color:#e5e7eb;cursor:pointer;
+              background:linear-gradient(180deg,${th.panel2},${th.panel});border:1px solid ${th.border};color:${th.text};cursor:pointer;
               font-size:0.92em;text-align:left;min-width:0;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04)">
-              ${img ? `<img src="${img}" style="width:26px;height:26px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.35)">` : `<span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:#0f172a">${tipo === "pericia" ? "🎲" : "•"}</span>`}
+              ${img ? `<img src="${img}" style="width:26px;height:26px;border-radius:5px;object-fit:cover;border:1px solid ${th.accent}55">` : `<span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:${th.bg2}">${tipo === "pericia" ? "🎲" : "•"}</span>`}
               <span style="white-space:normal;overflow:hidden;text-overflow:ellipsis;line-height:1.12">${label}</span>
             </button>`;
           }
@@ -5194,23 +5269,25 @@ class ArsenalHUD extends Application {
           return `<button class="${tipo === "pericia" ? "t20-hud-pericia" : "t20-hud-item"}"
             data-${tipo === "pericia" ? "pericia-id" : "item-id"}="${id}" title="${label}"
             style="display:flex;align-items:center;gap:6px;width:100%;padding:6px 7px;margin-bottom:4px;border-radius:6px;
-            background:#151c2b;border:1px solid #303b52;color:#e5e7eb;cursor:pointer;font-size:0.9em;text-align:left;min-width:0">
+            background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-size:0.9em;text-align:left;min-width:0">
             ${img ? `<img src="${img}" style="width:20px;height:20px;border-radius:4px;object-fit:cover;border:none">` : `<span style="width:20px;text-align:center">${tipo === "pericia" ? "🎲" : "•"}</span>`}
             <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</span>
           </button>`;
         }).join("")}
-      </div>
+      </div>`}
     </div>`;
   }
-
 
   _textBtn(bg, fg) {
     return `padding:4px 6px;border-radius:5px;background:${bg};border:1px solid ${fg};color:${fg};font-weight:bold;cursor:pointer;font-size:0.84em;line-height:1.1`;
   }
 
+  _smallCtrl(th) {
+    return `padding:2px 6px;border-radius:5px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-size:13px`;
+  }
 
   _iconBtn(bg, fg) {
-    return `min-width:28px;height:25px;padding:2px 5px;border-radius:5px;background:${bg};border:1px solid ${fg};color:${fg};font-weight:bold;cursor:pointer;font-size:0.82em;line-height:1`;
+    return `min-width:34px;height:25px;padding:2px 5px;border-radius:5px;background:${bg};border:1px solid ${fg};color:${fg};font-weight:bold;cursor:pointer;font-size:0.76em;line-height:1`;
   }
 
   _iniciarArraste(html) {
@@ -5270,8 +5347,8 @@ class ArsenalHUD extends Application {
 
     const move = ev => {
       if (!resizing) return;
-      const w = Math.max(210, Math.min(window.innerWidth - root.getBoundingClientRect().left - 8, startW + ev.clientX - startX));
-      const h = Math.max(135, Math.min(window.innerHeight - root.getBoundingClientRect().top - 8, startH + ev.clientY - startY));
+      const w = Math.max(260, Math.min(window.innerWidth - root.getBoundingClientRect().left - 8, startW + ev.clientX - startX));
+      const h = Math.max(180, Math.min(window.innerHeight - root.getBoundingClientRect().top - 8, startH + ev.clientY - startY));
       root.style.width = `${w}px`;
       root.style.height = `${h}px`;
     };
@@ -5314,6 +5391,14 @@ class ArsenalHUD extends Application {
       ev.preventDefault();
       ev.stopPropagation();
       t20HudSetCollapsed(!t20HudIsCollapsed());
+      this.render(false);
+    });
+
+    html.find(".t20-hud-sec-toggle").on("click", ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const cat = ev.currentTarget.dataset.cat;
+      t20HudSetSecaoRecolhida(cat, !t20HudSecaoRecolhida(cat));
       this.render(false);
     });
 
@@ -5420,9 +5505,21 @@ function t20DialogoMagiaAtivo() {
 }
 
 function t20EhDialogoUsoMagia(app, root) {
-  const titulo = String(app?.title ?? app?.options?.title ?? root?.querySelector?.(".window-title")?.textContent ?? "");
+  const win = root?.closest?.(".window-app, .app") ?? root;
+  const titulo = [
+    app?.title,
+    app?.options?.title,
+    win?.querySelector?.(".window-title")?.textContent,
+    root?.querySelector?.(".window-title")?.textContent,
+  ].filter(Boolean).join(" ");
+
   if (/configura[cç][aã]o de uso de magia/i.test(titulo)) return true;
-  if (/uso de magia/i.test(titulo) && root?.querySelector?.("table")) return true;
+  if (/uso de magia/i.test(titulo) && (win?.querySelector?.("table") || root?.querySelector?.("table"))) return true;
+
+  const table = win?.querySelector?.("table") ?? root?.querySelector?.("table");
+  const header = String(table?.querySelector?.("thead")?.innerText ?? table?.querySelector?.("tr")?.innerText ?? "");
+  if (/Aplicar/i.test(header) && /Nome/i.test(header) && /PM/i.test(String(table?.innerText ?? ""))) return true;
+
   return false;
 }
 
@@ -5617,6 +5714,34 @@ function t20MelhorarDialogoUsoMagia(app, html) {
 
 Hooks.on("renderDialog", (app, html) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html), 20));
 Hooks.on("renderApplication", (app, html) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html), 20));
+Hooks.on("renderApplicationV2", (app, html) => setTimeout(() => t20MelhorarDialogoUsoMagia(app, html), 20));
+
+function t20ObservarDialogosMagia() {
+  if (window._arsenalT20DialogoMagiaObserver) return;
+
+  const tentarAplicar = () => {
+    if (!t20DialogoMagiaAtivo()) return;
+    document.querySelectorAll(".window-app, .app").forEach(win => {
+      try {
+        if (win.dataset?.arsenalDialogoMagia === "1") return;
+        if (!t20EhDialogoUsoMagia(null, win)) return;
+        t20MelhorarDialogoUsoMagia(null, win);
+      } catch (e) {
+        console.warn("Arsenal T20 | erro no observador de diálogo de magia", e);
+      }
+    });
+  };
+
+  window._arsenalT20DialogoMagiaObserver = new MutationObserver(() => {
+    clearTimeout(window._arsenalT20DialogoMagiaObserverTimer);
+    window._arsenalT20DialogoMagiaObserverTimer = setTimeout(tentarAplicar, 60);
+  });
+
+  window._arsenalT20DialogoMagiaObserver.observe(document.body, { childList: true, subtree: true });
+  setInterval(tentarAplicar, 1500);
+}
+
+Hooks.once("ready", () => setTimeout(t20ObservarDialogosMagia, 1000));
 
 
 // ── Card de controle de PM ───────────────────────────────────
