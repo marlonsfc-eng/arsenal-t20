@@ -4342,6 +4342,41 @@ function t20HudSetSavedSize(modo, size) {
   try { localStorage.setItem(t20HudStorageKey(modo, "size"), JSON.stringify(size)); } catch {}
 }
 
+const T20_HUD_CATEGORIAS_PADRAO = ["ataques", "magias", "poderes", "pericias"];
+
+function t20HudGetCategoryOrder() {
+  try {
+    const raw = localStorage.getItem(`arsenal-t20.hud.categoryOrder.${game.user?.id ?? "user"}`);
+    const arr = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(arr)) {
+      const validas = arr.filter(x => T20_HUD_CATEGORIAS_PADRAO.includes(x));
+      for (const c of T20_HUD_CATEGORIAS_PADRAO) if (!validas.includes(c)) validas.push(c);
+      return validas;
+    }
+  } catch {}
+  return [...T20_HUD_CATEGORIAS_PADRAO];
+}
+
+function t20HudSetCategoryOrder(order) {
+  try {
+    const validas = (order ?? []).filter(x => T20_HUD_CATEGORIAS_PADRAO.includes(x));
+    for (const c of T20_HUD_CATEGORIAS_PADRAO) if (!validas.includes(c)) validas.push(c);
+    localStorage.setItem(`arsenal-t20.hud.categoryOrder.${game.user?.id ?? "user"}`, JSON.stringify(validas));
+  } catch {}
+}
+
+function t20HudMoverCategoria(cat, dir) {
+  const order = t20HudGetCategoryOrder();
+  const i = order.indexOf(cat);
+  if (i < 0) return;
+  const j = i + dir;
+  if (j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  t20HudSetCategoryOrder(order);
+  atualizarArsenalHUD();
+}
+
+
 function t20HudItemTexto(item) {
   return [
     item.type, item.name,
@@ -4776,30 +4811,30 @@ class ArsenalHUD extends Application {
           <div style="color:#f2e6c9;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nome}</div>
         </div>
         ${actor ? `
-          <div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end;max-width:55%;margin-right:3px">
-            <button class="t20-hud-action" title="Condições" data-action="condicoes" style="${this._iconBtn("#3a2a00","#c9a227")}">☠️</button>
-            <button class="t20-hud-action" title="Recursos" data-action="recursos" style="${this._iconBtn("#10223a","#93c5fd")}">📊</button>
-            <button class="t20-hud-action" title="Sustentadas" data-action="sustentadas" style="${this._iconBtn("#2c2140","#c4b5fd")}">🪄</button>
-            <button class="t20-hud-action" title="Aura" data-action="aura" style="${this._iconBtn("#10231f","#2dd4bf")}">🛡️</button>
-            <button class="t20-hud-action" title="Gastar PM" data-action="gastarPM" style="${this._iconBtn("#251b44","#a78bfa")}">🔷−</button>
+          <div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end;max-width:48%;margin-right:3px">
             <button class="t20-hud-action" title="Recuperar PM" data-action="recuperarPM" style="${this._iconBtn("#14213a","#60a5fa")}">🔷+</button>
+            <button class="t20-hud-action" title="Gastar PM" data-action="gastarPM" style="${this._iconBtn("#251b44","#a78bfa")}">🔷−</button>
             <button class="t20-hud-action" title="Dano manual" data-action="dano" style="${this._iconBtn("#3b151b","#f87171")}">💔</button>
             <button class="t20-hud-action" title="Cura manual" data-action="cura" style="${this._iconBtn("#14351f","#4ade80")}">💚</button>
-            <button class="t20-hud-action" title="Limpar condições" data-action="limparCondicoes" style="${this._iconBtn("#2d1b1b","#fca5a5")}">🧹</button>
           </div>` : ""}
         <button class="t20-hud-refresh" title="Atualizar" style="padding:2px 5px;border-radius:5px;background:#1f2937;border:1px solid #4b5563;color:#fff;cursor:pointer;font-size:11px">↻</button>
       </div>
 
       ${!actor ? `<div style="color:#9ca3af;padding:6px">Selecione um token para usar o HUD.</div>` : `
         <div style="${bottom ? "display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;overflow:auto;min-height:0;flex:1;padding-right:2px" : "overflow:auto;min-height:0;flex:1;padding-right:2px"}">
-          ${this._secao("⚔️ Ataques", grupos.ataques, bottom, "item")}
-          ${this._secao("🪄 Magias", grupos.magias, bottom, "item")}
-          ${this._secao("✨ Poderes", grupos.poderes, bottom, "item")}
-          ${personagemJogador ? this._secao("🎲 Perícias treinadas", pericias, bottom, "pericia") : ""}
+          ${this._renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador)}
+        </div>
+
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:6px;flex-shrink:0;padding-right:12px">
+          <button class="t20-hud-action" data-action="condicoes" style="${this._textBtn("#3a2a00","#c9a227")}">☠️ Condições</button>
+          <button class="t20-hud-action" data-action="recursos" style="${this._textBtn("#10223a","#93c5fd")}">📊 Recursos</button>
+          <button class="t20-hud-action" data-action="sustentadas" style="${this._textBtn("#2c2140","#c4b5fd")}">🪄 Sustentadas</button>
+          <button class="t20-hud-action" data-action="aura" style="${this._textBtn("#10231f","#2dd4bf")}">🛡️ Aura</button>
+          <button class="t20-hud-action" data-action="limparCondicoes" style="${this._textBtn("#2d1b1b","#fca5a5")}">🧹 Limpar Cond.</button>
         </div>
 
         <div style="margin-top:5px;font-size:0.72em;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;padding-right:12px">
-          ${personagemJogador ? "Favoritos da ficha + perícias treinadas." : "NPC: ataques e habilidades."}
+          ${personagemJogador ? "Favoritos da ficha + perícias treinadas. Use ▲▼ para reordenar." : "NPC: ataques e habilidades. Use ▲▼ para reordenar."}
           ${sustentadas.length ? ` · Sust.: <b style="color:#f2e6c9">${sustentadas.map(s => s.nome ?? s.name ?? s.label).join(", ")}</b>` : ""}
         </div>
       `}
@@ -4810,13 +4845,33 @@ class ArsenalHUD extends Application {
     </div>`;
   }
 
-  _secao(titulo, itens, bottom, tipo = "item") {
+  _renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador) {
+    const defs = {
+      ataques:  { titulo: "⚔️ Ataques", itens: grupos.ataques, tipo: "item" },
+      magias:   { titulo: "🪄 Magias", itens: grupos.magias, tipo: "item" },
+      poderes:  { titulo: "✨ Poderes", itens: grupos.poderes, tipo: "item" },
+      pericias: { titulo: "🎲 Perícias treinadas", itens: personagemJogador ? pericias : [], tipo: "pericia" },
+    };
+
+    return t20HudGetCategoryOrder()
+      .filter(cat => cat !== "pericias" || personagemJogador)
+      .map(cat => this._secao(defs[cat].titulo, defs[cat].itens, bottom, defs[cat].tipo, cat))
+      .join("");
+  }
+
+  _secao(titulo, itens, bottom, tipo = "item", cat = "") {
     const maxItens = 80;
     const lista = (itens ?? []).slice(0, maxItens);
     const vazio = !lista.length ? `<div style="font-size:0.75em;color:#6b7280;padding:3px 2px">Nenhum</div>` : "";
 
     return `<div style="${bottom ? "min-width:0" : "margin-bottom:7px"}">
-      <div style="font-size:0.78em;color:#d9b85f;font-weight:bold;margin:2px 0 3px">${titulo}</div>
+      <div style="display:flex;align-items:center;gap:3px;margin:2px 0 3px">
+        <div style="font-size:0.78em;color:#d9b85f;font-weight:bold;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${titulo}</div>
+        <button class="t20-hud-cat-move" data-cat="${cat}" data-dir="-1" title="Mover categoria para cima/esquerda"
+          style="padding:0 4px;border-radius:4px;background:#1f2937;border:1px solid #4b5563;color:#cbd5e1;cursor:pointer;font-size:0.68em">▲</button>
+        <button class="t20-hud-cat-move" data-cat="${cat}" data-dir="1" title="Mover categoria para baixo/direita"
+          style="padding:0 4px;border-radius:4px;background:#1f2937;border:1px solid #4b5563;color:#cbd5e1;cursor:pointer;font-size:0.68em">▼</button>
+      </div>
       ${vazio}
       ${lista.map(item => {
         const id = tipo === "pericia" ? item.id : item.id;
@@ -4832,6 +4887,11 @@ class ArsenalHUD extends Application {
       }).join("")}
     </div>`;
   }
+
+  _textBtn(bg, fg) {
+    return `padding:4px 6px;border-radius:5px;background:${bg};border:1px solid ${fg};color:${fg};font-weight:bold;cursor:pointer;font-size:0.74em;line-height:1.05`;
+  }
+
 
   _iconBtn(bg, fg) {
     return `min-width:23px;height:21px;padding:1px 4px;border-radius:5px;background:${bg};border:1px solid ${fg};color:${fg};font-weight:bold;cursor:pointer;font-size:0.72em;line-height:1`;
@@ -4933,6 +4993,12 @@ class ArsenalHUD extends Application {
     this._iniciarResize();
 
     html.find(".t20-hud-refresh").on("click", () => this.render(false));
+
+    html.find(".t20-hud-cat-move").on("click", ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      t20HudMoverCategoria(ev.currentTarget.dataset.cat, parseInt(ev.currentTarget.dataset.dir) || 0);
+    });
 
     html.find(".t20-hud-item").on("click", async ev => {
       const actor = t20HudActorSelecionado();
