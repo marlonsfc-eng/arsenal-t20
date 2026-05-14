@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.1.1 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.1.2 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -5496,6 +5496,28 @@ class ArsenalConjurarMagiaDialog extends Application {
     return $(div);
   }
 
+  _infoChip(label, valor, th) {
+    if (!valor) return "";
+    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;background:${th.panel};border:1px solid ${th.border};font-size:0.82em;color:${th.text}">
+      <strong style="color:${th.muted};font-weight:700">${label}</strong>
+      <span>${valor}</span>
+    </span>`;
+  }
+
+  _renderInfoBasica(th) {
+    const info = t20HudGrimorioInfoMagia(this.item, t20HudExtrairCirculoMagia(this.item));
+    const chips = [
+      this._infoChip("Exec.", info.execucao, th),
+      this._infoChip("Alc.", info.alcance, th),
+      this._infoChip("Dur.", info.duracao, th),
+      this._infoChip("Res.", info.resistencia, th),
+      this._infoChip("Alvo", info.alvo, th),
+      this._infoChip("Escola", info.escola, th),
+    ].filter(Boolean).join("");
+    if (!chips) return "";
+    return `<div style="display:flex;flex-wrap:wrap;gap:6px;margin:-2px 0 9px;padding:7px 8px;border-radius:8px;background:${th.panel2}99;border:1px solid ${th.border};">${chips}</div>`;
+  }
+
   _html() {
     const th = t20HudTheme();
     const apr = this._aprimoramentos();
@@ -5769,40 +5791,101 @@ function t20HudGrimorioCampoDescricao(item, nomeCampo) {
     texto = String(bruto).replace(/<[^>]+>/g, " ");
   }
   texto = texto.replace(/\s+/g, " ").trim();
-  const re = new RegExp(`${nomeCampo}\\s*:\\s*([^:]+?)(?=\\s+(?:Execu[cç][aã]o|Alcance|Alvo|[ÁA]rea|Efeito|Dura[cç][aã]o|Resist[eê]ncia|Fonte)\\s*:|$)`, "i");
-  const m = texto.match(re);
+  const campos = "Execu[cç][aã]o|Alcance|Alvo|[ÁA]rea|Efeito|Dura[cç][aã]o|Resist[eê]ncia|Fonte";
+  let re = new RegExp(`${nomeCampo}\\s*:\\s*([^:]+?)(?=\\s+(?:${campos})\\s*:|$)`, "i");
+  let m = texto.match(re);
+  if (!m) {
+    // Alguns cards/fichas exibem "Duração Sustentada" sem dois-pontos.
+    re = new RegExp(`${nomeCampo}\\s+([^:]+?)(?=\\s+(?:${campos})(?:\\s*:|\\s+)|$)`, "i");
+    m = texto.match(re);
+  }
   return m?.[1]?.trim() ?? "";
+}
+
+function t20HudGrimorioTraduzirDuracao(raw) {
+  const val = String(raw ?? "").trim();
+  if (!val) return "";
+  const low = val.toLowerCase();
+  const mapa = {
+    instantaneous: "Instantânea", instantanea: "Instantânea", "instantânea": "Instantânea",
+    scene: "Cena", cena: "Cena",
+    round: "Rodada", rodada: "Rodada",
+    sustained: "Sustentada", sustentada: "Sustentada",
+    permanent: "Permanente", permanente: "Permanente",
+    day: "Dia", dia: "Dia", days: "Dias", dias: "Dias",
+    hour: "Hora", hora: "Hora", hours: "Horas", horas: "Horas",
+    minute: "Minuto", minuto: "Minuto", minutes: "Minutos", minutos: "Minutos"
+  };
+  return mapa[low] ?? val;
+}
+
+function t20HudGrimorioDuracaoDeObjeto(obj, depth = 0) {
+  if (!obj || typeof obj !== "object" || depth > 5) return "";
+  const unitKeys = ["label", "name", "nome", "txt", "texto", "text", "tipo", "type", "unit", "unidade", "duration", "duracao", "duração"];
+  const valueKeys = ["value", "valor", "qtd", "quantity", "quantidade", "amount"];
+  let label = "";
+  for (const k of unitKeys) {
+    const v = obj?.[k];
+    if (typeof v === "string" && v.trim() && v.trim() !== "0") {
+      label = v.trim();
+      break;
+    }
+  }
+  let valRaw;
+  for (const k of valueKeys) {
+    if (obj?.[k] !== undefined && obj?.[k] !== null && obj?.[k] !== "") {
+      valRaw = obj[k];
+      break;
+    }
+  }
+  if (label) {
+    const traduzida = t20HudGrimorioTraduzirDuracao(label);
+    if (valRaw !== undefined && valRaw !== null && String(valRaw) !== "0" && !/^instant/i.test(String(label))) return `${valRaw} ${traduzida}`;
+    return traduzida;
+  }
+  for (const [k, v] of Object.entries(obj)) {
+    const key = String(k).toLowerCase();
+    if (/dur|duration/.test(key)) {
+      if (typeof v === "string" && v.trim()) return t20HudGrimorioTraduzirDuracao(v);
+      if (typeof v === "number" && v > 0) return String(v);
+      const nested = t20HudGrimorioDuracaoDeObjeto(v, depth + 1);
+      if (nested) return nested;
+    }
+  }
+  return "";
+}
+
+function t20HudGrimorioBuscarDuracaoProfunda(item) {
+  const candidatos = [
+    item?.system?.duracao,
+    item?.system?.duration,
+    item?.system?.details?.duracao,
+    item?.system?.details?.duration,
+    item?.system?.traits?.duration,
+    item?.system?.magia?.duracao,
+    item?.system?.spell?.duration,
+  ];
+  for (const c of candidatos) {
+    if (typeof c === "string" && c.trim() && c.trim() !== "0") return t20HudGrimorioTraduzirDuracao(c);
+    if (c && typeof c === "object") {
+      const r = t20HudGrimorioDuracaoDeObjeto(c);
+      if (r) return r;
+    }
+  }
+  const r = t20HudGrimorioDuracaoDeObjeto(item?.system ?? {});
+  return r || "";
 }
 
 function t20HudGrimorioDuracao(item) {
   const daDescricao = t20HudGrimorioCampoDescricao(item, "Dura[cç][aã]o");
-  if (daDescricao && daDescricao !== "0") return daDescricao;
-  const d = item?.system?.duracao ?? item?.system?.duration;
-  if (d && typeof d === "object") {
-    const label = t20HudGrimorioPrimeiroTexto(d.label, d.name, d.nome, d.txt, d.texto, d.text, d.tipo, d.type, d.unit, d.unidade);
-    const valRaw = d.value ?? d.valor ?? d.qtd ?? d.quantity ?? d.quantidade;
-    if (label && label !== "0") {
-      if (valRaw && String(valRaw) !== "0" && !String(label).match(/^instant/i)) return `${valRaw} ${label}`;
-      return t20HudGrimorioTraduzirCodigo(label, {
-        instantaneous: "Instantânea", instantanea: "Instantânea", "instantânea": "Instantânea",
-        scene: "Cena", cena: "Cena", round: "Rodada", rodada: "Rodada",
-        sustained: "Sustentada", sustentada: "Sustentada", permanent: "Permanente", permanente: "Permanente"
-      });
-    }
-    if (valRaw !== undefined && valRaw !== null) {
-      const n = Number(valRaw);
-      if (Number.isFinite(n) && n === 0) return "Instantânea";
-      return String(valRaw);
-    }
-  }
-  const raw = t20HudGrimorioValor(d);
-  if (!raw) return "";
-  if (String(raw).trim() === "0") return "Instantânea";
-  return t20HudGrimorioTraduzirCodigo(raw, {
-    instantaneous: "Instantânea", instantanea: "Instantânea", "instantânea": "Instantânea",
-    scene: "Cena", cena: "Cena", round: "Rodada", rodada: "Rodada",
-    sustained: "Sustentada", sustentada: "Sustentada", permanent: "Permanente", permanente: "Permanente"
-  });
+  if (daDescricao && daDescricao !== "0") return t20HudGrimorioTraduzirDuracao(daDescricao);
+
+  const profunda = t20HudGrimorioBuscarDuracaoProfunda(item);
+  if (profunda && profunda !== "0") return profunda;
+
+  // Não assumir "Instantânea" quando o sistema só entrega value: 0 sem unidade.
+  // Isso estava marcando muitas magias erradas como instantâneas.
+  return "";
 }
 
 function t20HudGrimorioDescricaoCompleta(item) {
