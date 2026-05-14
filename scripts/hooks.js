@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.1.0 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.1.1 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -4209,6 +4209,28 @@ class ArsenalRecursosPanel extends Application {
     return $(div);
   }
 
+  _infoChip(label, valor, th) {
+    if (!valor) return "";
+    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;background:${th.panel};border:1px solid ${th.border};font-size:0.82em;color:${th.text}">
+      <strong style="color:${th.muted};font-weight:700">${label}</strong>
+      <span>${valor}</span>
+    </span>`;
+  }
+
+  _renderInfoBasica(th) {
+    const info = t20HudGrimorioInfoMagia(this.item, t20HudExtrairCirculoMagia(this.item));
+    const chips = [
+      this._infoChip("Exec.", info.execucao, th),
+      this._infoChip("Alc.", info.alcance, th),
+      this._infoChip("Dur.", info.duracao, th),
+      this._infoChip("Res.", info.resistencia, th),
+      this._infoChip("Alvo", info.alvo, th),
+      this._infoChip("Escola", info.escola, th),
+    ].filter(Boolean).join("");
+    if (!chips) return "";
+    return `<div style="display:flex;flex-wrap:wrap;gap:6px;margin:-2px 0 9px;padding:7px 8px;border-radius:8px;background:${th.panel2}99;border:1px solid ${th.border};">${chips}</div>`;
+  }
+
   _html() {
     const entradas = t20RecursosLogGM;
     const modo = t20ResourceMonitorMode();
@@ -5501,6 +5523,8 @@ class ArsenalConjurarMagiaDialog extends Application {
         </div>
       </div>
 
+      ${this._renderInfoBasica(th)}
+
       ${this.mostrarDescricao ? `<div style="margin:-2px 0 9px;padding:9px 10px;max-height:210px;overflow:auto;border-radius:8px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:0.9em;line-height:1.4">
         <div style="font-size:0.76em;text-transform:uppercase;letter-spacing:0.04em;color:${th.muted};margin-bottom:5px">Descrição original</div>
         <div>${this._descricaoCompleta()}</div>
@@ -5726,7 +5750,33 @@ function t20HudGrimorioAlcance(item) {
   });
 }
 
+function t20HudGrimorioCampoDescricao(item, nomeCampo) {
+  const bruto =
+    item?.system?.description?.value ??
+    item?.system?.descricao?.value ??
+    item?.system?.description ??
+    item?.system?.descricao ??
+    item?.description?.value ??
+    item?.description ??
+    "";
+  if (!bruto) return "";
+  let texto = "";
+  try {
+    const div = document.createElement("div");
+    div.innerHTML = String(bruto);
+    texto = div.textContent || div.innerText || "";
+  } catch {
+    texto = String(bruto).replace(/<[^>]+>/g, " ");
+  }
+  texto = texto.replace(/\s+/g, " ").trim();
+  const re = new RegExp(`${nomeCampo}\\s*:\\s*([^:]+?)(?=\\s+(?:Execu[cç][aã]o|Alcance|Alvo|[ÁA]rea|Efeito|Dura[cç][aã]o|Resist[eê]ncia|Fonte)\\s*:|$)`, "i");
+  const m = texto.match(re);
+  return m?.[1]?.trim() ?? "";
+}
+
 function t20HudGrimorioDuracao(item) {
+  const daDescricao = t20HudGrimorioCampoDescricao(item, "Dura[cç][aã]o");
+  if (daDescricao && daDescricao !== "0") return daDescricao;
   const d = item?.system?.duracao ?? item?.system?.duration;
   if (d && typeof d === "object") {
     const label = t20HudGrimorioPrimeiroTexto(d.label, d.name, d.nome, d.txt, d.texto, d.text, d.tipo, d.type, d.unit, d.unidade);
@@ -6429,8 +6479,7 @@ class ArsenalHUD extends Application {
         <div style="min-width:0;align-self:end">
           <div style="color:${th.title};font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.05">${nome}</div>
         </div>
-        <div style="display:flex;gap:4px;align-items:start;justify-content:flex-end;flex-wrap:wrap">
-          ${collapsed ? "" : this._themeSelect(th)}
+        <div style="display:flex;gap:4px;align-items:start;justify-content:flex-end">
           ${collapsed ? "" : `<button class="t20-hud-toggle-all" title="${t20HudTodasSecoesRecolhidas() ? "Expandir todas as categorias" : "Recolher todas as categorias"}" style="${this._smallCtrl(th)}">${t20HudTodasSecoesRecolhidas() ? "▾" : "▴"}</button>`}
           <button class="t20-hud-refresh" title="Atualizar" style="${this._smallCtrl(th)}">↻</button>
           <button class="t20-hud-minimize" title="${collapsed ? "Expandir HUD" : "Minimizar HUD"}" style="${this._smallCtrl(th)}">${collapsed ? "▣" : "—"}</button>
@@ -6456,6 +6505,11 @@ class ArsenalHUD extends Application {
           <button class="t20-hud-action" data-action="sustentadas" style="${this._textBtn("#2c2140","#c4b5fd")}">🪄 Sustentadas</button>
           <button class="t20-hud-action" data-action="aura" style="${this._textBtn("#10231f","#2dd4bf")}">🛡️ Aura</button>
           <button class="t20-hud-action" data-action="limparCondicoes" style="${this._textBtn("#2d1b1b","#fca5a5")}">🧹 Limpar Cond.</button>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-shrink:0;padding-right:12px">
+          <span style="font-size:0.78em;color:${th.muted};white-space:nowrap">Tema:</span>
+          ${this._themeSelect(th)}
         </div>
 
         <div style="margin-top:5px;font-size:0.78em;color:${th.muted};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;padding-right:12px">
@@ -6578,7 +6632,7 @@ class ArsenalHUD extends Application {
       .map(([key, label]) => `<option value="${key}" ${key === atual ? "selected" : ""}>${label}</option>`)
       .join("");
     return `<select class="t20-hud-theme-select" title="Tema do HUD"
-      style="height:24px;max-width:92px;padding:1px 4px;border-radius:5px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:12px;cursor:pointer">
+      style="height:24px;min-width:126px;max-width:100%;padding:1px 6px;border-radius:5px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:12px;cursor:pointer">
       ${opts}
     </select>`;
   }
@@ -6628,7 +6682,7 @@ class ArsenalHUD extends Application {
     };
 
     handle.addEventListener("mousedown", ev => {
-      if (ev.target?.closest?.("button")) return;
+      if (ev.target?.closest?.("button, select, input, textarea, option")) return;
       dragging = true;
       startX = ev.clientX;
       startY = ev.clientY;
