@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.1.6 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.1.0 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -4220,10 +4220,10 @@ class ArsenalRecursosPanel extends Application {
   _renderInfoBasica(th) {
     const info = t20HudGrimorioInfoMagia(this.item, t20HudExtrairCirculoMagia(this.item));
     const chips = [
-      this._infoChip("Exec.", info.execucao, th),
-      this._infoChip("Alc.", info.alcance, th),
-      this._infoChip("Dur.", info.duracao, th),
-      this._infoChip("Res.", info.resistencia, th),
+      this._infoChip("Execução:", info.execucao, th),
+      this._infoChip("Alcance:", info.alcance, th),
+      this._infoChip("Duração:", info.duracao, th),
+      this._infoChip("Resistência:", info.resistencia, th),
       this._infoChip("Alvo", info.alvo, th),
       this._infoChip("Escola", info.escola, th),
     ].filter(Boolean).join("");
@@ -4548,9 +4548,9 @@ function t20HudTheme() {
       text:"#0f172a", title:"#111827", muted:"#64748b"
     },
     foundryClassic: {
-      bg1:"#d8d1bd", bg2:"#bfb59d", panel:"#f3ecd9", panel2:"#ded3bb",
-      border:"#6f6046", accent:"#5c241c", accent2:"#4e1d16",
-      text:"#100c08", title:"#120b06", muted:"#3f372d"
+      bg1:"#d7d3c6", bg2:"#bcb6a7", panel:"#e9e3d4", panel2:"#d7cfbd",
+      border:"#7a7060", accent:"#5c2a22", accent2:"#4a211b",
+      text:"#1f1b16", title:"#17130f", muted:"#4f463a"
     },
   };
   return temas[key] ?? temas.foundryClassic;
@@ -5598,10 +5598,10 @@ class ArsenalConjurarMagiaDialog extends Application {
   _renderInfoBasica(th) {
     const info = t20HudGrimorioInfoMagia(this.item, t20HudExtrairCirculoMagia(this.item));
     const chips = [
-      this._infoChip("Exec.", info.execucao, th),
-      this._infoChip("Alc.", info.alcance, th),
-      this._infoChip("Dur.", info.duracao, th),
-      this._infoChip("Res.", info.resistencia, th),
+      this._infoChip("Execução:", info.execucao, th),
+      this._infoChip("Alcance:", info.alcance, th),
+      this._infoChip("Duração:", info.duracao, th),
+      this._infoChip("Resistência:", info.resistencia, th),
       this._infoChip("Alvo", info.alvo, th),
       this._infoChip("Escola", info.escola, th),
     ].filter(Boolean).join("");
@@ -6185,8 +6185,17 @@ class ArsenalGrimorio extends Application {
 
   _metaChip(label, value, th, opts = {}) {
     if (!value) return "";
+    const labelMap = {
+      "Exec.": "Execução:",
+      "Alc.": "Alcance:",
+      "Dur.": "Duração:",
+      "Res.": "Resistência:",
+      "Alvo": "Alvo:",
+      "Escola": "Escola:"
+    };
+    const labelFull = labelMap[label] ?? label;
     const strong = opts.strong ? `border-color:${th.accent};color:${th.title};` : "";
-    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:${opts.compact ? "2px 6px" : "4px 8px"};border-radius:999px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:${opts.compact ? "0.82em" : "0.88em"};${strong}">${label ? `<strong style="color:${th.muted};font-weight:600">${label}</strong>` : ""}<span>${value}</span></span>`;
+    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:${opts.compact ? "2px 6px" : "4px 8px"};border-radius:999px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:${opts.compact ? "0.86em" : "0.9em"};${strong}">${labelFull ? `<strong style="color:${th.muted};font-weight:600">${labelFull}</strong>` : ""}<span>${value}</span></span>`;
   }
 
   _renderExpanded(item, th) {
@@ -6221,9 +6230,9 @@ class ArsenalGrimorio extends Application {
     const aberta = this.expandidas.has(item.id);
     const info = t20HudGrimorioInfoMagia(item, this.circulo);
     const subMeta = [
-      info.execucao ? `Exec.: ${info.execucao}` : "",
-      info.alcance ? `Alc.: ${info.alcance}` : "",
-      info.duracao ? `Dur.: ${info.duracao}` : ""
+      info.execucao ? `Execução: ${info.execucao}` : "",
+      info.alcance ? `Alcance: ${info.alcance}` : "",
+      info.duracao ? `Duração: ${info.duracao}` : ""
     ].filter(Boolean).join(" • ");
 
     return `<div style="margin-bottom:8px;border-radius:10px;background:linear-gradient(180deg,${th.panel2},${th.panel});border:1px solid ${th.border};overflow:hidden;box-shadow:0 1px 0 ${th.border}33">
@@ -6784,7 +6793,7 @@ class ArsenalHUD extends Application {
           <button class="t20-hud-action" data-action="recursos" style="${this._textBtn("#10223a","#93c5fd")}">📊 Recursos</button>
           <button class="t20-hud-action" data-action="sustentadas" style="${this._textBtn("#2c2140","#c4b5fd")}">🪄 Sustentadas</button>
           <button class="t20-hud-action" data-action="aura" style="${this._textBtn("#10231f","#2dd4bf")}">🛡️ Aura</button>
-          <button class="t20-hud-action" data-action="limparCondicoes" style="${this._textBtn("#2d1b1b","#fca5a5")}">🧹 Limpar Cond.</button>
+          <button class="t20-hud-action" data-action="limparCondicoes" style="${this._textBtn("#2d1b1b","#fca5a5")}">🧹 Limpar Condições</button>
         </div>
 
         <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-shrink:0;padding-right:12px">
