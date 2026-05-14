@@ -5633,9 +5633,20 @@ class ArsenalGrimorio extends Application {
       .filter(item => !q || String(item.name ?? "").toLowerCase().includes(q));
   }
 
-  _layoutButton(layout, label, ativo, th) {
+  _layoutButton(layout, label, ativo, th, opts = {}) {
+    const compactHeader = !!opts.header;
     return `<button class="t20-grimorio-layout-btn" data-layout="${layout}" type="button"
-      style="padding:5px 8px;border-radius:999px;border:1px solid ${ativo ? th.accent : th.border};background:${ativo ? `${th.accent}22` : th.panel};color:${ativo ? th.title : th.text};cursor:pointer;font-size:0.77em;font-weight:${ativo ? "bold" : "normal"}">${label}</button>`;
+      title="Layout ${label}"
+      style="height:${compactHeader ? "22px" : "26px"};padding:${compactHeader ? "2px 7px" : "5px 8px"};border-radius:999px;border:1px solid ${ativo ? th.accent : th.border};background:${ativo ? `${th.accent}28` : th.panel};color:${ativo ? th.title : th.text};cursor:pointer;font-size:${compactHeader ? "0.68em" : "0.77em"};line-height:1;font-weight:${ativo ? "bold" : "normal"};white-space:nowrap;box-shadow:${ativo ? `inset 0 0 0 1px ${th.accent}22` : "none"}">${label}</button>`;
+  }
+
+  _layoutSelector(layout, th) {
+    return `<div class="t20-grimorio-layout-selector" title="Alternar visualização do grimório"
+      style="display:flex;align-items:center;gap:3px;flex:0 1 auto;min-width:0;max-width:100%;padding:2px;border-radius:999px;background:${th.panel}99;border:1px solid ${th.border};box-shadow:inset 0 1px 0 ${th.accent}18">
+      ${this._layoutButton("standard", "Padrão", layout === "standard", th, { header: true })}
+      ${this._layoutButton("compact", "Compacta", layout === "compact", th, { header: true })}
+      ${this._layoutButton("detailed", "Estilizada", layout === "detailed", th, { header: true })}
+    </div>`;
   }
 
   _metaChip(label, value, th, opts = {}) {
@@ -5754,23 +5765,19 @@ class ArsenalGrimorio extends Application {
     const countsLabel = `${magias.length} magia(s)`;
 
     return `<div style="background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};border-radius:8px;color:${th.text};font-family:serif;padding:10px;max-height:620px;display:flex;flex-direction:column">
-      <div style="display:flex;align-items:center;gap:8px;border-bottom:1px solid ${th.accent}44;padding-bottom:8px;margin-bottom:8px">
-        ${this.actor?.img ? `<img src="${this.actor.img}" style="width:34px;height:34px;border-radius:6px;object-fit:cover;border:1px solid ${th.accent}73">` : ""}
-        <div style="min-width:0;flex:1">
+      <div style="display:flex;align-items:center;gap:8px;border-bottom:1px solid ${th.accent}44;padding-bottom:8px;margin-bottom:8px;flex-wrap:nowrap">
+        ${this.actor?.img ? `<img src="${this.actor.img}" style="width:34px;height:34px;border-radius:6px;object-fit:cover;border:1px solid ${th.accent}73;flex:0 0 auto">` : ""}
+        <div style="min-width:0;flex:1 1 auto">
           <div style="font-size:0.78em;color:${th.muted};text-transform:uppercase;letter-spacing:0.05em">Grimório — ${this.circulo}º Círculo</div>
           <div style="color:${th.title};font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.actor?.name ?? "Conjurador"}</div>
         </div>
-        <div style="font-size:0.82em;color:${th.muted};white-space:nowrap">${countsLabel}</div>
+        ${this._layoutSelector(layout, th)}
+        <div style="font-size:0.82em;color:${th.muted};white-space:nowrap;flex:0 0 auto;text-align:right">${countsLabel}</div>
       </div>
 
       <div style="position:sticky;top:0;z-index:2;background:linear-gradient(180deg,${th.bg1},${th.bg2});padding-bottom:8px;margin-bottom:2px">
         <input class="t20-grimorio-busca" type="text" placeholder="Buscar magia..." value="${this.busca ?? ""}"
-          style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:${layout === "compact" ? "6px 9px" : "7px 9px"};border-radius:6px;background:${th.panel};border:1px solid ${th.border};color:${th.text}">
-        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-          ${this._layoutButton("standard", "Padrão", layout === "standard", th)}
-          ${this._layoutButton("compact", "Compacta", layout === "compact", th)}
-          ${this._layoutButton("detailed", "Estilizada", layout === "detailed", th)}
-        </div>
+          style="width:100%;box-sizing:border-box;margin-bottom:0;padding:${layout === "compact" ? "6px 9px" : "7px 9px"};border-radius:6px;background:${th.panel};border:1px solid ${th.border};color:${th.text}">
       </div>
 
       <div style="overflow:auto;min-height:0;padding-top:2px">
