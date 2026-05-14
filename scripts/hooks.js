@@ -197,6 +197,19 @@ Hooks.once("ready", () => {
     default: "grimoire",
   });
 
+  game.settings.register(MOD, "arsenalGrimorioCastMode", {
+    name: "Conjuração pelo Grimório",
+    hint: "Define se clicar em uma magia no Grimório abre a janela original do sistema ou uma janela própria do Arsenal para selecionar aprimoramentos.",
+    scope: "client",
+    config: true,
+    type: String,
+    choices: {
+      original: "Janela original do sistema",
+      arsenal: "Janela Arsenal com aprimoramentos"
+    },
+    default: "arsenal",
+  });
+
   const ativas = [];
   if (game.settings.get(MOD, "autoAtaque"))      ativas.push("Ataque");
   if (game.settings.get(MOD, "autoSalvamento"))  ativas.push("Salvamento");
@@ -4372,6 +4385,14 @@ function t20HudSpellMode() {
   }
 }
 
+function t20HudCastMode() {
+  try {
+    return game.settings.get("arsenal-t20", "arsenalGrimorioCastMode") ?? "arsenal";
+  } catch {
+    return "arsenal";
+  }
+}
+
 function t20HudTheme() {
   let key = "darkGold";
   try { key = game.settings.get("arsenal-t20", "arsenalHudColorTheme") ?? "darkGold"; } catch {}
@@ -5077,6 +5098,289 @@ function t20HudHtmlAprimoramentosItem(item) {
   </div>`;
 }
 
+// ============================================================
+// GRIMÓRIO — JANELA DE CONJURAÇÃO DO ARSENAL
+// ============================================================
+
+let _arsenalConjurarMagia = null;
+
+function t20HudCustoBaseMagia(item) {
+  const candidatos = [
+    item?.system?.pm,
+    item?.system?.custo,
+    item?.system?.cost,
+    item?.system?.mana,
+    item?.system?.cost?.value,
+    item?.system?.pm?.value,
+    item?.system?.custo?.value,
+    item?.system?.mana?.value,
+  ];
+
+  for (const c of candidatos) {
+    const val = (c && typeof c === "object") ? (c.value ?? c.total ?? c.base ?? c.pm) : c;
+    const n = Number(String(val ?? "").match(/-?\d+/)?.[0]);
+    if (Number.isFinite(n)) return n;
+  }
+
+  const txt = t20HudItemTexto(item);
+  const m = txt.match(/\b(\d+)\s*PM\b/i);
+  if (m) return Number(m[1]);
+  return 0;
+}
+
+function t20HudAprimoramentosUsoItem(item) {
+  return t20HudAprimColetarDeItem(item).map((a, idx) => ({
+    id: `apr-${idx}`,
+    index: idx,
+    custo: a.custo ?? "—",
+    custoNum: Number(String(a.custo ?? "").match(/-?\d+/)?.[0] ?? 0) || 0,
+    texto: a.texto ?? "(sem descrição)",
+    raw: a.raw ?? "",
+  }));
+}
+
+function t20HudAbrirConjuracaoArsenal(actor, itemId) {
+  const item = actor?.items?.get?.(itemId);
+  if (!actor || !item) return ui.notifications.warn("Magia não encontrada.");
+
+  if (_arsenalConjurarMagia?.rendered) _arsenalConjurarMagia.close();
+  _arsenalConjurarMagia = new ArsenalConjurarMagiaDialog(actor, item);
+  _arsenalConjurarMagia.render(true);
+}
+
+function t20HudAbilityUseRows(root) {
+  const base = root?.closest?.(".app, .window-app") ?? root;
+  if (!base) return [];
+
+  const tableRows = Array.from(base.querySelectorAll("table tbody tr, table tr, tr"))
+    .filter(row => /PM\b/i.test(String(row.innerText ?? row.textContent ?? "")) && row.querySelector("input, button"));
+
+  if (tableRows.length) return tableRows;
+
+  let divRows = Array.from(base.querySelectorAll(".form-group, .form-fields, .form-row, .flexrow, div"))
+    .filter(el => {
+      const txt = String(el.innerText ?? el.textContent ?? "");
+      if (!/PM\b/i.test(txt)) return false;
+      if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção|Dano\s*:/i.test(txt)) return false;
+      return el.querySelector("input, button");
+    });
+
+  divRows = divRows.filter(el => !divRows.some(other => other !== el && el.contains(other)));
+  return divRows;
+}
+
+function t20HudAplicarSelecoesNoAbilityUseDialog(app, html, selecoes = []) {
+  const root = html instanceof jQuery ? html[0] : html;
+  const rows = t20HudAbilityUseRows(root);
+  if (!rows.length || !selecoes?.length) return;
+
+  for (const idx of selecoes) {
+    const row = rows[idx];
+    if (!row) continue;
+
+    const cb = row.querySelector('input[type="checkbox"]');
+    if (cb && !cb.checked) {
+      cb.click();
+      continue;
+    }
+
+    const plus = Array.from(row.querySelectorAll("button"))
+      .find(b => String(b.textContent ?? "").trim() === "+");
+    if (plus) {
+      plus.click();
+      continue;
+    }
+
+    const input = row.querySelector('input[type="number"], input:not([type])');
+    if (input) {
+      input.value = String(Math.max(1, Number(input.value) || 1));
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  }
+}
+
+function t20HudClicarLancarMagiaAbilityUseDialog(root) {
+  const base = root?.closest?.(".app, .window-app") ?? root;
+  const botoes = Array.from(base?.querySelectorAll?.("button") ?? []);
+  const btn = botoes.find(b => /lan[cç]ar magia/i.test(String(b.textContent ?? "")))
+    ?? botoes.find(b => /roll|cast|usar/i.test(String(b.dataset?.action ?? b.name ?? b.value ?? "")));
+  if (btn) {
+    btn.click();
+    return true;
+  }
+  return false;
+}
+
+class ArsenalConjurarMagiaDialog extends Application {
+  constructor(actor, item, options = {}) {
+    super(options);
+    this.actor = actor;
+    this.item = item;
+    this.selecionados = new Set();
+    this.busca = "";
+  }
+
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: "arsenal-conjurar-magia",
+      title: "Conjurar Magia — Arsenal T20",
+      width: 560,
+      height: 660,
+      resizable: true,
+      minimizable: true,
+    });
+  }
+
+  async getData() { return {}; }
+  get template() { return null; }
+
+  _aprimoramentos() {
+    const q = String(this.busca ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return t20HudAprimoramentosUsoItem(this.item)
+      .filter(a => !q || `${a.custo} ${a.texto}`.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(q));
+  }
+
+  _custoTotal() {
+    const base = t20HudCustoBaseMagia(this.item);
+    const todos = t20HudAprimoramentosUsoItem(this.item);
+    const extra = todos
+      .filter(a => this.selecionados.has(a.index))
+      .reduce((sum, a) => sum + (Number(a.custoNum) || 0), 0);
+    return { base, extra, total: Math.max(0, base + extra) };
+  }
+
+  async _renderInner() {
+    const div = document.createElement("div");
+    div.innerHTML = this._html();
+    return $(div);
+  }
+
+  _html() {
+    const apr = this._aprimoramentos();
+    const custos = this._custoTotal();
+    const circulo = t20HudExtrairCirculoMagia(this.item);
+
+    return `<div style="height:100%;box-sizing:border-box;display:flex;flex-direction:column;background:linear-gradient(180deg,#111827,#0b1020);border:1px solid #374151;border-top:3px solid #c9a227;border-radius:8px;color:#e5e7eb;font-family:serif;padding:10px">
+      <div style="display:flex;gap:10px;align-items:center;border-bottom:1px solid rgba(201,162,39,0.25);padding-bottom:9px;margin-bottom:9px">
+        ${this.item.img ? `<img src="${this.item.img}" style="width:44px;height:44px;border-radius:7px;object-fit:cover;border:1px solid rgba(201,162,39,0.45)">` : ""}
+        <div style="min-width:0;flex:1">
+          <div style="font-size:0.78em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">Conjuração Arsenal</div>
+          <div style="font-weight:bold;color:#f2e6c9;font-size:1.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.item.name}</div>
+          <div style="font-size:0.82em;color:#9ca3af">${circulo ? `${circulo}º círculo` : "Magia"} · por ${this.actor?.name ?? "personagem"}</div>
+        </div>
+        <div style="text-align:center;background:#0f172a;border:1px solid #303b52;border-radius:8px;padding:7px 10px;min-width:72px">
+          <div style="font-size:0.72em;color:#9ca3af;text-transform:uppercase">Custo</div>
+          <div style="font-weight:bold;color:#facc15;font-size:1.25em">${custos.total}</div>
+          <div style="font-size:0.72em;color:#9ca3af">PM</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+        <input class="t20-cast-search" type="text" placeholder="Filtrar aprimoramentos..."
+          value="${this.busca ?? ""}"
+          style="flex:1;box-sizing:border-box;padding:7px 9px;border-radius:6px;background:#0f172a;border:1px solid #303b52;color:#e5e7eb">
+        <button class="t20-cast-clear" style="padding:7px 9px;border-radius:6px;background:#1f2937;border:1px solid #64748b;color:#e5e7eb;cursor:pointer">Limpar</button>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:8px;font-size:0.84em;color:#cbd5e1;flex-wrap:wrap">
+        <span style="padding:4px 7px;border-radius:999px;background:#0f172a;border:1px solid #303b52">Base: ${custos.base} PM</span>
+        <span style="padding:4px 7px;border-radius:999px;background:#0f172a;border:1px solid #303b52">Aprim.: ${custos.extra >= 0 ? "+" : ""}${custos.extra} PM</span>
+        <span style="padding:4px 7px;border-radius:999px;background:#0f172a;border:1px solid #303b52">${this.selecionados.size} selecionado(s)</span>
+      </div>
+
+      <div style="overflow:auto;min-height:0;flex:1;padding-right:4px">
+        ${apr.length ? apr.map(a => {
+          const sel = this.selecionados.has(a.index);
+          return `<button class="t20-cast-aprim" data-index="${a.index}"
+            style="width:100%;text-align:left;margin-bottom:7px;padding:9px;border-radius:9px;border:1px solid ${sel ? "#60a5fa" : "#374151"};border-left:4px solid ${sel ? "#60a5fa" : "#8b5cf6"};background:${sel ? "linear-gradient(180deg,#172554,#111827)" : "linear-gradient(180deg,#182235,#111827)"};color:#e5e7eb;cursor:pointer">
+            <div style="display:flex;gap:8px;align-items:flex-start">
+              <span style="flex:0 0 auto;min-width:48px;text-align:center;padding:3px 7px;border-radius:999px;background:#2c2140;border:1px solid #8b5cf6;color:#ddd6fe;font-weight:bold;font-size:0.78em">${a.custo}</span>
+              <span style="flex:1;line-height:1.32;font-size:0.9em">${a.texto}</span>
+              <span style="flex:0 0 auto;color:${sel ? "#86efac" : "#64748b"};font-weight:bold">${sel ? "✓" : ""}</span>
+            </div>
+          </button>`;
+        }).join("") : `<div style="color:#9ca3af;text-align:center;padding:18px;border:1px dashed #374151;border-radius:8px">Nenhum aprimoramento de uso detectado.</div>`}
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;border-top:1px solid rgba(255,255,255,0.08);padding-top:9px;margin-top:9px">
+        <button class="t20-cast-original" style="padding:9px;border-radius:7px;background:#1f2937;border:1px solid #64748b;color:#e5e7eb;font-weight:bold;cursor:pointer">Abrir original</button>
+        <button class="t20-cast-conjurar" style="padding:9px;border-radius:7px;background:#12351f;border:1px solid #34d399;color:#bbf7d0;font-weight:bold;cursor:pointer">Conjurar</button>
+      </div>
+      <div style="font-size:0.75em;color:#9ca3af;margin-top:6px;line-height:1.25">
+        O Arsenal abre a janela original, tenta marcar os aprimoramentos por ordem e aciona “Lançar Magia”.
+      </div>
+    </div>`;
+  }
+
+  activateListeners(html) {
+    super.activateListeners(html);
+
+    html.find(".t20-cast-search").on("input", ev => {
+      this.busca = ev.currentTarget.value ?? "";
+      this.render(false);
+    });
+
+    html.find(".t20-cast-clear").on("click", ev => {
+      ev.preventDefault();
+      this.busca = "";
+      this.render(false);
+    });
+
+    html.find(".t20-cast-aprim").on("click", ev => {
+      ev.preventDefault();
+      const idx = Number(ev.currentTarget.dataset.index);
+      if (this.selecionados.has(idx)) this.selecionados.delete(idx);
+      else this.selecionados.add(idx);
+      this.render(false);
+    });
+
+    html.find(".t20-cast-original").on("click", async ev => {
+      ev.preventDefault();
+      await t20HudUsarItem(this.actor, this.item.id);
+    });
+
+    html.find(".t20-cast-conjurar").on("click", async ev => {
+      ev.preventDefault();
+      await this._conjurarPeloSistema();
+    });
+  }
+
+  async _conjurarPeloSistema() {
+    const selecoes = Array.from(this.selecionados).sort((a, b) => a - b);
+    let detectou = false;
+
+    const hookId = Hooks.on("renderAbilityUseDialog", (app, html) => {
+      detectou = true;
+      setTimeout(() => {
+        try {
+          const root = html instanceof jQuery ? html[0] : html;
+          t20HudAplicarSelecoesNoAbilityUseDialog(app, root, selecoes);
+          setTimeout(() => {
+            const clicou = t20HudClicarLancarMagiaAbilityUseDialog(root);
+            if (!clicou) ui.notifications.warn("Arsenal T20: não consegui acionar o botão Lançar Magia automaticamente.");
+            setTimeout(() => {
+              try { app.close?.(); } catch {}
+            }, 250);
+          }, 150);
+        } catch (e) {
+          console.warn("Arsenal T20 | erro ao conjurar pela janela Arsenal", e);
+          ui.notifications.error("Erro ao aplicar aprimoramentos na janela original.");
+        } finally {
+          Hooks.off("renderAbilityUseDialog", hookId);
+        }
+      }, 150);
+    });
+
+    await t20HudUsarItem(this.actor, this.item.id);
+
+    setTimeout(() => {
+      try { Hooks.off("renderAbilityUseDialog", hookId); } catch {}
+      if (!detectou) ui.notifications.warn("Arsenal T20: a janela original de conjuração não foi detectada. Use Abrir original.");
+    }, 3000);
+  }
+}
+
 let _arsenalGrimorio = null;
 
 function abrirArsenalGrimorio(actor, circulo) {
@@ -5171,7 +5475,9 @@ class ArsenalGrimorio extends Application {
     });
 
     html.find(".t20-grimorio-magia").on("click", async ev => {
-      await t20HudUsarItem(this.actor, ev.currentTarget.dataset.itemId);
+      const itemId = ev.currentTarget.dataset.itemId;
+      if (t20HudCastMode() === "arsenal") return t20HudAbrirConjuracaoArsenal(this.actor, itemId);
+      await t20HudUsarItem(this.actor, itemId);
     });
 
     html.find(".t20-grimorio-expandir").on("click", ev => {
