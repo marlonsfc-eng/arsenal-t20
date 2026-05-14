@@ -4125,7 +4125,7 @@ function t20PushLogRecursos(entrada) {
 async function t20MensagemChatRecurso(entrada) {
   await ChatMessage.create({
     whisper: ChatMessage.getWhisperRecipients("GM"),
-    content: `<div style="background:#111827;border:1px solid #2b3347;border-left:4px solid #64748b;padding:7px 10px;border-radius:6px;color:#d7dcea;font-size:0.9em">
+    content: `<div style="background:#111827;border:1px solid #2b3347;border-left:4px solid #64748b;padding:7px 10px;border-radius:6px;color:#d7dcea;font-size:1.02em">
       <b>📊 Recurso alterado — ${entrada.actor}</b><br>
       ${entrada.linhas.join("<br>")}
       <br><span style="font-size:0.82em;color:#9ca3af">Origem: ${entrada.origem}</span>
@@ -4526,9 +4526,9 @@ function t20HudTheme() {
       text:"#0f172a", title:"#111827", muted:"#64748b"
     },
     foundryClassic: {
-      bg1:"#d8d1bd", bg2:"#bfb59d", panel:"#efe7d2", panel2:"#d7cdb5",
-      border:"#7a6a4f", accent:"#5c241c", accent2:"#7a2e23",
-      text:"#19140e", title:"#21170e", muted:"#5f5547"
+      bg1:"#d8d1bd", bg2:"#bfb59d", panel:"#f3ecd9", panel2:"#ded3bb",
+      border:"#6f6046", accent:"#5c241c", accent2:"#4e1d16",
+      text:"#100c08", title:"#120b06", muted:"#3f372d"
     },
   };
   return temas[key] ?? temas.foundryClassic;
@@ -5159,15 +5159,15 @@ function t20HudHtmlAprimoramentosItem(item) {
   const th = t20HudTheme();
   const aprim = t20HudAprimColetarDeItem(item);
   if (!aprim.length) {
-    return `<div style="font-size:0.82em;color:${th.muted};padding:8px 10px;border:1px dashed ${th.border};border-radius:7px;margin-top:6px">Nenhum aprimoramento detectado nos efeitos da magia.</div>`;
+    return `<div style="font-size:0.98em;color:${th.muted};padding:8px 10px;border:1px dashed ${th.border};border-radius:7px;margin-top:6px">Nenhum aprimoramento detectado nos efeitos da magia.</div>`;
   }
 
   return `<div style="margin-top:7px;display:flex;flex-direction:column;gap:6px">
     ${aprim.map(a => `
       <div style="padding:8px;border-radius:8px;background:${th.panel};border:1px solid ${th.border};border-left:3px solid ${th.accent}">
         <div style="display:flex;gap:8px;align-items:flex-start">
-          <span style="flex:0 0 auto;min-width:44px;text-align:center;padding:3px 6px;border-radius:999px;background:${th.panel2};border:1px solid ${th.accent};color:${th.accent2};font-weight:bold;font-size:0.78em">${a.custo}</span>
-          <span style="color:${th.text};line-height:1.3;font-size:0.86em">${a.texto}</span>
+          <span style="flex:0 0 auto;min-width:44px;text-align:center;padding:3px 6px;border-radius:999px;background:${th.panel2};border:1px solid ${th.accent};color:${th.accent2};font-weight:bold;font-size:0.92em">${a.custo}</span>
+          <span style="color:${th.text};line-height:1.45;font-size:1.02em">${a.texto}</span>
         </div>
       </div>
     `).join("")}
@@ -5406,7 +5406,7 @@ class ArsenalConjurarMagiaDialog extends Application {
       <div style="display:flex;gap:10px;align-items:center;border-bottom:1px solid ${th.accent}44;padding-bottom:9px;margin-bottom:9px">
         ${this.item.img ? `<img src="${this.item.img}" style="width:44px;height:44px;border-radius:7px;object-fit:cover;border:1px solid ${th.accent}73">` : ""}
         <div style="min-width:0;flex:1">
-          <div style="font-size:0.78em;color:${th.muted};text-transform:uppercase;letter-spacing:0.05em">Conjuração Arsenal</div>
+          <div style="font-size:0.82em;color:${th.muted};text-transform:uppercase;letter-spacing:0.05em">Conjuração Arsenal</div>
           <div style="font-weight:bold;color:${th.title};font-size:1.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.item.name}</div>
           <div style="font-size:0.82em;color:${th.muted}">${circulo ? `${circulo}º círculo` : "Magia"} · por ${this.actor?.name ?? "personagem"}</div>
         </div>
@@ -5446,8 +5446,8 @@ class ArsenalConjurarMagiaDialog extends Application {
           return `<button class="t20-cast-aprim" data-index="${a.index}"
             style="width:100%;text-align:left;margin-bottom:7px;padding:9px;border-radius:9px;border:1px solid ${sel ? th.accent2 : th.border};border-left:4px solid ${sel ? th.accent2 : th.accent};background:${sel ? `linear-gradient(180deg,${th.panel2},${th.panel})` : `linear-gradient(180deg,${th.panel},${th.bg2})`};color:${th.text};cursor:pointer">
             <div style="display:flex;gap:8px;align-items:flex-start">
-              <span style="flex:0 0 auto;min-width:48px;text-align:center;padding:3px 7px;border-radius:999px;background:${th.panel2};border:1px solid ${th.accent};color:${th.accent2};font-weight:bold;font-size:0.78em">${a.custo}</span>
-              <span style="flex:1;line-height:1.32;font-size:0.9em">${a.texto}</span>
+              <span style="flex:0 0 auto;min-width:48px;text-align:center;padding:3px 7px;border-radius:999px;background:${th.panel2};border:1px solid ${th.accent};color:${th.accent2};font-weight:bold;font-size:0.92em">${a.custo}</span>
+              <span style="flex:1;line-height:1.32;font-size:1.02em">${a.texto}</span>
               <span style="flex:0 0 auto;color:${sel ? th.accent2 : th.muted};font-weight:bold">${sel ? "✓" : ""}</span>
             </div>
           </button>`;
@@ -5768,7 +5768,7 @@ class ArsenalGrimorio extends Application {
   _metaChip(label, value, th, opts = {}) {
     if (!value) return "";
     const strong = opts.strong ? `border-color:${th.accent};color:${th.title};` : "";
-    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:${opts.compact ? "2px 6px" : "4px 8px"};border-radius:999px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:${opts.compact ? "0.76em" : "0.84em"};${strong}">${label ? `<strong style="color:${th.muted};font-weight:600">${label}</strong>` : ""}<span>${value}</span></span>`;
+    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:${opts.compact ? "2px 6px" : "4px 8px"};border-radius:999px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:${opts.compact ? "0.9em" : "0.96em"};${strong}">${label ? `<strong style="color:${th.muted};font-weight:600">${label}</strong>` : ""}<span>${value}</span></span>`;
   }
 
   _renderExpanded(item, th) {
@@ -5788,8 +5788,8 @@ class ArsenalGrimorio extends Application {
           style="display:flex;align-items:center;gap:8px;flex:1;padding:1px;border:none;background:transparent;color:${th.text};cursor:pointer;text-align:left;min-width:0">
           ${item.img ? `<img src="${item.img}" style="width:24px;height:24px;border-radius:5px;object-fit:cover;border:1px solid ${th.accent}55">` : `<span style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:${th.bg2}">🪄</span>`}
           <span style="min-width:0;display:flex;align-items:center;gap:8px;flex:1">
-            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.9em">${item.name}</span>
-            <span style="flex:0 0 auto;padding:2px 6px;border-radius:999px;background:${th.panel};border:1px solid ${th.border};font-size:0.75em;color:${th.title}">${info.custoLabel}</span>
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:1.02em">${item.name}</span>
+            <span style="flex:0 0 auto;padding:2px 6px;border-radius:999px;background:${th.panel};border:1px solid ${th.border};font-size:0.9em;color:${th.title}">${info.custoLabel}</span>
           </span>
         </button>
         <button class="t20-grimorio-expandir" data-item-id="${item.id}" title="${aberta ? "Ocultar aprimoramentos" : "Consultar aprimoramentos"}"
@@ -5814,12 +5814,12 @@ class ArsenalGrimorio extends Application {
           style="display:flex;align-items:center;gap:10px;flex:1;padding:0;border:none;background:transparent;color:${th.text};cursor:pointer;text-align:left;min-width:0">
           ${item.img ? `<img src="${item.img}" style="width:30px;height:30px;border-radius:6px;object-fit:cover;border:1px solid ${th.accent}55">` : `<span style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:${th.bg2}">🪄</span>`}
           <span style="min-width:0;flex:1;display:flex;flex-direction:column;gap:2px">
-            <span style="font-size:0.94em;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</span>
-            <span style="font-size:0.74em;color:${th.muted};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${subMeta || info.aprimLabel}</span>
+            <span style="font-size:1.04em;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</span>
+            <span style="font-size:0.92em;color:${th.muted};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${subMeta || info.aprimLabel}</span>
           </span>
         </button>
         <div style="display:flex;align-items:center;gap:6px;flex:0 0 auto">
-          <span style="padding:3px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border};font-size:0.77em;color:${th.title};white-space:nowrap">${info.custoLabel}</span>
+          <span style="padding:3px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border};font-size:0.92em;color:${th.title};white-space:nowrap">${info.custoLabel}</span>
           <button class="t20-grimorio-expandir" data-item-id="${item.id}" title="${aberta ? "Ocultar aprimoramentos" : "Consultar aprimoramentos"}"
             style="width:30px;height:30px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-weight:bold">${aberta ? "▴" : "▾"}</button>
         </div>
@@ -5850,21 +5850,21 @@ class ArsenalGrimorio extends Application {
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
               <button class="t20-grimorio-magia" data-item-id="${item.id}" title="Conjurar ${item.name}"
                 style="padding:0;border:none;background:transparent;color:${th.title};cursor:pointer;text-align:left;min-width:0;flex:1">
-                <div style="font-size:1.08em;font-weight:700;line-height:1.22;word-break:break-word">${item.name}</div>
+                <div style="font-size:1.16em;font-weight:800;line-height:1.22;word-break:break-word">${item.name}</div>
               </button>
               <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
                 ${this._metaChip("", info.custoLabel, th, { strong: true })}
                 ${this._metaChip("", info.aprimLabel, th, { compact: true })}
               </div>
             </div>
-            ${descricao ? `<div style="margin-top:7px;font-size:0.9em;line-height:1.45;color:${th.text}">${descricao}</div>` : ""}
-            ${info.preview && t20HudGrimorioDescricaoCompleta(item).length > info.preview.length ? `<button class="t20-grimorio-descricao" data-item-id="${item.id}" type="button" style="margin-top:5px;padding:2px 0;border:none;background:transparent;color:${th.title};cursor:pointer;font-size:0.82em;font-weight:700">${descAberta ? "Descrição resumida ▴" : "Ver descrição completa ▾"}</button>` : ""}
+            ${descricao ? `<div style="margin-top:7px;font-size:1.03em;line-height:1.48;color:${th.text}">${descricao}</div>` : ""}
+            ${info.preview && t20HudGrimorioDescricaoCompleta(item).length > info.preview.length ? `<button class="t20-grimorio-descricao" data-item-id="${item.id}" type="button" style="margin-top:5px;padding:2px 0;border:none;background:transparent;color:${th.title};cursor:pointer;font-size:0.94em;font-weight:700">${descAberta ? "Descrição resumida ▴" : "Ver descrição completa ▾"}</button>` : ""}
           </div>
         </div>
         ${chips ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${chips}</div>` : ""}
         <div style="display:flex;justify-content:flex-end;margin-top:8px">
           <button class="t20-grimorio-expandir" data-item-id="${item.id}" title="${aberta ? "Ocultar aprimoramentos" : "Consultar aprimoramentos"}"
-            style="padding:6px 10px;border-radius:8px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-size:0.8em;font-weight:600">${aberta ? "Ocultar aprimoramentos ▴" : "Consultar aprimoramentos ▾"}</button>
+            style="padding:6px 10px;border-radius:8px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-size:0.92em;font-weight:700">${aberta ? "Ocultar aprimoramentos ▴" : "Consultar aprimoramentos ▾"}</button>
         </div>
       </div>
       ${aberta ? `<div style="padding:0 10px 10px">${this._renderExpanded(item, th)}</div>` : ""}
@@ -5872,7 +5872,6 @@ class ArsenalGrimorio extends Application {
   }
 
   _renderCards(item, th) {
-    const aberta = this.expandidas.has(item.id);
     const info = t20HudGrimorioInfoMagia(item, this.circulo);
     const desc = t20HudHtmlEscape(t20HudGrimorioDescricaoCompleta(item) || item.name);
     return `<div style="border-radius:14px;background:linear-gradient(180deg,${th.panel2},${th.panel});border:1px solid ${th.border};box-shadow:0 6px 16px ${th.bg2}1f;overflow:hidden;min-height:188px;display:flex;flex-direction:column">
@@ -5886,9 +5885,6 @@ class ArsenalGrimorio extends Application {
           <span style="padding:2px 7px;border-radius:999px;border:1px solid ${th.border};background:${th.panel};font-size:0.78em">${info.aprimLabel}</span>
         </div>
       </button>
-      <button class="t20-grimorio-expandir" data-item-id="${item.id}" type="button" title="${aberta ? "Ocultar aprimoramentos" : "Consultar aprimoramentos"}"
-        style="margin:0 8px 8px;padding:7px 8px;border-radius:9px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-size:0.8em;font-weight:700">${aberta ? "Aprimoramentos ▴" : "Aprimoramentos ▾"}</button>
-      ${aberta ? this._renderExpanded(item, th) : ""}
     </div>`;
   }
 
@@ -5905,15 +5901,15 @@ class ArsenalGrimorio extends Application {
     const layout = this._layout();
     const countsLabel = `${magias.length} magia(s)`;
 
-    return `<div style="background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};border-radius:8px;color:${th.text};font-family:serif;font-size:${layout === "cards" ? "14px" : "16px"};padding:10px;height:100%;max-height:none;box-sizing:border-box;display:flex;flex-direction:column">
+    return `<div style="background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};border-radius:8px;color:${th.text};font-family:serif;font-size:${layout === "cards" ? "14px" : "18px"};padding:10px;height:100%;max-height:none;box-sizing:border-box;display:flex;flex-direction:column">
       <div style="display:flex;align-items:center;gap:8px;border-bottom:1px solid ${th.accent}44;padding-bottom:8px;margin-bottom:8px;flex-wrap:nowrap">
         ${this.actor?.img ? `<img src="${this.actor.img}" style="width:34px;height:34px;border-radius:6px;object-fit:cover;border:1px solid ${th.accent}73;flex:0 0 auto">` : ""}
         <div style="min-width:0;flex:1 1 auto">
-          <div style="font-size:0.78em;color:${th.muted};text-transform:uppercase;letter-spacing:0.05em">Grimório — ${this.circulo}º Círculo</div>
+          <div style="font-size:0.82em;color:${th.muted};text-transform:uppercase;letter-spacing:0.05em">Grimório — ${this.circulo}º Círculo</div>
           <div style="color:${th.title};font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.actor?.name ?? "Conjurador"}</div>
         </div>
         ${this._layoutSelector(layout, th)}
-        <div style="font-size:0.82em;color:${th.muted};white-space:nowrap;flex:0 0 auto;text-align:right">${countsLabel}</div>
+        <div style="font-size:0.88em;color:${th.muted};white-space:nowrap;flex:0 0 auto;text-align:right">${countsLabel}</div>
       </div>
 
       <div style="position:sticky;top:0;z-index:2;background:linear-gradient(180deg,${th.bg1},${th.bg2});padding-bottom:8px;margin-bottom:2px">
