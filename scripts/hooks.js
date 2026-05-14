@@ -4753,8 +4753,27 @@ function t20HudAprimCusto(txt) {
 }
 
 function t20HudAprimInfoTexto(txt, fallback = "") {
-  const raw = t20HudAprimTextoLimpo(txt || fallback);
+  let raw = t20HudAprimTextoLimpo(txt || fallback);
   if (!raw || !/PM\b/i.test(raw)) return null;
+
+  raw = raw
+    .replace(/\[object Object\]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!raw || !/PM\b/i.test(raw)) return null;
+
+  const iniciaComCusto = /^[•\-–—\s]*[+-]?\d+\s*PM\b/i.test(raw);
+  const temCustoNomeado = /^[^:]{2,80}:\s*.*?[+-]?\d+\s*PM\b/i.test(raw);
+
+  // Evita pegar a descrição base da magia. Aprimoramentos normalmente começam
+  // por "1 PM:", "2 PM:", "-1 PM:" ou são efeitos curtos nomeados que têm custo.
+  if (!iniciaComCusto && !temCustoNomeado) return null;
+
+  // Descrições base costumam ser longas e começam com frases do texto da magia.
+  if (!iniciaComCusto && /você conjura|você manifesta|você lança|execução|alcance|duração|resistência/i.test(raw) && raw.length > 220) {
+    return null;
+  }
 
   const custo = t20HudAprimCusto(raw);
   let texto = raw
@@ -4791,54 +4810,73 @@ function t20HudAprimColetarDeItem(item) {
     saida.push(info);
   };
 
-  // 1) Principal: ActiveEffects do item, que normalmente correspondem à aba "Efeitos de Uso".
+  const addObjeto = (obj) => {
+    if (!obj || typeof obj !== "object") return;
+
+    const nome = obj.name ?? obj.nome ?? obj.label ?? obj.title ?? obj.titulo ?? "";
+    const desc =
+      obj.text ?? obj.texto ??
+      obj.description?.value ?? obj.description ??
+      obj.descricao?.value ?? obj.descricao ??
+      obj.effect ?? obj.efeito ??
+      obj.value ?? "";
+
+    // Caso comum da aba "Efeitos de Uso": nome = "1 PM" e descrição = texto do aprimoramento.
+    addTexto(`${nome} ${desc}`.trim());
+
+    // Alguns dados guardam tudo no próprio value/text.
+    addTexto(desc, nome);
+    addTexto(nome);
+  };
+
+  // 1) ActiveEffects do item. Mantém somente efeitos com custo explícito no início
+  // ou efeitos nomeados com custo, para não pegar a descrição base da magia.
   const efeitos = item.effects ? Array.from(item.effects) : [];
   for (const ef of efeitos) {
-    const partes = [
-      ef?.name,
-      ef?.label,
-      ef?.description,
-      ef?.description?.value,
-      ef?.system?.description,
-      ef?.system?.description?.value,
-      ef?.system?.descricao,
-      ef?.system?.descricao?.value,
-      ef?.flags?.tormenta20?.description,
-      ef?.flags?.tormenta20?.descricao,
-      ef?.changes?.map?.(c => `${c?.key ?? ""} ${c?.value ?? ""}`).join(" "),
-    ].filter(Boolean).join(" — ");
-    addTexto(partes, ef?.name ?? ef?.label ?? "");
+    addObjeto(ef);
   }
 
-  // 2) Fallback: campos internos do item.system que possam guardar efeitos de uso.
-  const visitar = (obj, depth = 0) => {
-    if (!obj || typeof obj !== "object" || depth > 5) return;
+  // 2) Campos internos do item.system. Agora o fallback é restrito a caminhos que
+  // pareçam ser listas de efeitos/aprimoramentos. Não varre mais description geral.
+  const pathPareceEfeito = (path) =>
+    /(efeitos?|effects?|onuse|use|usos?|aprimor|aument|enhance|upgrades?|changes?)/i.test(path);
+
+  const visitar = (obj, path = "", depth = 0) => {
+    if (!obj || typeof obj !== "object" || depth > 6) return;
 
     if (Array.isArray(obj)) {
-      for (const v of obj) visitar(v, depth + 1);
+      for (const v of obj) {
+        if (pathPareceEfeito(path)) addObjeto(v);
+        visitar(v, path, depth + 1);
+      }
       return;
     }
 
-    const textoObj = [
-      obj.name, obj.nome, obj.label, obj.title, obj.titulo,
-      obj.text, obj.texto, obj.description, obj.descricao,
-      obj.description?.value, obj.descricao?.value,
-      obj.effect, obj.efeito, obj.value,
-    ].filter(Boolean).join(" — ");
-
-    if (/PM\b/i.test(textoObj)) addTexto(textoObj);
+    if (pathPareceEfeito(path)) {
+      addObjeto(obj);
+    }
 
     for (const [k, v] of Object.entries(obj)) {
-      if (["img", "ownership", "permission", "folder", "sort", "_stats"].includes(k)) continue;
+      if (["img", "ownership", "permission", "folder", "sort", "_stats", "description", "descricao"].includes(k) && !pathPareceEfeito(path)) continue;
+
+      const next = path ? `${path}.${k}` : k;
+
       if (typeof v === "string") {
-        if (/PM\b/i.test(v)) addTexto(v);
+        if (pathPareceEfeito(next) && /PM\b/i.test(v)) addTexto(v);
       } else if (v && typeof v === "object") {
-        visitar(v, depth + 1);
+        visitar(v, next, depth + 1);
       }
     }
   };
 
-  visitar(item.system ?? {}, 0);
+  visitar(item.system ?? {}, "system", 0);
+
+  // 3) Fallback específico: alguns sistemas guardam os efeitos como chaves diretas
+  // com nomes em português.
+  for (const key of ["efeitos", "efeitosDeUso", "effects", "onUseEffects", "aprimoramentos", "aumentos"]) {
+    const v = item.system?.[key];
+    if (Array.isArray(v)) for (const obj of v) addObjeto(obj);
+  }
 
   return saida;
 }
