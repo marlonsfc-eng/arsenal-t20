@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.1.5 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.1.6 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -5917,14 +5917,21 @@ function t20HudGrimorioTraduzirDuracao(raw) {
   if (!val) return "";
   const low = val.toLowerCase();
   const mapa = {
+    inst: "Instantânea",
     instantaneous: "Instantânea", instantanea: "Instantânea", "instantânea": "Instantânea",
     scene: "Cena", cena: "Cena",
+    turn: "Turno", turno: "Turno",
     round: "Rodada", rodada: "Rodada",
+    sust: "Sustentada",
     sustained: "Sustentada", sustentada: "Sustentada",
+    special: "Especial", especial: "Especial",
+    perm: "Permanente",
     permanent: "Permanente", permanente: "Permanente",
-    day: "Dia", dia: "Dia", days: "Dias", dias: "Dias",
+    minute: "Minuto", minuto: "Minuto", minutes: "Minutos", minutos: "Minutos", min: "Minuto",
     hour: "Hora", hora: "Hora", hours: "Horas", horas: "Horas",
-    minute: "Minuto", minuto: "Minuto", minutes: "Minutos", minutos: "Minutos"
+    day: "Dia", dia: "Dia", days: "Dias", dias: "Dias",
+    month: "Mês", mes: "Mês", "mês": "Mês", months: "Meses", meses: "Meses",
+    year: "Ano", ano: "Ano", years: "Anos", anos: "Anos",
   };
   return mapa[low] ?? val;
 }
@@ -5934,7 +5941,44 @@ function t20HudGrimorioDuracaoDeObjeto(obj, depth = 0) {
 
   const traduz = (v) => t20HudGrimorioTraduzirDuracao(v);
 
-  const unitKeys = ["label", "name", "nome", "txt", "texto", "text", "tipo", "type", "unit", "unidade", "duration", "duracao", "duração"];
+  // Estrutura real observada no Tormenta20:
+  // duracao.units: scene/inst/day/sust/special
+  // duracao.value: 0/1/etc
+  // duracao.special: texto livre quando units = special, ou observações.
+  const unitsRaw = obj?.units ?? obj?.unit ?? obj?.unidade ?? obj?.tipo ?? obj?.type;
+  const valueRaw = obj?.value ?? obj?.valor ?? obj?.qtd ?? obj?.quantity ?? obj?.quantidade ?? obj?.amount;
+  const specialRaw = obj?.special ?? obj?.especial ?? obj?.custom ?? obj?.textoEspecial;
+
+  if (typeof unitsRaw === "string" && unitsRaw.trim()) {
+    const units = unitsRaw.trim();
+    const unitsLow = units.toLowerCase();
+    const special = String(specialRaw ?? "").trim();
+    const translated = traduz(units);
+
+    if (unitsLow === "special" || unitsLow === "especial") {
+      return special || "Especial";
+    }
+
+    const n = Number(valueRaw);
+    if (Number.isFinite(n) && n > 0) {
+      const pluralMap = {
+        day: n === 1 ? "Dia" : "Dias",
+        hour: n === 1 ? "Hora" : "Horas",
+        minute: n === 1 ? "Minuto" : "Minutos",
+        min: n === 1 ? "Minuto" : "Minutos",
+        month: n === 1 ? "Mês" : "Meses",
+        year: n === 1 ? "Ano" : "Anos",
+        round: n === 1 ? "Rodada" : "Rodadas",
+        turn: n === 1 ? "Turno" : "Turnos",
+        scene: n === 1 ? "Cena" : "Cenas",
+      };
+      return `${n} ${pluralMap[unitsLow] ?? translated}`;
+    }
+
+    return translated;
+  }
+
+  const unitKeys = ["label", "name", "nome", "txt", "texto", "text", "duration", "duracao", "duração"];
   const valueKeys = ["value", "valor", "qtd", "quantity", "quantidade", "amount"];
 
   let label = "";
@@ -5958,14 +6002,8 @@ function t20HudGrimorioDuracaoDeObjeto(obj, depth = 0) {
     }
   }
 
-  // No sistema T20/Foundry, muitos selects ficam salvos diretamente em "value".
-  // Ex.: { value: "sustentada" } ou { value: "Sustentada" }.
   if (typeof valRaw === "string" && valRaw.trim() && valRaw.trim() !== "0") {
-    const translatedValue = traduz(valRaw.trim());
-    if (label && !/^instant/i.test(label) && !/^instant/i.test(valRaw.trim()) && !/^sustent/i.test(valRaw.trim()) && !/^perman/i.test(valRaw.trim())) {
-      return `${translatedValue} ${traduz(label)}`;
-    }
-    return translatedValue;
+    return traduz(valRaw.trim());
   }
 
   if (label) {
