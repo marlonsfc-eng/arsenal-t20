@@ -4752,6 +4752,119 @@ function t20HudAprimCusto(txt) {
   return `${n >= 0 ? "" : "-"}${Math.abs(n)} PM`;
 }
 
+function t20HudAprimCustoDeObjeto(obj) {
+  const vistos = new Set();
+
+  const visitar = (v, path = "", depth = 0) => {
+    if (v === null || v === undefined || depth > 7) return null;
+
+    const pathOk = /(custo|cost|pm|mana)/i.test(path);
+
+    if (typeof v === "number" && Number.isFinite(v) && pathOk) return v;
+
+    if (typeof v === "string") {
+      if (pathOk) {
+        const direto = Number(v);
+        if (Number.isFinite(direto)) return direto;
+      }
+      const m = v.match(/([+-]?\d+)\s*PM\b/i);
+      if (m) return Number(m[1]);
+      return null;
+    }
+
+    if (typeof v !== "object") return null;
+    if (vistos.has(v)) return null;
+    vistos.add(v);
+
+    // Primeiro passa por campos com nomes prováveis, para evitar pegar números aleatórios.
+    for (const [k, val] of Object.entries(v)) {
+      const next = path ? `${path}.${k}` : k;
+      if (/(custo|cost|pm|mana)/i.test(next)) {
+        const r = visitar(val, next, depth + 1);
+        if (r !== null && r !== undefined && Number.isFinite(Number(r))) return Number(r);
+      }
+    }
+
+    for (const [k, val] of Object.entries(v)) {
+      const next = path ? `${path}.${k}` : k;
+      if (["img", "icon", "tint", "transfer", "disabled", "origin", "statuses", "changes"].includes(k)) continue;
+      const r = visitar(val, next, depth + 1);
+      if (r !== null && r !== undefined && Number.isFinite(Number(r))) return Number(r);
+    }
+
+    return null;
+  };
+
+  const n = visitar(obj);
+  if (!Number.isFinite(Number(n))) return "";
+  const num = Number(n);
+  return `${num >= 0 ? "" : "-"}${Math.abs(num)} PM`;
+}
+
+function t20HudAprimInfoDeEfeito(ef) {
+  if (!ef) return null;
+
+  const data = (() => {
+    try { return typeof ef.toObject === "function" ? ef.toObject() : ef; }
+    catch { return ef; }
+  })();
+
+  const nome = t20HudAprimTextoLimpo(
+    ef.name ??
+    ef.label ??
+    data?.name ??
+    data?.label ??
+    data?.system?.name ??
+    data?.system?.label ??
+    ""
+  );
+
+  const descricao = t20HudAprimTextoLimpo(
+    ef.description?.value ??
+    ef.description ??
+    ef.system?.description?.value ??
+    ef.system?.description ??
+    ef.system?.descricao?.value ??
+    ef.system?.descricao ??
+    data?.description?.value ??
+    data?.description ??
+    data?.system?.description?.value ??
+    data?.system?.description ??
+    data?.system?.descricao?.value ??
+    data?.system?.descricao ??
+    ""
+  );
+
+  const custo =
+    t20HudAprimCustoDeObjeto(ef) ||
+    t20HudAprimCustoDeObjeto(data) ||
+    t20HudAprimCusto(nome) ||
+    t20HudAprimCusto(descricao);
+
+  // Efeitos de uso da magia têm custo em PM no campo próprio. Se não houver custo,
+  // provavelmente é efeito temporário/condição normal, então ignoramos.
+  if (!custo) return null;
+
+  let texto = nome || descricao;
+  texto = texto
+    .replace(/^Efeito de Uso\s*:?\s*/i, "")
+    .replace(/^Efeitos? de Uso\s*:?\s*/i, "")
+    .replace(/^[+-]?\d+\s*PM\s*[:\-–—]?\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!texto || /^\d+\s*PM$/i.test(texto)) {
+    texto = descricao
+      .replace(/^[+-]?\d+\s*PM\s*[:\-–—]?\s*/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  if (!texto) return null;
+
+  return { custo, texto, raw: `${custo}: ${texto}` };
+}
+
 function t20HudAprimInfoTexto(txt, fallback = "") {
   let raw = t20HudAprimTextoLimpo(txt || fallback);
   if (!raw || !/PM\b/i.test(raw)) return null;
@@ -4829,10 +4942,21 @@ function t20HudAprimColetarDeItem(item) {
     addTexto(nome);
   };
 
-  // 1) ActiveEffects do item. Mantém somente efeitos com custo explícito no início
-  // ou efeitos nomeados com custo, para não pegar a descrição base da magia.
+  // 1) ActiveEffects do item. No T20, cada linha da aba "Efeitos de Uso"
+  // é um ActiveEffect com o texto no nome e o custo em PM em um campo próprio.
   const efeitos = item.effects ? Array.from(item.effects) : [];
   for (const ef of efeitos) {
+    const info = t20HudAprimInfoDeEfeito(ef);
+    if (info) {
+      const key = t20HudAprimNorm(`${info.custo} ${info.texto}`).slice(0, 240);
+      if (key && !vistos.has(key)) {
+        vistos.add(key);
+        saida.push(info);
+      }
+      continue;
+    }
+
+    // Fallback antigo para efeitos que por acaso guardem tudo como texto.
     addObjeto(ef);
   }
 
