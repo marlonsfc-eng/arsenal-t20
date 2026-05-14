@@ -219,6 +219,20 @@ Hooks.once("ready", () => {
     default: "arsenal",
   });
 
+  game.settings.register(MOD, "arsenalGrimorioLayout", {
+    name: "Layout do Grimório",
+    hint: "Define o layout visual da janela do Grimório. Padrão equilibra espaço e informação, Compacta mostra mais magias por tela e Estilizada usa cards maiores e mais completos.",
+    scope: "client",
+    config: true,
+    type: String,
+    choices: {
+      standard: "Padrão",
+      compact: "Compacta",
+      detailed: "Estilizada"
+    },
+    default: "standard",
+  });
+
   const ativas = [];
   if (game.settings.get(MOD, "autoAtaque"))      ativas.push("Ataque");
   if (game.settings.get(MOD, "autoSalvamento"))  ativas.push("Salvamento");
@@ -228,7 +242,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v1.6 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.0.3 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -4417,6 +4431,15 @@ function t20HudCastMode() {
   }
 }
 
+
+function t20HudGrimorioLayout() {
+  try {
+    return game.settings.get("arsenal-t20", "arsenalGrimorioLayout") ?? "standard";
+  } catch {
+    return "standard";
+  }
+}
+
 function t20HudTheme() {
   let key = "foundryClassic";
   try { key = game.settings.get("arsenal-t20", "arsenalHudColorTheme") ?? "foundryClassic"; } catch {}
@@ -5484,6 +5507,91 @@ function abrirArsenalGrimorio(actor, circulo) {
   _arsenalGrimorio.render(true);
 }
 
+function t20HudGrimorioValor(obj) {
+  if (obj === null || obj === undefined) return "";
+  if (typeof obj === "number" || typeof obj === "boolean") return String(obj);
+  if (typeof obj === "string") return t20HudAprimTextoLimpo(obj);
+  if (typeof obj === "object") {
+    for (const k of ["txt", "texto", "text", "value", "valor", "label", "name", "nome", "type", "tipo", "short", "abreviado", "resumo", "summary"]) {
+      const r = t20HudGrimorioValor(obj?.[k]);
+      if (r) return r;
+    }
+  }
+  return "";
+}
+
+function t20HudGrimorioPreviewDescricao(item, max = 170) {
+  const bruto =
+    item?.system?.description?.value ??
+    item?.system?.descricao?.value ??
+    item?.system?.description ??
+    item?.system?.descricao ??
+    item?.description?.value ??
+    item?.description ??
+    "";
+  let txt = t20HudAprimTextoLimpo(bruto);
+  if (!txt) return "";
+  txt = txt.replace(/^(arcana|divina|universal)\s*\d*[ºo]?\s*c[ií]rculo\s*/i, "").trim();
+  if (txt.length > max) txt = txt.slice(0, Math.max(0, max - 1)).trimEnd() + "…";
+  return txt;
+}
+
+function t20HudGrimorioInfoMagia(item, circulo = null) {
+  const custoBase = t20HudCustoBaseMagia(item);
+  const aprims = t20HudAprimColetarDeItem(item);
+  const execucao = t20HudGrimorioValor(
+    item?.system?.execucao ??
+    item?.system?.ativacao?.execucao ??
+    item?.system?.activation?.type ??
+    item?.system?.activation ??
+    item?.system?.execution
+  );
+  const alcance = t20HudGrimorioValor(
+    item?.system?.alcance ??
+    item?.system?.range ??
+    item?.system?.distancia
+  );
+  const duracao = t20HudGrimorioValor(
+    item?.system?.duracao ??
+    item?.system?.duration
+  );
+  const escola = t20HudGrimorioValor(
+    item?.system?.escola ??
+    item?.system?.school ??
+    item?.system?.tradicao ??
+    item?.system?.tradition
+  );
+  const alvo = t20HudGrimorioValor(
+    item?.system?.alvo ??
+    item?.system?.alvoAreaEfeito ??
+    item?.system?.target ??
+    item?.system?.area
+  );
+
+  const resObj = item?.system?.resistencia ?? item?.system?.resistance ?? {};
+  const resBase = t20HudGrimorioValor(resObj?.txt ?? resObj?.texto ?? resObj?.label ?? resObj);
+  const resPericia = t20HudGrimorioValor(resObj?.pericia ?? resObj?.ability ?? resObj?.atributo);
+  const resCd = t20HudGrimorioValor(resObj?.cd ?? resObj?.dc ?? resObj?.cdTexto);
+  let resistencia = resBase || resPericia;
+  if (!resistencia && resCd) resistencia = `CD ${resCd}`;
+  else if (resCd && !String(resistencia).includes("CD")) resistencia = `${resistencia} • CD ${resCd}`;
+
+  return {
+    custoBase,
+    custoLabel: `${custoBase} PM`,
+    aprimQtd: aprims.length,
+    aprimLabel: aprims.length ? `${aprims.length} aprim.` : "Sem aprim.",
+    execucao,
+    alcance,
+    duracao,
+    escola,
+    alvo,
+    resistencia,
+    preview: t20HudGrimorioPreviewDescricao(item),
+    circulo: circulo ?? t20HudExtrairCirculoMagia(item),
+  };
+}
+
 class ArsenalGrimorio extends Application {
   constructor(actor, circulo, options = {}) {
     super(options);
@@ -5497,7 +5605,7 @@ class ArsenalGrimorio extends Application {
     return foundry.utils.mergeObject(super.defaultOptions, {
       id: "arsenal-grimorio",
       title: "Grimório — Arsenal T20",
-      width: 360,
+      width: 380,
       height: "auto",
       resizable: true,
       minimizable: true,
@@ -5513,6 +5621,11 @@ class ArsenalGrimorio extends Application {
     return $(div);
   }
 
+  _layout() {
+    const raw = t20HudGrimorioLayout();
+    return ["standard", "compact", "detailed"].includes(raw) ? raw : "standard";
+  }
+
   _magias() {
     const q = String(this.busca ?? "").trim().toLowerCase();
     return t20HudTodasMagiasActor(this.actor)
@@ -5520,43 +5633,148 @@ class ArsenalGrimorio extends Application {
       .filter(item => !q || String(item.name ?? "").toLowerCase().includes(q));
   }
 
+  _layoutButton(layout, label, ativo, th) {
+    return `<button class="t20-grimorio-layout-btn" data-layout="${layout}" type="button"
+      style="padding:5px 8px;border-radius:999px;border:1px solid ${ativo ? th.accent : th.border};background:${ativo ? `${th.accent}22` : th.panel};color:${ativo ? th.title : th.text};cursor:pointer;font-size:0.77em;font-weight:${ativo ? "bold" : "normal"}">${label}</button>`;
+  }
+
+  _metaChip(label, value, th, opts = {}) {
+    if (!value) return "";
+    const strong = opts.strong ? `border-color:${th.accent};color:${th.title};` : "";
+    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:${opts.compact ? "2px 6px" : "4px 8px"};border-radius:999px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:${opts.compact ? "0.72em" : "0.78em"};${strong}">${label ? `<strong style="color:${th.muted};font-weight:600">${label}</strong>` : ""}<span>${value}</span></span>`;
+  }
+
+  _renderExpanded(item, th) {
+    const aprimQtd = t20HudAprimColetarDeItem(item).length;
+    return `<div style="padding:0 8px 8px">
+      <div style="font-size:0.78em;color:${th.muted};margin:2px 0 6px 2px">Aprimoramentos${aprimQtd ? ` (${aprimQtd})` : ""}</div>
+      ${t20HudHtmlAprimoramentosItem(item)}
+    </div>`;
+  }
+
+  _renderCompact(item, th) {
+    const aberta = this.expandidas.has(item.id);
+    const info = t20HudGrimorioInfoMagia(item, this.circulo);
+    return `<div style="margin-bottom:6px;border-radius:8px;background:linear-gradient(180deg,${th.panel2},${th.panel});border:1px solid ${th.border};overflow:hidden">
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 6px">
+        <button class="t20-grimorio-magia" data-item-id="${item.id}" title="Conjurar ${item.name}"
+          style="display:flex;align-items:center;gap:8px;flex:1;padding:1px;border:none;background:transparent;color:${th.text};cursor:pointer;text-align:left;min-width:0">
+          ${item.img ? `<img src="${item.img}" style="width:24px;height:24px;border-radius:5px;object-fit:cover;border:1px solid ${th.accent}55">` : `<span style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:${th.bg2}">🪄</span>`}
+          <span style="min-width:0;display:flex;align-items:center;gap:8px;flex:1">
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.9em">${item.name}</span>
+            <span style="flex:0 0 auto;padding:2px 6px;border-radius:999px;background:${th.panel};border:1px solid ${th.border};font-size:0.75em;color:${th.title}">${info.custoLabel}</span>
+          </span>
+        </button>
+        <button class="t20-grimorio-expandir" data-item-id="${item.id}" title="${aberta ? "Ocultar aprimoramentos" : "Consultar aprimoramentos"}"
+          style="width:28px;height:28px;border-radius:6px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-weight:bold">${aberta ? "▴" : "▾"}</button>
+      </div>
+      ${aberta ? this._renderExpanded(item, th) : ""}
+    </div>`;
+  }
+
+  _renderStandard(item, th) {
+    const aberta = this.expandidas.has(item.id);
+    const info = t20HudGrimorioInfoMagia(item, this.circulo);
+    const subMeta = [
+      info.execucao ? `Exec.: ${info.execucao}` : "",
+      info.alcance ? `Alc.: ${info.alcance}` : "",
+      info.duracao ? `Dur.: ${info.duracao}` : ""
+    ].filter(Boolean).join(" • ");
+
+    return `<div style="margin-bottom:8px;border-radius:10px;background:linear-gradient(180deg,${th.panel2},${th.panel});border:1px solid ${th.border};overflow:hidden;box-shadow:0 1px 0 ${th.border}33">
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 8px">
+        <button class="t20-grimorio-magia" data-item-id="${item.id}" title="Conjurar ${item.name}"
+          style="display:flex;align-items:center;gap:10px;flex:1;padding:0;border:none;background:transparent;color:${th.text};cursor:pointer;text-align:left;min-width:0">
+          ${item.img ? `<img src="${item.img}" style="width:30px;height:30px;border-radius:6px;object-fit:cover;border:1px solid ${th.accent}55">` : `<span style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:${th.bg2}">🪄</span>`}
+          <span style="min-width:0;flex:1;display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:0.94em;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</span>
+            <span style="font-size:0.74em;color:${th.muted};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${subMeta || info.aprimLabel}</span>
+          </span>
+        </button>
+        <div style="display:flex;align-items:center;gap:6px;flex:0 0 auto">
+          <span style="padding:3px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border};font-size:0.77em;color:${th.title};white-space:nowrap">${info.custoLabel}</span>
+          <button class="t20-grimorio-expandir" data-item-id="${item.id}" title="${aberta ? "Ocultar aprimoramentos" : "Consultar aprimoramentos"}"
+            style="width:30px;height:30px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-weight:bold">${aberta ? "▴" : "▾"}</button>
+        </div>
+      </div>
+      ${aberta ? this._renderExpanded(item, th) : ""}
+    </div>`;
+  }
+
+  _renderDetailed(item, th) {
+    const aberta = this.expandidas.has(item.id);
+    const info = t20HudGrimorioInfoMagia(item, this.circulo);
+    const chips = [
+      this._metaChip("Exec.", info.execucao, th),
+      this._metaChip("Alc.", info.alcance, th),
+      this._metaChip("Dur.", info.duracao, th),
+      this._metaChip("Res.", info.resistencia, th),
+      this._metaChip("Alvo", info.alvo, th),
+      this._metaChip("Escola", info.escola, th),
+    ].filter(Boolean).join("");
+
+    return `<div style="margin-bottom:12px;border-radius:14px;background:linear-gradient(180deg,${th.panel2},${th.panel});border:1px solid ${th.border};box-shadow:0 10px 24px ${th.bg2}22, inset 0 1px 0 ${th.accent}22;overflow:hidden">
+      <div style="padding:10px 10px 8px">
+        <div style="display:flex;gap:10px;align-items:flex-start">
+          ${item.img ? `<img src="${item.img}" style="width:42px;height:42px;border-radius:10px;object-fit:cover;border:1px solid ${th.accent}66;box-shadow:0 3px 8px ${th.bg2}22">` : `<span style="width:42px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:10px;background:${th.bg2};border:1px solid ${th.accent}55">🪄</span>`}
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+              <button class="t20-grimorio-magia" data-item-id="${item.id}" title="Conjurar ${item.name}"
+                style="padding:0;border:none;background:transparent;color:${th.title};cursor:pointer;text-align:left;min-width:0;flex:1">
+                <div style="font-size:1em;font-weight:700;line-height:1.2;word-break:break-word">${item.name}</div>
+              </button>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+                ${this._metaChip("", info.custoLabel, th, { strong: true })}
+                ${this._metaChip("", info.aprimLabel, th, { compact: true })}
+              </div>
+            </div>
+            ${info.preview ? `<div style="margin-top:6px;font-size:0.82em;line-height:1.35;color:${th.text}">${info.preview}</div>` : ""}
+          </div>
+        </div>
+        ${chips ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${chips}</div>` : ""}
+        <div style="display:flex;justify-content:flex-end;margin-top:8px">
+          <button class="t20-grimorio-expandir" data-item-id="${item.id}" title="${aberta ? "Ocultar aprimoramentos" : "Consultar aprimoramentos"}"
+            style="padding:6px 10px;border-radius:8px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-size:0.8em;font-weight:600">${aberta ? "Ocultar aprimoramentos ▴" : "Consultar aprimoramentos ▾"}</button>
+        </div>
+      </div>
+      ${aberta ? `<div style="padding:0 10px 10px">${this._renderExpanded(item, th)}</div>` : ""}
+    </div>`;
+  }
+
+  _renderMagia(item, layout, th) {
+    if (layout === "compact") return this._renderCompact(item, th);
+    if (layout === "detailed") return this._renderDetailed(item, th);
+    return this._renderStandard(item, th);
+  }
+
   _html() {
     const th = t20HudTheme();
     const magias = this._magias();
+    const layout = this._layout();
+    const countsLabel = `${magias.length} magia(s)`;
 
-    return `<div style="background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};
-      border-radius:8px;color:${th.text};font-family:serif;padding:10px;max-height:620px;display:flex;flex-direction:column">
+    return `<div style="background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};border-radius:8px;color:${th.text};font-family:serif;padding:10px;max-height:620px;display:flex;flex-direction:column">
       <div style="display:flex;align-items:center;gap:8px;border-bottom:1px solid ${th.accent}44;padding-bottom:8px;margin-bottom:8px">
         ${this.actor?.img ? `<img src="${this.actor.img}" style="width:34px;height:34px;border-radius:6px;object-fit:cover;border:1px solid ${th.accent}73">` : ""}
         <div style="min-width:0;flex:1">
           <div style="font-size:0.78em;color:${th.muted};text-transform:uppercase;letter-spacing:0.05em">Grimório — ${this.circulo}º Círculo</div>
           <div style="color:${th.title};font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.actor?.name ?? "Conjurador"}</div>
         </div>
-        <div style="font-size:0.82em;color:${th.muted}">${magias.length} magia(s)</div>
+        <div style="font-size:0.82em;color:${th.muted};white-space:nowrap">${countsLabel}</div>
       </div>
 
-      <input class="t20-grimorio-busca" type="text" placeholder="Buscar magia..."
-        value="${this.busca ?? ""}"
-        style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:7px 9px;border-radius:6px;
-        background:${th.panel};border:1px solid ${th.border};color:${th.text}">
+      <div style="position:sticky;top:0;z-index:2;background:linear-gradient(180deg,${th.bg1},${th.bg2});padding-bottom:8px;margin-bottom:2px">
+        <input class="t20-grimorio-busca" type="text" placeholder="Buscar magia..." value="${this.busca ?? ""}"
+          style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:${layout === "compact" ? "6px 9px" : "7px 9px"};border-radius:6px;background:${th.panel};border:1px solid ${th.border};color:${th.text}">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          ${this._layoutButton("standard", "Padrão", layout === "standard", th)}
+          ${this._layoutButton("compact", "Compacta", layout === "compact", th)}
+          ${this._layoutButton("detailed", "Estilizada", layout === "detailed", th)}
+        </div>
+      </div>
 
-      <div style="overflow:auto;min-height:0">
-        ${magias.length ? magias.map(item => {
-          const aberta = this.expandidas.has(item.id);
-          return `<div style="margin-bottom:6px;border-radius:8px;background:linear-gradient(180deg,${th.panel2},${th.panel});border:1px solid ${th.border};overflow:hidden">
-            <div style="display:flex;align-items:center;gap:6px;padding:6px">
-              <button class="t20-grimorio-magia" data-item-id="${item.id}" title="Conjurar ${item.name}"
-                style="display:flex;align-items:center;gap:8px;flex:1;padding:2px;border:none;background:transparent;color:${th.text};cursor:pointer;
-                font-size:0.92em;text-align:left;min-width:0">
-                ${item.img ? `<img src="${item.img}" style="width:28px;height:28px;border-radius:5px;object-fit:cover;border:1px solid ${th.accent}55">` : `<span style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:${th.bg2}">🪄</span>`}
-                <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</span>
-              </button>
-              <button class="t20-grimorio-expandir" data-item-id="${item.id}" title="${aberta ? "Ocultar aprimoramentos" : "Consultar aprimoramentos"}"
-                style="width:30px;height:30px;border-radius:6px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-weight:bold">${aberta ? "▴" : "▾"}</button>
-            </div>
-            ${aberta ? `<div style="padding:0 8px 8px">${t20HudHtmlAprimoramentosItem(item)}</div>` : ""}
-          </div>`;
-        }).join("") : `<div style="color:${th.muted};padding:12px;text-align:center">Nenhuma magia encontrada neste círculo.</div>`}
+      <div style="overflow:auto;min-height:0;padding-top:2px">
+        ${magias.length ? magias.map(item => this._renderMagia(item, layout, th)).join("") : `<div style="color:${th.muted};padding:12px;text-align:center">Nenhuma magia encontrada neste círculo.</div>`}
       </div>
     </div>`;
   }
@@ -5581,6 +5799,14 @@ class ArsenalGrimorio extends Application {
       const id = ev.currentTarget.dataset.itemId;
       if (this.expandidas.has(id)) this.expandidas.delete(id);
       else this.expandidas.add(id);
+      this.render(false);
+    });
+
+    html.find(".t20-grimorio-layout-btn").on("click", async ev => {
+      ev.preventDefault();
+      const layout = ev.currentTarget.dataset.layout;
+      if (!["standard", "compact", "detailed"].includes(layout)) return;
+      try { await game.settings.set("arsenal-t20", "arsenalGrimorioLayout", layout); } catch {}
       this.render(false);
     });
   }
