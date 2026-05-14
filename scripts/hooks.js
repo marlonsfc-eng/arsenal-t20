@@ -197,15 +197,6 @@ Hooks.once("ready", () => {
     default: "grimoire",
   });
 
-  game.settings.register(MOD, "melhorarDialogoMagias", {
-    name: "Painel auxiliar de aprimoramentos de magia",
-    hint: "Adiciona o botão Arsenal na janela de uso de magia para abrir um painel auxiliar mais organizado, sem modificar a janela original do sistema.",
-    scope: "client",
-    config: true,
-    type: Boolean,
-    default: true,
-  });
-
   const ativas = [];
   if (game.settings.get(MOD, "autoAtaque"))      ativas.push("Ataque");
   if (game.settings.get(MOD, "autoSalvamento"))  ativas.push("Salvamento");
@@ -4729,6 +4720,147 @@ function t20HudMagiasPorCirculo(actor) {
   return grupos;
 }
 
+
+// ============================================================
+// GRIMÓRIO — CONSULTA RÁPIDA DE APRIMORAMENTOS
+// ============================================================
+
+function t20HudAprimTextoLimpo(str) {
+  const s = String(str ?? "");
+  try {
+    const div = document.createElement("div");
+    div.innerHTML = s;
+    return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
+  } catch {
+    return s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  }
+}
+
+function t20HudAprimNorm(str) {
+  return t20HudAprimTextoLimpo(str)
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function t20HudAprimCusto(txt) {
+  const m = String(txt ?? "").match(/([+-]?\d+)\s*PM\b/i);
+  if (!m) return "";
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return "";
+  return `${n >= 0 ? "" : "-"}${Math.abs(n)} PM`;
+}
+
+function t20HudAprimInfoTexto(txt, fallback = "") {
+  const raw = t20HudAprimTextoLimpo(txt || fallback);
+  if (!raw || !/PM\b/i.test(raw)) return null;
+
+  const custo = t20HudAprimCusto(raw);
+  let texto = raw
+    .replace(/^Efeitos? de Uso\s*/i, "")
+    .replace(/^Aprimoramentos?\s*/i, "")
+    .replace(/^[•\-–—\s]*/, "")
+    .replace(/^[+-]?\d+\s*PM\s*[:\-–—]?\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!texto && raw) texto = raw;
+  if (!custo && !texto) return null;
+
+  return {
+    custo: custo || "—",
+    texto: texto || "(sem descrição)",
+    raw,
+  };
+}
+
+function t20HudAprimColetarDeItem(item) {
+  if (!item) return [];
+
+  const saida = [];
+  const vistos = new Set();
+
+  const addTexto = (txt, hint = "") => {
+    const info = t20HudAprimInfoTexto(txt, hint);
+    if (!info) return;
+
+    const key = t20HudAprimNorm(`${info.custo} ${info.texto}`).slice(0, 240);
+    if (!key || vistos.has(key)) return;
+    vistos.add(key);
+    saida.push(info);
+  };
+
+  // 1) Principal: ActiveEffects do item, que normalmente correspondem à aba "Efeitos de Uso".
+  const efeitos = item.effects ? Array.from(item.effects) : [];
+  for (const ef of efeitos) {
+    const partes = [
+      ef?.name,
+      ef?.label,
+      ef?.description,
+      ef?.description?.value,
+      ef?.system?.description,
+      ef?.system?.description?.value,
+      ef?.system?.descricao,
+      ef?.system?.descricao?.value,
+      ef?.flags?.tormenta20?.description,
+      ef?.flags?.tormenta20?.descricao,
+      ef?.changes?.map?.(c => `${c?.key ?? ""} ${c?.value ?? ""}`).join(" "),
+    ].filter(Boolean).join(" — ");
+    addTexto(partes, ef?.name ?? ef?.label ?? "");
+  }
+
+  // 2) Fallback: campos internos do item.system que possam guardar efeitos de uso.
+  const visitar = (obj, depth = 0) => {
+    if (!obj || typeof obj !== "object" || depth > 5) return;
+
+    if (Array.isArray(obj)) {
+      for (const v of obj) visitar(v, depth + 1);
+      return;
+    }
+
+    const textoObj = [
+      obj.name, obj.nome, obj.label, obj.title, obj.titulo,
+      obj.text, obj.texto, obj.description, obj.descricao,
+      obj.description?.value, obj.descricao?.value,
+      obj.effect, obj.efeito, obj.value,
+    ].filter(Boolean).join(" — ");
+
+    if (/PM\b/i.test(textoObj)) addTexto(textoObj);
+
+    for (const [k, v] of Object.entries(obj)) {
+      if (["img", "ownership", "permission", "folder", "sort", "_stats"].includes(k)) continue;
+      if (typeof v === "string") {
+        if (/PM\b/i.test(v)) addTexto(v);
+      } else if (v && typeof v === "object") {
+        visitar(v, depth + 1);
+      }
+    }
+  };
+
+  visitar(item.system ?? {}, 0);
+
+  return saida;
+}
+
+function t20HudHtmlAprimoramentosItem(item) {
+  const aprim = t20HudAprimColetarDeItem(item);
+  if (!aprim.length) {
+    return `<div style="font-size:0.82em;color:#9ca3af;padding:8px 10px;border:1px dashed #374151;border-radius:7px;margin-top:6px">Nenhum aprimoramento detectado nos efeitos da magia.</div>`;
+  }
+
+  return `<div style="margin-top:7px;display:flex;flex-direction:column;gap:6px">
+    ${aprim.map(a => `
+      <div style="padding:8px;border-radius:8px;background:#0f172a;border:1px solid #303b52;border-left:3px solid #8b5cf6">
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <span style="flex:0 0 auto;min-width:44px;text-align:center;padding:3px 6px;border-radius:999px;background:#2c2140;border:1px solid #8b5cf6;color:#ddd6fe;font-weight:bold;font-size:0.78em">${a.custo}</span>
+          <span style="color:#dbe2ef;line-height:1.3;font-size:0.86em">${a.texto}</span>
+        </div>
+      </div>
+    `).join("")}
+  </div>`;
+}
+
 let _arsenalGrimorio = null;
 
 function abrirArsenalGrimorio(actor, circulo) {
@@ -4744,6 +4876,7 @@ class ArsenalGrimorio extends Application {
     this.actor = actor;
     this.circulo = Number(circulo);
     this.busca = "";
+    this.expandidas = new Set();
   }
 
   static get defaultOptions() {
@@ -4793,14 +4926,22 @@ class ArsenalGrimorio extends Application {
         background:#0f172a;border:1px solid #303b52;color:#e5e7eb">
 
       <div style="overflow:auto;min-height:0">
-        ${magias.length ? magias.map(item => `
-          <button class="t20-grimorio-magia" data-item-id="${item.id}" title="${item.name}"
-            style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;margin-bottom:5px;border-radius:7px;
-            background:linear-gradient(180deg,#182235,#111827);border:1px solid #374151;color:#e5e7eb;cursor:pointer;
-            font-size:0.92em;text-align:left;min-width:0">
-            ${item.img ? `<img src="${item.img}" style="width:28px;height:28px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.35)">` : `<span style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:#0f172a">🪄</span>`}
-            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</span>
-          </button>`).join("") : `<div style="color:#9ca3af;padding:12px;text-align:center">Nenhuma magia encontrada neste círculo.</div>`}
+        ${magias.length ? magias.map(item => {
+          const aberta = this.expandidas.has(item.id);
+          return `<div style="margin-bottom:6px;border-radius:8px;background:linear-gradient(180deg,#182235,#111827);border:1px solid #374151;overflow:hidden">
+            <div style="display:flex;align-items:center;gap:6px;padding:6px">
+              <button class="t20-grimorio-magia" data-item-id="${item.id}" title="Conjurar ${item.name}"
+                style="display:flex;align-items:center;gap:8px;flex:1;padding:2px;border:none;background:transparent;color:#e5e7eb;cursor:pointer;
+                font-size:0.92em;text-align:left;min-width:0">
+                ${item.img ? `<img src="${item.img}" style="width:28px;height:28px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.35)">` : `<span style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:#0f172a">🪄</span>`}
+                <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</span>
+              </button>
+              <button class="t20-grimorio-expandir" data-item-id="${item.id}" title="${aberta ? "Ocultar aprimoramentos" : "Consultar aprimoramentos"}"
+                style="width:30px;height:30px;border-radius:6px;background:#1f2937;border:1px solid #64748b;color:#e5e7eb;cursor:pointer;font-weight:bold">${aberta ? "▴" : "▾"}</button>
+            </div>
+            ${aberta ? `<div style="padding:0 8px 8px">${t20HudHtmlAprimoramentosItem(item)}</div>` : ""}
+          </div>`;
+        }).join("") : `<div style="color:#9ca3af;padding:12px;text-align:center">Nenhuma magia encontrada neste círculo.</div>`}
       </div>
     </div>`;
   }
@@ -4815,6 +4956,15 @@ class ArsenalGrimorio extends Application {
 
     html.find(".t20-grimorio-magia").on("click", async ev => {
       await t20HudUsarItem(this.actor, ev.currentTarget.dataset.itemId);
+    });
+
+    html.find(".t20-grimorio-expandir").on("click", ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const id = ev.currentTarget.dataset.itemId;
+      if (this.expandidas.has(id)) this.expandidas.delete(id);
+      else this.expandidas.add(id);
+      this.render(false);
     });
   }
 }
@@ -5578,439 +5728,6 @@ function t20ExtrairCustoLinhaMagia(row) {
   if (m) return `${Number(m[1]) >= 0 ? "+" : ""}${Number(m[1])} PM`;
   return "";
 }
-
-function t20ElementoTexto(el) {
-  return String(el?.innerText ?? el?.textContent ?? "").replace(/\s+/g, " ").trim();
-}
-
-function t20AprimRoot(app) {
-  let root = null;
-
-  const candidatos = [
-    app?.element,
-    app?._element,
-    app?.form,
-  ].filter(Boolean);
-
-  for (const c of candidatos) {
-    root = c instanceof jQuery ? c[0] : c;
-    if (root?.querySelector || root?.classList) break;
-  }
-
-  if (!root && app?.appId) root = document.getElementById(`app-${app.appId}`);
-  if (!root && app?.id) root = document.getElementById(String(app.id));
-
-  return root;
-}
-
-function t20AprimForm(app) {
-  const root = t20AprimRoot(app);
-  if (!root) return null;
-  if (root.matches?.("#ability-use-form, form")) return root;
-  return root.querySelector?.("#ability-use-form, form") ?? null;
-}
-
-function t20AprimItem(app) {
-  const candidatos = [
-    app?.item,
-    app?.object,
-    app?.document,
-    app?.options?.item,
-    app?.options?.object,
-    app?.options?.document,
-    app?.options?.ability,
-    app?.ability,
-  ].filter(Boolean);
-
-  for (const c of candidatos) {
-    if (c?.name && (c?.system || c?.effects || c?.type)) return c;
-  }
-
-  // Fallback por título da janela: tenta achar a magia no ator do usuário/token.
-  const root = t20AprimRoot(app);
-  const titulo = root?.querySelector?.(".window-title")?.textContent ?? app?.title ?? app?.options?.title ?? "";
-  const nome = String(titulo).replace(/Configura[cç][aã]o de uso de magia\s*:\s*/i, "").trim();
-  const actor = t20HudActorSelecionado?.();
-  if (nome && actor?.items) {
-    return Array.from(actor.items).find(i => String(i.name ?? "").trim().toLowerCase() === nome.toLowerCase()) ?? null;
-  }
-
-  return null;
-}
-
-function t20AprimTextoLimpo(str) {
-  const s = String(str ?? "");
-  try {
-    const div = document.createElement("div");
-    div.innerHTML = s;
-    return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
-  } catch {
-    return s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-  }
-}
-
-function t20AprimNorm(str) {
-  return t20AprimTextoLimpo(str).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-}
-
-function t20AprimCustoDeTexto(txt) {
-  const m = String(txt ?? "").match(/([+-]?\d+)\s*PM\b/i);
-  if (!m) return "";
-  const n = Number(m[1]);
-  return `${n >= 0 ? "" : "-"}${Math.abs(n)} PM`;
-}
-
-function t20AprimInfoDeTexto(txt, fallback = "") {
-  let raw = t20AprimTextoLimpo(txt || fallback);
-  if (!raw) return null;
-
-  const custo = t20AprimCustoDeTexto(raw);
-  let texto = raw
-    .replace(/^Efeitos? de Uso\s*/i, "")
-    .replace(/^Aprimoramentos?\s*/i, "")
-    .replace(/^[•\-–—\s]*/, "")
-    .replace(/^[+-]?\d+\s*PM\s*[:\-–—]?\s*/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  // Nomes curtos como "Magia Discreta" são válidos; não descartar.
-  if (!texto && raw) texto = raw;
-
-  if (!custo && !/PM\b/i.test(raw)) return null;
-  return { custo, texto: texto || "(sem descrição)", raw };
-}
-
-function t20AprimColetarEfeitosItem(app) {
-  const item = t20AprimItem(app);
-  if (!item) return [];
-
-  const saida = [];
-  const vistos = new Set();
-
-  const addTexto = (txt, hint = "") => {
-    const info = t20AprimInfoDeTexto(txt, hint);
-    if (!info) return;
-    const key = t20AprimNorm(`${info.custo} ${info.texto}`).slice(0, 220);
-    if (!key || vistos.has(key)) return;
-    vistos.add(key);
-    saida.push(info);
-  };
-
-  // 1) Efeitos embutidos do item: normalmente a aba "Efeitos de Uso" do T20.
-  const effects = item.effects ? Array.from(item.effects) : [];
-  for (const ef of effects) {
-    const partes = [
-      ef?.name,
-      ef?.label,
-      ef?.description,
-      ef?.description?.value,
-      ef?.system?.description,
-      ef?.system?.description?.value,
-      ef?.system?.descricao,
-      ef?.system?.descricao?.value,
-      ef?.flags?.tormenta20?.description,
-      ef?.flags?.tormenta20?.descricao,
-      ef?.changes?.map?.(c => `${c?.key ?? ""} ${c?.value ?? ""}`).join(" "),
-    ].filter(Boolean).join(" — ");
-    addTexto(partes, ef?.name ?? ef?.label ?? "");
-  }
-
-  // 2) Campos comuns dentro do system, incluindo possíveis arrays de efeitos de uso.
-  const visitar = (obj, depth = 0) => {
-    if (!obj || typeof obj !== "object" || depth > 5) return;
-
-    if (Array.isArray(obj)) {
-      for (const v of obj) visitar(v, depth + 1);
-      return;
-    }
-
-    const textoObj = [
-      obj.name, obj.nome, obj.label, obj.title, obj.titulo,
-      obj.text, obj.texto, obj.description, obj.descricao,
-      obj.description?.value, obj.descricao?.value,
-      obj.effect, obj.efeito, obj.value,
-    ].filter(Boolean).join(" — ");
-
-    if (/PM\b/i.test(textoObj)) addTexto(textoObj);
-
-    for (const [k, v] of Object.entries(obj)) {
-      if (["img", "ownership", "permission", "folder", "sort", "_stats"].includes(k)) continue;
-      if (typeof v === "string") {
-        if (/PM\b/i.test(v)) addTexto(v);
-      } else if (v && typeof v === "object") {
-        visitar(v, depth + 1);
-      }
-    }
-  };
-  visitar(item.system ?? {}, 0);
-
-  return saida;
-}
-
-function t20AprimRows(app) {
-  const root = t20AprimRoot(app);
-  const form = t20AprimForm(app) ?? root;
-  if (!form) return [];
-
-  let rows = Array.from(form.querySelectorAll("table tbody tr, table tr, tr"))
-    .filter(row => {
-      const txt = t20ElementoTexto(row);
-      if (!txt || !/PM\b/i.test(txt)) return false;
-      if (/Aplicar\s+Nome/i.test(txt)) return false;
-      if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção|Dano\s*:/i.test(txt)) return false;
-      return row.querySelector("input, button");
-    });
-
-  if (!rows.length) {
-    rows = Array.from(form.querySelectorAll(".form-group, .form-fields, .form-row, .flexrow, div"))
-      .filter(el => {
-        const txt = t20ElementoTexto(el);
-        if (!txt || !/PM\b/i.test(txt)) return false;
-        if (/Custo de Mana Total|Melhor\/Pior|Roll Mode|Lançar Magia|Preparar Poção|Dano\s*:/i.test(txt)) return false;
-        return el.querySelector("input, button");
-      });
-
-    rows = rows.filter(el => !rows.some(other => other !== el && el.contains(other)));
-  }
-
-  const efeitosItem = t20AprimColetarEfeitosItem(app);
-  const usados = new Set();
-
-  return rows.map((row, index) => {
-    const cells = Array.from(row.querySelectorAll("td"));
-    const aplicar = cells.find(c => c.querySelector("input, button")) ?? row.querySelector("input, button")?.closest("td, div") ?? cells[0] ?? row;
-
-    const rowTxt = t20ElementoTexto(row).replace(/^Aplicar\s+Nome\s*/i, "").trim();
-    const custo = String(
-      t20ElementoTexto(aplicar).match(/([+-]?\d+)\s*PM/i)?.[0] ??
-      rowTxt.match(/([+-]?\d+)\s*PM/i)?.[0] ??
-      ""
-    );
-
-    let efeito = null;
-
-    // 1) Preferência: mesmo índice da lista de efeitos do item, pois o diálogo segue a ordem da aba Efeitos de Uso.
-    if (efeitosItem[index]) efeito = efeitosItem[index];
-
-    // 2) Fallback: primeiro efeito ainda não usado com mesmo custo.
-    if (!efeito && custo) {
-      const custoNorm = custo.replace(/^\+/, "").toLowerCase();
-      efeito = efeitosItem.find((e, i) => !usados.has(i) && String(e.custo ?? "").replace(/^\+/, "").toLowerCase() === custoNorm);
-    }
-
-    if (efeito) {
-      const idxEf = efeitosItem.indexOf(efeito);
-      if (idxEf >= 0) usados.add(idxEf);
-    }
-
-    // 3) Fallback final: tenta extrair do próprio diálogo.
-    const textosCelulas = cells
-      .map(c => ({ el: c, txt: t20ElementoTexto(c) }))
-      .filter(o => o.txt && !/^Aplicar$/i.test(o.txt))
-      .map(o => ({
-        ...o,
-        clean: o.txt
-          .replace(/^Aplicar\s*/i, "")
-          .replace(/^[+\-]?\d+\s*PM\s*/i, "")
-          .trim()
-      }));
-
-    const melhor = textosCelulas
-      .filter(o => o.el !== aplicar)
-      .sort((a, b) => b.clean.length - a.clean.length)[0];
-
-    let textoDesc = efeito?.texto ?? melhor?.clean ?? "";
-    textoDesc = String(textoDesc)
-      .replace(/^[+\-]?\d+\s*PM\s*[:\-–—]?\s*/i, "")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    const desc = melhor?.el ?? cells[cells.length - 1] ?? row;
-    return {
-      index,
-      row,
-      aplicar,
-      desc,
-      custo: efeito?.custo || custo,
-      texto: textoDesc || "(sem descrição)",
-      fonte: efeito ? "item" : "dialogo",
-    };
-  });
-}
-
-function t20AprimSelecionado(row) {
-  const checked = !!row.querySelector?.("input[type='checkbox']:checked");
-  const qtd = Array.from(row.querySelectorAll?.("input[type='number'], input:not([type])") ?? [])
-    .some(inp => Number(inp.value) > 0);
-  return checked || qtd;
-}
-
-function t20AprimAtivar(row) {
-  const cb = row.querySelector?.("input[type='checkbox']");
-  if (cb) {
-    if (!cb.checked) cb.click();
-    return true;
-  }
-
-  const plus = Array.from(row.querySelectorAll?.("button") ?? [])
-    .find(btn => String(btn.textContent ?? "").trim() === "+");
-  if (plus) {
-    plus.click();
-    return true;
-  }
-
-  const input = row.querySelector?.("input[type='number'], input:not([type])");
-  if (input) {
-    input.value = String(Math.max(1, Number(input.value) || 0));
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
-  }
-
-  return false;
-}
-
-function t20AprimDesativar(row) {
-  const cb = row.querySelector?.("input[type='checkbox']");
-  if (cb) {
-    if (cb.checked) cb.click();
-    return true;
-  }
-
-  const input = row.querySelector?.("input[type='number'], input:not([type])");
-  if (input) {
-    input.value = "0";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
-  }
-
-  return false;
-}
-
-let _arsenalAprimoramentos = null;
-
-function abrirArsenalAprimoramentos(app) {
-  if (!app) return ui.notifications.warn("Janela de magia não encontrada.");
-  if (_arsenalAprimoramentos?.rendered) _arsenalAprimoramentos.close();
-  _arsenalAprimoramentos = new ArsenalAprimoramentosDialog(app);
-  _arsenalAprimoramentos.render(true);
-}
-
-class ArsenalAprimoramentosDialog extends Application {
-  constructor(sourceApp, options = {}) {
-    super(options);
-    this.sourceApp = sourceApp;
-    this.busca = "";
-  }
-
-  static get defaultOptions() {
-    return foundry.utils.mergeObject(super.defaultOptions, {
-      id: "arsenal-aprimoramentos-dialog",
-      title: "Aprimoramentos — Arsenal T20",
-      width: 460,
-      height: 620,
-      resizable: true,
-      minimizable: true,
-    });
-  }
-
-  async getData() { return {}; }
-  get template() { return null; }
-
-  async _renderInner() {
-    const div = document.createElement("div");
-    div.innerHTML = this._html();
-    return $(div);
-  }
-
-  _rowsFiltradas() {
-    const q = String(this.busca ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    return t20AprimRows(this.sourceApp).filter(r => {
-      const txt = `${r.custo} ${r.texto}`.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      return !q || txt.includes(q);
-    });
-  }
-
-  _html() {
-    const root = t20AprimRoot(this.sourceApp);
-    const titulo = root?.querySelector?.(".window-title")?.textContent ?? this.sourceApp?.title ?? "Magia";
-    const rows = this._rowsFiltradas();
-
-    return `<div style="height:100%;box-sizing:border-box;display:flex;flex-direction:column;background:linear-gradient(180deg,#111827,#0b1020);border:1px solid #374151;border-top:3px solid #c9a227;border-radius:8px;color:#e5e7eb;font-family:serif;padding:10px">
-      <div style="border-bottom:1px solid rgba(201,162,39,0.25);padding-bottom:8px;margin-bottom:8px">
-        <div style="font-size:0.78em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">Painel auxiliar</div>
-        <div style="font-weight:bold;color:#f2e6c9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${titulo}</div>
-        <div style="font-size:0.82em;color:#9ca3af;margin-top:2px">A janela original do sistema permanece intacta.</div>
-        <button class="t20-aprim-refresh" style="margin-top:7px;padding:4px 8px;border-radius:6px;border:1px solid #64748b;background:#1f2937;color:#e5e7eb;cursor:pointer">Atualizar lista</button>
-      </div>
-
-      <input class="t20-aprim-search" type="text" value="${this.busca ?? ""}" placeholder="Filtrar aprimoramentos..."
-        style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:7px 9px;border-radius:6px;background:#0f172a;border:1px solid #303b52;color:#e5e7eb">
-
-      <div style="overflow:auto;min-height:0;flex:1;padding-right:4px">
-        ${rows.length ? rows.map(r => {
-          const selected = t20AprimSelecionado(r.row);
-          return `<div class="t20-aprim-card" data-index="${r.index}"
-            style="margin-bottom:8px;padding:9px;border-radius:9px;border:1px solid ${selected ? "#60a5fa" : "#374151"};border-left:4px solid ${selected ? "#60a5fa" : "#8b5cf6"};background:${selected ? "linear-gradient(180deg,#172554,#111827)" : "linear-gradient(180deg,#182235,#111827)"}">
-            <div style="display:flex;align-items:flex-start;gap:8px">
-              <div style="min-width:58px;text-align:center;padding:4px 6px;border-radius:999px;background:#2c2140;border:1px solid #8b5cf6;color:#ddd6fe;font-weight:bold;font-size:0.86em">${r.custo || "PM"}</div>
-              <div style="flex:1;min-width:0;color:#e5e7eb;line-height:1.35">${r.texto || "(sem descrição)"}</div>
-            </div>
-            <div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end">
-              <button class="t20-aprim-focus" data-index="${r.index}" style="padding:5px 8px;border-radius:6px;border:1px solid #64748b;background:#1f2937;color:#e5e7eb;cursor:pointer">Ver na janela</button>
-              <button class="t20-aprim-toggle" data-index="${r.index}" style="padding:5px 8px;border-radius:6px;border:1px solid ${selected ? "#f87171" : "#34d399"};background:${selected ? "#3b151b" : "#14351f"};color:${selected ? "#fecaca" : "#bbf7d0"};font-weight:bold;cursor:pointer">${selected ? "Remover" : "Selecionar"}</button>
-            </div>
-          </div>`;
-        }).join("") : `<div style="color:#9ca3af;text-align:center;padding:18px">Nenhum aprimoramento encontrado.</div>`}
-      </div>
-    </div>`;
-  }
-
-  activateListeners(html) {
-    super.activateListeners(html);
-
-    html.find(".t20-aprim-search").on("input", ev => {
-      this.busca = ev.currentTarget.value ?? "";
-      this.render(false);
-    });
-
-    html.find(".t20-aprim-refresh").on("click", ev => {
-      ev.preventDefault();
-      this.render(false);
-    });
-
-    html.find(".t20-aprim-focus").on("click", ev => {
-      const index = Number(ev.currentTarget.dataset.index);
-      const row = t20AprimRows(this.sourceApp).find(r => r.index === index)?.row;
-      if (!row) return;
-      row.scrollIntoView({ behavior: "smooth", block: "center" });
-      row.style.outline = "3px solid #8b5cf6";
-      setTimeout(() => row.style.outline = "", 1600);
-    });
-
-    html.find(".t20-aprim-toggle").on("click", ev => {
-      const index = Number(ev.currentTarget.dataset.index);
-      const row = t20AprimRows(this.sourceApp).find(r => r.index === index)?.row;
-      if (!row) return;
-      if (t20AprimSelecionado(row)) t20AprimDesativar(row);
-      else t20AprimAtivar(row);
-      setTimeout(() => this.render(false), 80);
-    });
-  }
-}
-
-
-Hooks.on("getAbilityUseDialogHeaderButtons", (app, buttons) => {
-  try {
-    buttons.unshift({
-      label: "Arsenal",
-      class: "arsenal-t20-open-aprim-panel",
-      icon: "fas fa-wand-magic-sparkles",
-      onclick: () => abrirArsenalAprimoramentos(app),
-    });
-  } catch {}
-});
 
 // ── Card de controle de PM ───────────────────────────────────
 
