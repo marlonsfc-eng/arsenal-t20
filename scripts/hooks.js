@@ -5233,7 +5233,7 @@ function t20HudHtmlAprimoramentosItem(item) {
     ${aprim.map(a => `
       <div style="padding:7px;border-radius:8px;background:${th.panel};border:1px solid ${th.border};border-left:3px solid ${th.accent}">
         <div style="display:flex;gap:8px;align-items:flex-start">
-          <span style="flex:0 0 auto;min-width:44px;text-align:center;padding:3px 6px;border-radius:999px;background:${th.panel2};border:1px solid ${th.accent};color:${th.accent2};font-weight:bold;font-size:0.86em">${a.custo}</span>
+          <span style="flex:0 0 auto;min-width:44px;text-align:center;padding:3px 6px;border-radius:999px;background:${th.panel2};border:1px solid ${th.accent};color:${th.accent2};font-weight:bold;font-size:0.9em">${a.custo}</span>
           <span style="color:${th.text};line-height:1.38;font-size:0.94em">${a.texto}</span>
         </div>
       </div>
@@ -5638,8 +5638,8 @@ class ArsenalConjurarMagiaDialog extends Application {
 
       ${this._renderInfoBasica(th)}
 
-      ${this.mostrarDescricao ? `<div style="margin:-2px 0 9px;padding:9px 10px;max-height:210px;overflow:auto;border-radius:8px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:0.9em;line-height:1.4">
-        <div style="font-size:0.76em;text-transform:uppercase;letter-spacing:0.04em;color:${th.muted};margin-bottom:5px">Descrição original</div>
+      ${this.mostrarDescricao ? `<div style="margin:-2px 0 9px;padding:9px 10px;max-height:210px;overflow:auto;border-radius:8px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:1em;line-height:1.5">
+        <div style="font-size:0.78em;text-transform:uppercase;letter-spacing:0.04em;color:${th.muted};margin-bottom:5px">Descrição original</div>
         <div>${this._descricaoCompleta()}</div>
       </div>` : ""}
 
@@ -5664,7 +5664,7 @@ class ArsenalConjurarMagiaDialog extends Application {
             style="width:100%;box-sizing:border-box;text-align:left;margin-bottom:7px;padding:9px;border-radius:9px;border:1px solid ${sel ? th.accent2 : th.border};border-left:4px solid ${sel ? th.accent2 : th.accent};background:${sel ? `linear-gradient(180deg,${th.panel2},${th.panel})` : `linear-gradient(180deg,${th.panel},${th.bg2})`};color:${th.text};cursor:${cumulativo ? "default" : "pointer"}">
             <div style="display:flex;gap:8px;align-items:flex-start">
               <span style="flex:0 0 auto;min-width:48px;text-align:center;padding:3px 7px;border-radius:999px;background:${th.panel2};border:1px solid ${th.accent};color:${th.accent2};font-weight:bold;font-size:0.86em">${a.custo}</span>
-              <span style="flex:1;line-height:1.34;font-size:0.94em">${a.texto}</span>
+              <span style="flex:1;line-height:1.45;font-size:1.02em">${a.texto}</span>
               ${cumulativo ? `<span class="t20-cast-aprim-qty" style="flex:0 0 auto;display:inline-flex;align-items:center;gap:4px">
                 <button class="t20-cast-aprim-minus" data-index="${a.index}" type="button" title="Remover uma aplicação" style="width:24px;height:24px;border-radius:6px;border:1px solid ${th.border};background:${th.panel2};color:${th.text};font-weight:bold;cursor:pointer">−</button>
                 <span style="min-width:22px;text-align:center;padding:3px 5px;border-radius:5px;border:1px solid ${th.border};background:${th.panel};font-weight:bold;color:${sel ? th.accent2 : th.text}">${qtd}</span>
