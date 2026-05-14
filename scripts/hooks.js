@@ -4801,6 +4801,47 @@ function t20HudAprimCustoDeObjeto(obj) {
   return `${num >= 0 ? "" : "-"}${Math.abs(num)} PM`;
 }
 
+function t20HudAprimNumeroCustoDeObjeto(obj) {
+  const custo = t20HudAprimCustoDeObjeto(obj);
+  if (!custo) return null;
+  const m = String(custo).match(/(-?\d+)\s*PM/i);
+  return m ? Number(m[1]) : null;
+}
+
+function t20HudAprimFlagEfeitoUso(obj) {
+  const vistos = new Set();
+
+  const testarValor = (v) => {
+    if (v === true || v === 1) return true;
+    if (typeof v === "string" && /^(true|sim|yes|1|on)$/i.test(v.trim())) return true;
+    return false;
+  };
+
+  const visitar = (v, path = "", depth = 0) => {
+    if (!v || typeof v !== "object" || depth > 7) return false;
+    if (vistos.has(v)) return false;
+    vistos.add(v);
+
+    for (const [k, val] of Object.entries(v)) {
+      const next = path ? `${path}.${k}` : k;
+
+      // Nomes prováveis para o checkbox "Efeito de Uso".
+      if (/(efeito.?de.?uso|efeito.?uso|effect.?use|use.?effect|on.?use|onuse|usar.?efeito|aplicar.?uso)/i.test(next)) {
+        if (testarValor(val)) return true;
+        if (val && typeof val === "object" && visitar(val, next, depth + 1)) return true;
+      }
+    }
+
+    return false;
+  };
+
+  return visitar(obj);
+}
+
+function t20HudAprimNomePareceUso(nome) {
+  return /^[\s•\-–—]*(?:truque\b|[+-]?\d+\s*PM\b)/i.test(String(nome ?? ""));
+}
+
 function t20HudAprimInfoDeEfeito(ef) {
   if (!ef) return null;
 
@@ -4841,9 +4882,22 @@ function t20HudAprimInfoDeEfeito(ef) {
     t20HudAprimCusto(nome) ||
     t20HudAprimCusto(descricao);
 
-  // Efeitos de uso da magia têm custo em PM no campo próprio. Se não houver custo,
-  // provavelmente é efeito temporário/condição normal, então ignoramos.
   if (!custo) return null;
+
+  const custoNum =
+    t20HudAprimNumeroCustoDeObjeto(ef) ??
+    t20HudAprimNumeroCustoDeObjeto(data) ??
+    Number(String(custo).match(/(-?\d+)\s*PM/i)?.[1] ?? NaN);
+
+  const flagUso = t20HudAprimFlagEfeitoUso(ef) || t20HudAprimFlagEfeitoUso(data);
+  const nomePareceUso = t20HudAprimNomePareceUso(nome) || t20HudAprimNomePareceUso(descricao);
+
+  // Ignora "Efeitos Temporários" e "Efeitos Passivos". Eles costumam ter custo 0
+  // no schema, mas não são aprimoramentos. Efeitos de Uso reais entram por:
+  // - checkbox/flag Efeito de Uso;
+  // - nome começando com "Truque" ou "1 PM/2 PM/etc";
+  // - custo em PM diferente de zero.
+  if (!flagUso && !nomePareceUso && (!Number.isFinite(custoNum) || custoNum === 0)) return null;
 
   let texto = nome || descricao;
   texto = texto
