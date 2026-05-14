@@ -221,14 +221,15 @@ Hooks.once("ready", () => {
 
   game.settings.register(MOD, "arsenalGrimorioLayout", {
     name: "Layout do Grimório",
-    hint: "Define o layout visual da janela do Grimório. Padrão equilibra espaço e informação, Compacta mostra mais magias por tela e Estilizada usa cards maiores e mais completos.",
+    hint: "Define o layout visual da janela do Grimório. Padrão equilibra espaço e informação, Compacta mostra mais magias por tela e Completa usa cards maiores e mais completos.",
     scope: "client",
     config: true,
     type: String,
     choices: {
       standard: "Padrão",
       compact: "Compacta",
-      detailed: "Estilizada"
+      detailed: "Completa",
+      cards: "Cards grandes"
     },
     default: "standard",
   });
@@ -242,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.0.3 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.0.4 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -295,6 +296,10 @@ class PainelCondicoes extends Application {
 
   activateListeners(html) {
     super.activateListeners(html);
+    const lista = html.find(".t20-grimorio-list")[0];
+    if (lista && Number.isFinite(this._scrollTop)) {
+      setTimeout(() => { try { lista.scrollTop = this._scrollTop; } catch {} }, 0);
+    }
     // html pode ser jQuery (v12) ou wrapper — normalizar para elemento DOM
     const root = html instanceof jQuery ? html[0] : html;
     this._root = root;
@@ -5536,25 +5541,93 @@ function t20HudGrimorioPreviewDescricao(item, max = 170) {
   return txt;
 }
 
+
+function t20HudGrimorioPrimeiroTexto(...vals) {
+  for (const v of vals) {
+    const r = t20HudGrimorioValor(v);
+    if (r && r !== "0") return r;
+  }
+  return "";
+}
+
+function t20HudGrimorioTraduzirCodigo(valor, mapa = {}) {
+  const raw = t20HudGrimorioValor(valor);
+  if (!raw) return "";
+  const k = String(raw).trim().toLowerCase();
+  return mapa[k] ?? raw;
+}
+
+function t20HudGrimorioExecucao(item) {
+  const v = item?.system?.execucao ?? item?.system?.ativacao?.execucao ?? item?.system?.activation?.type ?? item?.system?.activation ?? item?.system?.execution;
+  return t20HudGrimorioTraduzirCodigo(v, {
+    action: "Ação", standard: "Ação", acao: "Ação", "ação": "Ação",
+    move: "Movimento", movimento: "Movimento",
+    reaction: "Reação", reacao: "Reação", "reação": "Reação",
+    free: "Livre", livre: "Livre",
+    full: "Completa", complete: "Completa", completa: "Completa",
+    passive: "Passiva", passiva: "Passiva"
+  });
+}
+
+function t20HudGrimorioAlcance(item) {
+  const v = item?.system?.alcance ?? item?.system?.range ?? item?.system?.distancia;
+  return t20HudGrimorioTraduzirCodigo(v, {
+    self: "Pessoal", personal: "Pessoal", pessoal: "Pessoal",
+    touch: "Toque", toque: "Toque",
+    short: "Curto", curto: "Curto",
+    medium: "Médio", medio: "Médio", "médio": "Médio",
+    long: "Longo", longo: "Longo",
+    unlimited: "Ilimitado", ilimitado: "Ilimitado"
+  });
+}
+
+function t20HudGrimorioDuracao(item) {
+  const d = item?.system?.duracao ?? item?.system?.duration;
+  if (d && typeof d === "object") {
+    const label = t20HudGrimorioPrimeiroTexto(d.label, d.name, d.nome, d.txt, d.texto, d.text, d.tipo, d.type, d.unit, d.unidade);
+    const valRaw = d.value ?? d.valor ?? d.qtd ?? d.quantity ?? d.quantidade;
+    if (label && label !== "0") {
+      if (valRaw && String(valRaw) !== "0" && !String(label).match(/^instant/i)) return `${valRaw} ${label}`;
+      return t20HudGrimorioTraduzirCodigo(label, {
+        instantaneous: "Instantânea", instantanea: "Instantânea", "instantânea": "Instantânea",
+        scene: "Cena", cena: "Cena", round: "Rodada", rodada: "Rodada",
+        sustained: "Sustentada", sustentada: "Sustentada", permanent: "Permanente", permanente: "Permanente"
+      });
+    }
+    if (valRaw !== undefined && valRaw !== null) {
+      const n = Number(valRaw);
+      if (Number.isFinite(n) && n === 0) return "Instantânea";
+      return String(valRaw);
+    }
+  }
+  const raw = t20HudGrimorioValor(d);
+  if (!raw) return "";
+  if (String(raw).trim() === "0") return "Instantânea";
+  return t20HudGrimorioTraduzirCodigo(raw, {
+    instantaneous: "Instantânea", instantanea: "Instantânea", "instantânea": "Instantânea",
+    scene: "Cena", cena: "Cena", round: "Rodada", rodada: "Rodada",
+    sustained: "Sustentada", sustentada: "Sustentada", permanent: "Permanente", permanente: "Permanente"
+  });
+}
+
+function t20HudGrimorioDescricaoCompleta(item) {
+  return t20HudGrimorioPreviewDescricao(item, 5000);
+}
+
+function t20HudHtmlEscape(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function t20HudGrimorioInfoMagia(item, circulo = null) {
   const custoBase = t20HudCustoBaseMagia(item);
   const aprims = t20HudAprimColetarDeItem(item);
-  const execucao = t20HudGrimorioValor(
-    item?.system?.execucao ??
-    item?.system?.ativacao?.execucao ??
-    item?.system?.activation?.type ??
-    item?.system?.activation ??
-    item?.system?.execution
-  );
-  const alcance = t20HudGrimorioValor(
-    item?.system?.alcance ??
-    item?.system?.range ??
-    item?.system?.distancia
-  );
-  const duracao = t20HudGrimorioValor(
-    item?.system?.duracao ??
-    item?.system?.duration
-  );
+  const execucao = t20HudGrimorioExecucao(item);
+  const alcance = t20HudGrimorioAlcance(item);
+  const duracao = t20HudGrimorioDuracao(item);
   const escola = t20HudGrimorioValor(
     item?.system?.escola ??
     item?.system?.school ??
@@ -5599,14 +5672,16 @@ class ArsenalGrimorio extends Application {
     this.circulo = Number(circulo);
     this.busca = "";
     this.expandidas = new Set();
+    this.descricoesAbertas = new Set();
+    this._scrollTop = 0;
   }
 
   static get defaultOptions() {
     return foundry.utils.mergeObject(super.defaultOptions, {
       id: "arsenal-grimorio",
       title: "Grimório — Arsenal T20",
-      width: 380,
-      height: "auto",
+      width: 620,
+      height: 650,
       resizable: true,
       minimizable: true,
     });
@@ -5623,7 +5698,7 @@ class ArsenalGrimorio extends Application {
 
   _layout() {
     const raw = t20HudGrimorioLayout();
-    return ["standard", "compact", "detailed"].includes(raw) ? raw : "standard";
+    return ["standard", "compact", "detailed", "cards"].includes(raw) ? raw : "standard";
   }
 
   _magias() {
@@ -5637,22 +5712,23 @@ class ArsenalGrimorio extends Application {
     const compactHeader = !!opts.header;
     return `<button class="t20-grimorio-layout-btn" data-layout="${layout}" type="button"
       title="Layout ${label}"
-      style="height:${compactHeader ? "22px" : "26px"};padding:${compactHeader ? "2px 7px" : "5px 8px"};border-radius:999px;border:1px solid ${ativo ? th.accent : th.border};background:${ativo ? `${th.accent}28` : th.panel};color:${ativo ? th.title : th.text};cursor:pointer;font-size:${compactHeader ? "0.68em" : "0.77em"};line-height:1;font-weight:${ativo ? "bold" : "normal"};white-space:nowrap;box-shadow:${ativo ? `inset 0 0 0 1px ${th.accent}22` : "none"}">${label}</button>`;
+      style="height:${compactHeader ? "21px" : "26px"};padding:${compactHeader ? "2px 6px" : "5px 8px"};border-radius:999px;border:1px solid ${ativo ? th.accent : th.border};background:${ativo ? `${th.accent}28` : th.panel};color:${ativo ? th.title : th.text};cursor:pointer;font-size:${compactHeader ? "0.64em" : "0.77em"};line-height:1;font-weight:${ativo ? "bold" : "normal"};white-space:nowrap;box-shadow:${ativo ? `inset 0 0 0 1px ${th.accent}22` : "none"}">${label}</button>`;
   }
 
   _layoutSelector(layout, th) {
     return `<div class="t20-grimorio-layout-selector" title="Alternar visualização do grimório"
-      style="display:flex;align-items:center;gap:3px;flex:0 1 auto;min-width:0;max-width:100%;padding:2px;border-radius:999px;background:${th.panel}99;border:1px solid ${th.border};box-shadow:inset 0 1px 0 ${th.accent}18">
+      style="display:flex;align-items:center;gap:2px;flex:0 1 auto;min-width:0;max-width:100%;padding:2px;border-radius:999px;background:${th.panel}99;border:1px solid ${th.border};box-shadow:inset 0 1px 0 ${th.accent}18">
       ${this._layoutButton("standard", "Padrão", layout === "standard", th, { header: true })}
       ${this._layoutButton("compact", "Compacta", layout === "compact", th, { header: true })}
-      ${this._layoutButton("detailed", "Estilizada", layout === "detailed", th, { header: true })}
+      ${this._layoutButton("detailed", "Completa", layout === "detailed", th, { header: true })}
+      ${this._layoutButton("cards", "Cards", layout === "cards", th, { header: true })}
     </div>`;
   }
 
   _metaChip(label, value, th, opts = {}) {
     if (!value) return "";
     const strong = opts.strong ? `border-color:${th.accent};color:${th.title};` : "";
-    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:${opts.compact ? "2px 6px" : "4px 8px"};border-radius:999px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:${opts.compact ? "0.72em" : "0.78em"};${strong}">${label ? `<strong style="color:${th.muted};font-weight:600">${label}</strong>` : ""}<span>${value}</span></span>`;
+    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:${opts.compact ? "2px 6px" : "4px 8px"};border-radius:999px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:${opts.compact ? "0.76em" : "0.84em"};${strong}">${label ? `<strong style="color:${th.muted};font-weight:600">${label}</strong>` : ""}<span>${value}</span></span>`;
   }
 
   _renderExpanded(item, th) {
@@ -5714,7 +5790,9 @@ class ArsenalGrimorio extends Application {
 
   _renderDetailed(item, th) {
     const aberta = this.expandidas.has(item.id);
+    const descAberta = this.descricoesAbertas.has(item.id);
     const info = t20HudGrimorioInfoMagia(item, this.circulo);
+    const descricao = descAberta ? t20HudGrimorioDescricaoCompleta(item) : info.preview;
     const chips = [
       this._metaChip("Exec.", info.execucao, th),
       this._metaChip("Alc.", info.alcance, th),
@@ -5732,14 +5810,15 @@ class ArsenalGrimorio extends Application {
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
               <button class="t20-grimorio-magia" data-item-id="${item.id}" title="Conjurar ${item.name}"
                 style="padding:0;border:none;background:transparent;color:${th.title};cursor:pointer;text-align:left;min-width:0;flex:1">
-                <div style="font-size:1em;font-weight:700;line-height:1.2;word-break:break-word">${item.name}</div>
+                <div style="font-size:1.08em;font-weight:700;line-height:1.22;word-break:break-word">${item.name}</div>
               </button>
               <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
                 ${this._metaChip("", info.custoLabel, th, { strong: true })}
                 ${this._metaChip("", info.aprimLabel, th, { compact: true })}
               </div>
             </div>
-            ${info.preview ? `<div style="margin-top:6px;font-size:0.82em;line-height:1.35;color:${th.text}">${info.preview}</div>` : ""}
+            ${descricao ? `<div style="margin-top:7px;font-size:0.9em;line-height:1.45;color:${th.text}">${descricao}</div>` : ""}
+            ${info.preview && t20HudGrimorioDescricaoCompleta(item).length > info.preview.length ? `<button class="t20-grimorio-descricao" data-item-id="${item.id}" type="button" style="margin-top:5px;padding:2px 0;border:none;background:transparent;color:${th.title};cursor:pointer;font-size:0.82em;font-weight:700">${descAberta ? "Descrição resumida ▴" : "Ver descrição completa ▾"}</button>` : ""}
           </div>
         </div>
         ${chips ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${chips}</div>` : ""}
@@ -5752,9 +5831,31 @@ class ArsenalGrimorio extends Application {
     </div>`;
   }
 
+  _renderCards(item, th) {
+    const aberta = this.expandidas.has(item.id);
+    const info = t20HudGrimorioInfoMagia(item, this.circulo);
+    const desc = t20HudHtmlEscape(t20HudGrimorioDescricaoCompleta(item) || item.name);
+    return `<div style="border-radius:14px;background:linear-gradient(180deg,${th.panel2},${th.panel});border:1px solid ${th.border};box-shadow:0 6px 16px ${th.bg2}1f;overflow:hidden;min-height:188px;display:flex;flex-direction:column">
+      <button class="t20-grimorio-magia" data-item-id="${item.id}" title="${desc}"
+        style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:8px;width:100%;padding:12px 10px;border:none;background:transparent;color:${th.text};cursor:pointer;text-align:center">
+        <div style="font-size:1em;font-weight:800;color:${th.title};line-height:1.2;min-height:2.4em;display:flex;align-items:center;justify-content:center">${item.name}</div>
+        ${item.img ? `<img src="${item.img}" style="width:64px;height:64px;border-radius:14px;object-fit:cover;border:1px solid ${th.accent}66;box-shadow:0 5px 12px ${th.bg2}33">` : `<span style="width:64px;height:64px;display:flex;align-items:center;justify-content:center;border-radius:14px;background:${th.bg2};border:1px solid ${th.accent}55;font-size:2em">🪄</span>`}
+        <div style="padding:3px 9px;border-radius:999px;border:1px solid ${th.border};background:${th.panel};font-size:0.82em;color:${th.title};font-weight:700">${info.execucao || "Ação"}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:auto">
+          <span style="padding:2px 7px;border-radius:999px;border:1px solid ${th.border};background:${th.panel};font-size:0.78em">${info.custoLabel}</span>
+          <span style="padding:2px 7px;border-radius:999px;border:1px solid ${th.border};background:${th.panel};font-size:0.78em">${info.aprimLabel}</span>
+        </div>
+      </button>
+      <button class="t20-grimorio-expandir" data-item-id="${item.id}" type="button" title="${aberta ? "Ocultar aprimoramentos" : "Consultar aprimoramentos"}"
+        style="margin:0 8px 8px;padding:7px 8px;border-radius:9px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-size:0.8em;font-weight:700">${aberta ? "Aprimoramentos ▴" : "Aprimoramentos ▾"}</button>
+      ${aberta ? this._renderExpanded(item, th) : ""}
+    </div>`;
+  }
+
   _renderMagia(item, layout, th) {
     if (layout === "compact") return this._renderCompact(item, th);
     if (layout === "detailed") return this._renderDetailed(item, th);
+    if (layout === "cards") return this._renderCards(item, th);
     return this._renderStandard(item, th);
   }
 
@@ -5764,7 +5865,7 @@ class ArsenalGrimorio extends Application {
     const layout = this._layout();
     const countsLabel = `${magias.length} magia(s)`;
 
-    return `<div style="background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};border-radius:8px;color:${th.text};font-family:serif;padding:10px;max-height:620px;display:flex;flex-direction:column">
+    return `<div style="background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};border-radius:8px;color:${th.text};font-family:serif;padding:10px;height:100%;max-height:none;box-sizing:border-box;display:flex;flex-direction:column">
       <div style="display:flex;align-items:center;gap:8px;border-bottom:1px solid ${th.accent}44;padding-bottom:8px;margin-bottom:8px;flex-wrap:nowrap">
         ${this.actor?.img ? `<img src="${this.actor.img}" style="width:34px;height:34px;border-radius:6px;object-fit:cover;border:1px solid ${th.accent}73;flex:0 0 auto">` : ""}
         <div style="min-width:0;flex:1 1 auto">
@@ -5780,7 +5881,7 @@ class ArsenalGrimorio extends Application {
           style="width:100%;box-sizing:border-box;margin-bottom:0;padding:${layout === "compact" ? "6px 9px" : "7px 9px"};border-radius:6px;background:${th.panel};border:1px solid ${th.border};color:${th.text}">
       </div>
 
-      <div style="overflow:auto;min-height:0;padding-top:2px">
+      <div class="t20-grimorio-list" style="overflow:auto;min-height:0;padding-top:2px;${layout === "cards" ? "display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;align-content:start" : ""}">
         ${magias.length ? magias.map(item => this._renderMagia(item, layout, th)).join("") : `<div style="color:${th.muted};padding:12px;text-align:center">Nenhuma magia encontrada neste círculo.</div>`}
       </div>
     </div>`;
@@ -5803,16 +5904,29 @@ class ArsenalGrimorio extends Application {
     html.find(".t20-grimorio-expandir").on("click", ev => {
       ev.preventDefault();
       ev.stopPropagation();
+      const lista = html.find(".t20-grimorio-list")[0];
+      this._scrollTop = lista?.scrollTop ?? 0;
       const id = ev.currentTarget.dataset.itemId;
       if (this.expandidas.has(id)) this.expandidas.delete(id);
       else this.expandidas.add(id);
       this.render(false);
     });
 
+    html.find(".t20-grimorio-descricao").on("click", ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const lista = html.find(".t20-grimorio-list")[0];
+      this._scrollTop = lista?.scrollTop ?? 0;
+      const id = ev.currentTarget.dataset.itemId;
+      if (this.descricoesAbertas.has(id)) this.descricoesAbertas.delete(id);
+      else this.descricoesAbertas.add(id);
+      this.render(false);
+    });
+
     html.find(".t20-grimorio-layout-btn").on("click", async ev => {
       ev.preventDefault();
       const layout = ev.currentTarget.dataset.layout;
-      if (!["standard", "compact", "detailed"].includes(layout)) return;
+      if (!["standard", "compact", "detailed", "cards"].includes(layout)) return;
       try { await game.settings.set("arsenal-t20", "arsenalGrimorioLayout", layout); } catch {}
       this.render(false);
     });
