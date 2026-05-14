@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.1.4 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.1.5 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -5381,33 +5381,124 @@ function t20HudAbilityUseRows(root) {
   return divRows;
 }
 
-function t20HudAplicarSelecoesNoAbilityUseDialog(app, html, selecoes = []) {
-  const root = html instanceof jQuery ? html[0] : html;
-  const rows = t20HudAbilityUseRows(root);
-  if (!rows.length || !selecoes?.length) return;
+function t20HudDelay(ms = 80) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-  for (const idx of selecoes) {
-    const row = rows[idx];
+function t20HudValorControleCumulativo(row) {
+  const input = row?.querySelector?.('input[type="number"], input:not([type])');
+  if (input && !input.matches?.('input[type="checkbox"]')) {
+    const n = Number(input.value);
+    if (Number.isFinite(n)) return n;
+  }
+
+  const botoes = Array.from(row?.querySelectorAll?.("button") ?? []);
+  const minus = botoes.find(b => String(b.textContent ?? "").trim() === "−" || String(b.textContent ?? "").trim() === "-");
+  const plus = botoes.find(b => String(b.textContent ?? "").trim() === "+");
+  if (minus && plus) {
+    let node = minus.nextSibling;
+    while (node && node !== plus) {
+      const txt = String(node.textContent ?? "").trim();
+      const m = txt.match(/^-?\d+$/);
+      if (m) return Number(m[0]);
+      node = node.nextSibling;
+    }
+  }
+
+  const txt = String(row?.innerText ?? row?.textContent ?? "");
+  const nums = Array.from(txt.matchAll(/\b(\d+)\b/g)).map(m => Number(m[1]));
+  return nums.length ? nums[0] : 0;
+}
+
+async function t20HudAplicarSelecoesNoAbilityUseDialog(app, html, selecoes = []) {
+  const root = html instanceof jQuery ? html[0] : html;
+
+  const counts = new Map();
+  if (selecoes instanceof Map) {
+    for (const [idx, qtd] of selecoes.entries()) counts.set(Number(idx), Math.max(0, Number(qtd) || 0));
+  } else {
+    for (const idx of (selecoes ?? [])) counts.set(Number(idx), (counts.get(Number(idx)) || 0) + 1);
+  }
+
+  if (!counts.size) return;
+
+  for (const [idx, qtdDesejada] of Array.from(counts.entries()).sort((a, b) => a[0] - b[0])) {
+    if (!qtdDesejada) continue;
+
+    let rows = t20HudAbilityUseRows(root);
+    let row = rows[idx];
     if (!row) continue;
+
+    const getPlus = () => {
+      rows = t20HudAbilityUseRows(root);
+      row = rows[idx];
+      return Array.from(row?.querySelectorAll?.("button") ?? [])
+        .find(b => String(b.textContent ?? "").trim() === "+");
+    };
+
+    const getMinus = () => {
+      rows = t20HudAbilityUseRows(root);
+      row = rows[idx];
+      return Array.from(row?.querySelectorAll?.("button") ?? [])
+        .find(b => ["−", "-"].includes(String(b.textContent ?? "").trim()));
+    };
+
+    let plus = getPlus();
+    let minus = getMinus();
+
+    // Aprimoramento cumulativo: a janela original usa controle − / número / +.
+    if (plus || minus) {
+      rows = t20HudAbilityUseRows(root);
+      row = rows[idx];
+
+      const input = row?.querySelector?.('input[type="number"], input:not([type])');
+      if (input && !input.matches?.('input[type="checkbox"]')) {
+        input.value = String(qtdDesejada);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        await t20HudDelay(120);
+        continue;
+      }
+
+      let atual = t20HudValorControleCumulativo(row);
+      let guard = 0;
+      while (atual > qtdDesejada && guard++ < 20) {
+        minus = getMinus();
+        if (!minus) break;
+        minus.click();
+        await t20HudDelay(120);
+        rows = t20HudAbilityUseRows(root);
+        row = rows[idx];
+        atual = t20HudValorControleCumulativo(row);
+      }
+
+      guard = 0;
+      while (atual < qtdDesejada && guard++ < 30) {
+        plus = getPlus();
+        if (!plus) break;
+        plus.click();
+        await t20HudDelay(140);
+        rows = t20HudAbilityUseRows(root);
+        row = rows[idx];
+        atual = t20HudValorControleCumulativo(row);
+      }
+
+      continue;
+    }
 
     const cb = row.querySelector('input[type="checkbox"]');
     if (cb && !cb.checked) {
       cb.click();
-      continue;
-    }
-
-    const plus = Array.from(row.querySelectorAll("button"))
-      .find(b => String(b.textContent ?? "").trim() === "+");
-    if (plus) {
-      plus.click();
+      await t20HudDelay(100);
       continue;
     }
 
     const input = row.querySelector('input[type="number"], input:not([type])');
-    if (input) {
-      input.value = String(Math.max(1, Number(input.value) || 1));
+    if (input && !input.matches?.('input[type="checkbox"]')) {
+      input.value = String(Math.max(1, qtdDesejada));
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
+      await t20HudDelay(100);
     }
   }
 }
@@ -5675,31 +5766,33 @@ class ArsenalConjurarMagiaDialog extends Application {
   }
 
   async _conjurarPeloSistema() {
-    const selecoes = Array.from(this.selecionados.entries())
-      .sort((a, b) => a[0] - b[0])
-      .flatMap(([idx, qtd]) => Array(Math.max(0, Number(qtd) || 0)).fill(idx));
+    const selecoes = new Map(
+      Array.from(this.selecionados.entries())
+        .map(([idx, qtd]) => [Number(idx), Math.max(0, Number(qtd) || 0)])
+        .filter(([, qtd]) => qtd > 0)
+        .sort((a, b) => a[0] - b[0])
+    );
     let detectou = false;
 
     const hookId = Hooks.on("renderAbilityUseDialog", (app, html) => {
       detectou = true;
-      setTimeout(() => {
+      setTimeout(async () => {
         try {
           const root = html instanceof jQuery ? html[0] : html;
-          t20HudAplicarSelecoesNoAbilityUseDialog(app, root, selecoes);
+          await t20HudAplicarSelecoesNoAbilityUseDialog(app, root, selecoes);
+          await t20HudDelay(250);
+          const clicou = t20HudClicarLancarMagiaAbilityUseDialog(root);
+          if (!clicou) ui.notifications.warn("Arsenal T20: não consegui acionar o botão Lançar Magia automaticamente.");
           setTimeout(() => {
-            const clicou = t20HudClicarLancarMagiaAbilityUseDialog(root);
-            if (!clicou) ui.notifications.warn("Arsenal T20: não consegui acionar o botão Lançar Magia automaticamente.");
-            setTimeout(() => {
-              try { app.close?.(); } catch {}
-            }, 250);
-          }, 150);
+            try { app.close?.(); } catch {}
+          }, 350);
         } catch (e) {
           console.warn("Arsenal T20 | erro ao conjurar pela janela Arsenal", e);
           ui.notifications.error("Erro ao aplicar aprimoramentos na janela original.");
         } finally {
           Hooks.off("renderAbilityUseDialog", hookId);
         }
-      }, 150);
+      }, 180);
     });
 
     await t20HudUsarItem(this.actor, this.item.id);
@@ -5707,7 +5800,7 @@ class ArsenalConjurarMagiaDialog extends Application {
     setTimeout(() => {
       try { Hooks.off("renderAbilityUseDialog", hookId); } catch {}
       if (!detectou) ui.notifications.warn("Arsenal T20: a janela original de conjuração não foi detectada. Use Abrir original.");
-    }, 3000);
+    }, 5000);
   }
 }
 
