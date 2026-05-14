@@ -5522,7 +5522,7 @@ class ArsenalConjurarMagiaDialog extends Application {
     this.item = item;
     this.selecionados = new Map();
     this.busca = "";
-    this.mostrarDescricao = false;
+    this.mostrarDescricao = true;
   }
 
   static get defaultOptions() {
@@ -5623,16 +5623,16 @@ class ArsenalConjurarMagiaDialog extends Application {
           <div style="font-weight:bold;color:${th.title};font-size:1.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.item.name}</div>
           <div style="font-size:0.82em;color:${th.muted}">${circulo ? `${circulo}º círculo` : "Magia"} · por ${this.actor?.name ?? "personagem"}</div>
         </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:7px;flex:0 0 auto">
+        <div style="display:flex;align-items:center;gap:8px;flex:0 0 auto">
+          <button class="t20-cast-toggle-desc" title="Mostrar ou ocultar a descrição original completa da magia"
+            style="padding:7px 10px;border-radius:999px;background:${this.mostrarDescricao ? `${th.accent}22` : th.panel2};border:1px solid ${this.mostrarDescricao ? th.accent : th.border};color:${this.mostrarDescricao ? th.title : th.text};font-size:0.78em;font-weight:bold;cursor:pointer;white-space:nowrap">
+            ${this.mostrarDescricao ? "Ocultar descrição" : "Ver descrição completa"}
+          </button>
           <div style="text-align:center;background:${th.panel};border:1px solid ${th.border};border-radius:8px;padding:7px 10px;min-width:72px">
             <div style="font-size:0.72em;color:${th.muted};text-transform:uppercase">Custo</div>
             <div style="font-weight:bold;color:${th.accent2};font-size:1.25em">${custos.total}</div>
             <div style="font-size:0.72em;color:${th.muted}">PM</div>
           </div>
-          <button class="t20-cast-toggle-desc" title="Mostrar ou ocultar a descrição original completa da magia"
-            style="padding:6px 9px;border-radius:999px;background:${this.mostrarDescricao ? `${th.accent}22` : th.panel2};border:1px solid ${this.mostrarDescricao ? th.accent : th.border};color:${this.mostrarDescricao ? th.title : th.text};font-size:0.78em;font-weight:bold;cursor:pointer;white-space:nowrap">
-            ${this.mostrarDescricao ? "Ocultar descrição" : "Ver descrição completa"}
-          </button>
         </div>
       </div>
 
@@ -5694,7 +5694,7 @@ class ArsenalConjurarMagiaDialog extends Application {
       this.mostrarDescricao = !this.mostrarDescricao;
       this.render(false);
       try {
-        setTimeout(() => this.setPosition({ height: this.mostrarDescricao ? 780 : 720 }), 20);
+        setTimeout(() => this.setPosition({ height: 720 }), 20);
       } catch {}
     });
 
@@ -5856,6 +5856,53 @@ function t20HudGrimorioTraduzirCodigo(valor, mapa = {}) {
   if (!raw) return "";
   const k = String(raw).trim().toLowerCase();
   return mapa[k] ?? raw;
+}
+
+function t20HudGrimorioEscola(item) {
+  const v = t20HudGrimorioValor(
+    item?.system?.escola ??
+    item?.system?.school ??
+    item?.system?.tradicao ??
+    item?.system?.tradition
+  );
+  const raw = String(v ?? "").trim();
+  if (!raw) return "";
+  const key = raw.toLowerCase();
+  const mapa = {
+    tra: "Transmutação",
+    trans: "Transmutação",
+    transmutacao: "Transmutação",
+    "transmutação": "Transmutação",
+    enc: "Encantamento",
+    enchantment: "Encantamento",
+    encantamento: "Encantamento",
+    ilu: "Ilusão",
+    ilusao: "Ilusão",
+    "ilusão": "Ilusão",
+    illusion: "Ilusão",
+    evo: "Evocação",
+    evocacao: "Evocação",
+    "evocação": "Evocação",
+    evocation: "Evocação",
+    adv: "Adivinhação",
+    adiv: "Adivinhação",
+    adivinhacao: "Adivinhação",
+    "adivinhação": "Adivinhação",
+    divination: "Adivinhação",
+    abj: "Abjuração",
+    abjuracao: "Abjuração",
+    "abjuração": "Abjuração",
+    abjuration: "Abjuração",
+    con: "Convocação",
+    conj: "Convocação",
+    convocacao: "Convocação",
+    "convocação": "Convocação",
+    conjuration: "Convocação",
+    nec: "Necromancia",
+    necromancia: "Necromancia",
+    necromancy: "Necromancia"
+  };
+  return mapa[key] ?? raw;
 }
 
 function t20HudGrimorioExecucao(item) {
@@ -6082,12 +6129,7 @@ function t20HudGrimorioInfoMagia(item, circulo = null) {
   const execucao = t20HudGrimorioExecucao(item);
   const alcance = t20HudGrimorioAlcance(item);
   const duracao = t20HudGrimorioDuracao(item);
-  const escola = t20HudGrimorioValor(
-    item?.system?.escola ??
-    item?.system?.school ??
-    item?.system?.tradicao ??
-    item?.system?.tradition
-  );
+  const escola = t20HudGrimorioEscola(item);
   const alvo = t20HudGrimorioValor(
     item?.system?.alvo ??
     item?.system?.ativacao?.alvo ??
