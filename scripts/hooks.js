@@ -4444,7 +4444,7 @@ function t20HudThemeKey() {
 }
 
 
-const T20_HUD_CATEGORIAS_PADRAO = ["favoritos", "magias", "poderes", "pericias", "ataques"];
+const T20_HUD_CATEGORIAS_PADRAO = ["favoritos", "magias", "consumiveis", "poderes", "pericias", "ataques"];
 
 function t20HudGetCategoryOrder() {
   try {
@@ -4488,6 +4488,79 @@ function t20HudItemTexto(item) {
     item.system?.description?.value, item.system?.descricao,
     item.system?.ativacao?.execucao, item.system?.activation?.type,
   ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function t20HudItemConsumivel(item) {
+  if (!item) return false;
+
+  const tipo = String(item.type ?? "").toLowerCase();
+  const campos = [
+    item.type,
+    item.name,
+    item.system?.tipo,
+    item.system?.type,
+    item.system?.categoria,
+    item.system?.category,
+    item.system?.subtipo,
+    item.system?.subtype,
+    item.system?.grupo,
+    item.system?.group,
+    item.system?.container,
+    item.system?.equipamento?.tipo,
+    item.system?.itemType,
+    item.system?.classification,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  if (/consum[ií]vel|consumable|consumivel/.test(tipo)) return true;
+  if (/\b(consum[ií]vel|consumable|consumivel|po[cç][aã]o|potion|pergaminho|scroll|granada|bomba|elixir|óleo|oleo|ácido|acido)\b/i.test(campos)) return true;
+
+  // Muitos itens de inventário do T20 ficam como equipamento/item, mas trazem quantidade e categoria textual.
+  // Evita pegar magias, poderes e armas.
+  if (/magia|spell|poder|power|feat|habilidade|arma|weapon|attack/i.test(tipo)) return false;
+  if (/magia|spell|poder|habilidade|ataque/i.test(campos)) return false;
+
+  const qtd = t20HudQuantidadeItem(item);
+  const espaco = t20HudEspacoItem(item);
+  const temInventario = qtd !== "" || espaco !== "";
+  const categoriaInventario =
+    /alqu[ií]mico|alchemical|po[cç][aã]o|potion|granada|bomba|elixir|óleo|oleo|ácido|acido|comida|bebida|hidromel|ensopado|consum/i.test(campos);
+
+  return temInventario && categoriaInventario;
+}
+
+function t20HudQuantidadeItem(item) {
+  const candidatos = [
+    item?.system?.quantidade,
+    item?.system?.qtd,
+    item?.system?.quantity,
+    item?.system?.qty,
+    item?.system?.amount,
+    item?.system?.uses?.value,
+    item?.system?.uso?.quantidade,
+  ];
+
+  for (const c of candidatos) {
+    const val = (c && typeof c === "object") ? (c.value ?? c.total ?? c.qtd ?? c.quantity) : c;
+    if (val !== undefined && val !== null && val !== "") return String(val);
+  }
+  return "";
+}
+
+function t20HudEspacoItem(item) {
+  const candidatos = [
+    item?.system?.espaco,
+    item?.system?.espacos,
+    item?.system?.space,
+    item?.system?.spaces,
+    item?.system?.weight,
+    item?.system?.peso,
+  ];
+
+  for (const c of candidatos) {
+    const val = (c && typeof c === "object") ? (c.value ?? c.total ?? c.espaco ?? c.weight) : c;
+    if (val !== undefined && val !== null && val !== "") return String(val);
+  }
+  return "";
 }
 
 function t20HudClassificarItem(item) {
@@ -4564,7 +4637,7 @@ function t20HudItemAtivavel(item) {
 }
 
 function t20HudItensActor(actor) {
-  const grupos = { favoritos: [], ataques: [], magias: [], poderes: [] };
+  const grupos = { favoritos: [], ataques: [], magias: [], poderes: [], consumiveis: [] };
   if (!actor) return grupos;
 
   const personagemJogador = t20HudActorEhPersonagemJogador(actor);
@@ -4573,8 +4646,14 @@ function t20HudItensActor(actor) {
     const cat = t20HudClassificarItem(item);
     const favorito = t20HudItemFavorito(item);
 
-    if (favorito && cat) {
+    const consumivel = t20HudItemConsumivel(item);
+
+    if (favorito && (cat || consumivel)) {
       grupos.favoritos.push(item);
+    }
+
+    if (consumivel) {
+      grupos.consumiveis.push(item);
     }
 
     if (!cat) continue;
@@ -6637,11 +6716,12 @@ class ArsenalHUD extends Application {
 
   _renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador, layout = "compact", actor = null) {
     const defs = {
-      favoritos:{ titulo: "⭐ Favoritos", itens: grupos.favoritos ?? [], tipo: "item" },
-      ataques:  { titulo: "⚔️ Ataques", itens: grupos.ataques, tipo: "item" },
-      magias:   { titulo: "🪄 Magias", itens: grupos.magias, tipo: "item" },
-      poderes:  { titulo: "✨ Poderes/Habilidades", itens: grupos.poderes, tipo: "item" },
-      pericias: { titulo: "🎲 Perícias treinadas", itens: personagemJogador ? pericias : [], tipo: "pericia" },
+      favoritos:  { titulo: "⭐ Favoritos", itens: grupos.favoritos ?? [], tipo: "item" },
+      ataques:    { titulo: "⚔️ Ataques", itens: grupos.ataques, tipo: "item" },
+      magias:     { titulo: "🪄 Magias", itens: grupos.magias, tipo: "item" },
+      consumiveis:{ titulo: "🧪 Consumíveis", itens: grupos.consumiveis ?? [], tipo: "item" },
+      poderes:    { titulo: "✨ Poderes/Habilidades", itens: grupos.poderes, tipo: "item" },
+      pericias:   { titulo: "🎲 Perícias treinadas", itens: personagemJogador ? pericias : [], tipo: "pericia" },
     };
 
     return t20HudGetCategoryOrder()
@@ -6713,6 +6793,8 @@ class ArsenalHUD extends Application {
           const id = tipo === "pericia" ? item.id : item.id;
           const label = tipo === "pericia" ? `${item.label} ${item.bonus >= 0 ? "+" : ""}${item.bonus}` : item.name;
           const img = tipo === "pericia" ? "" : item.img;
+          const qtd = tipo === "pericia" ? "" : t20HudQuantidadeItem(item);
+          const qtdBadge = qtd ? `<span title="Quantidade" style="margin-left:auto;flex:0 0 auto;padding:1px 5px;border-radius:999px;background:${th.panel2};border:1px solid ${th.border};color:${th.muted};font-size:0.78em;font-weight:bold">x${qtd}</span>` : "";
 
           if (cards) {
             return `<button class="${tipo === "pericia" ? "t20-hud-pericia" : "t20-hud-item"}"
@@ -6721,7 +6803,8 @@ class ArsenalHUD extends Application {
               background:linear-gradient(180deg,${th.panel2},${th.panel});border:1px solid ${th.border};color:${th.text};cursor:pointer;
               font-size:0.92em;text-align:left;min-width:0;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04)">
               ${img ? `<img src="${img}" style="width:26px;height:26px;border-radius:5px;object-fit:cover;border:1px solid ${th.accent}55">` : `<span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:${th.bg2}">${tipo === "pericia" ? "🎲" : "•"}</span>`}
-              <span style="white-space:normal;overflow:hidden;text-overflow:ellipsis;line-height:1.12">${label}</span>
+              <span style="white-space:normal;overflow:hidden;text-overflow:ellipsis;line-height:1.12;min-width:0">${label}</span>
+              ${qtdBadge}
             </button>`;
           }
 
@@ -6730,7 +6813,8 @@ class ArsenalHUD extends Application {
             style="display:flex;align-items:center;gap:6px;width:100%;padding:6px 7px;margin-bottom:4px;border-radius:6px;
             background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-size:0.9em;text-align:left;min-width:0">
             ${img ? `<img src="${img}" style="width:20px;height:20px;border-radius:4px;object-fit:cover;border:none">` : `<span style="width:20px;text-align:center">${tipo === "pericia" ? "🎲" : "•"}</span>`}
-            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</span>
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${label}</span>
+            ${qtdBadge}
           </button>`;
         }).join("")}
       </div>`}
