@@ -182,7 +182,15 @@ Hooks.once("ready", () => {
       slateLight: "Ardósia Clara",
       foundryClassic: "Foundry Clássico"
     },
-    default: "darkGold",
+    default: "foundryClassic",
+  });
+
+  game.settings.register(MOD, "themeDefaultFoundryClassic.v302", {
+    name: "Migração interna: tema Foundry Clássico",
+    scope: "client",
+    config: false,
+    type: Boolean,
+    default: false,
   });
 
   game.settings.register(MOD, "arsenalHudSpellMode", {
@@ -221,6 +229,21 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
   console.log(`Arsenal T20 | v1.6 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+
+  try {
+    const migKey = "themeDefaultFoundryClassic.v302";
+    if (!game.settings.get(MOD, migKey)) {
+      const atual = game.settings.get(MOD, "arsenalHudColorTheme");
+      const tarefas = [];
+      if (!atual || atual === "darkGold") {
+        tarefas.push(game.settings.set(MOD, "arsenalHudColorTheme", "foundryClassic"));
+      }
+      tarefas.push(game.settings.set(MOD, migKey, true));
+      Promise.all(tarefas).catch(e => console.warn("Arsenal T20 | não foi possível aplicar migração de tema padrão", e));
+    }
+  } catch (e) {
+    console.warn("Arsenal T20 | não foi possível iniciar migração de tema padrão", e);
+  }
   if (game.user.isGM) ui.notifications.info("⚔️ Arsenal T20 ativo!");
 
 });
@@ -4395,8 +4418,8 @@ function t20HudCastMode() {
 }
 
 function t20HudTheme() {
-  let key = "darkGold";
-  try { key = game.settings.get("arsenal-t20", "arsenalHudColorTheme") ?? "darkGold"; } catch {}
+  let key = "foundryClassic";
+  try { key = game.settings.get("arsenal-t20", "arsenalHudColorTheme") ?? "foundryClassic"; } catch {}
 
   const temas = {
     darkGold: {
@@ -4462,7 +4485,7 @@ function t20HudTheme() {
       text:"#19140e", title:"#21170e", muted:"#5f5547"
     },
   };
-  return temas[key] ?? temas.darkGold;
+  return temas[key] ?? temas.foundryClassic;
 }
 function t20HudTokenSelecionado() {
   return canvas.tokens?.controlled?.[0] ?? null;
@@ -5112,29 +5135,92 @@ function t20HudHtmlAprimoramentosItem(item) {
 let _arsenalConjurarMagia = null;
 
 function t20HudCustoBaseMagia(item) {
+  const parseCusto = (v) => {
+    if (v === null || v === undefined) return null;
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string") {
+      const s = v.trim();
+      // Aceita "1", "1 PM" e variações curtas. Evita pegar textos longos da descrição.
+      if (/^-?\d+$/.test(s)) return Number(s);
+      if (/^-?\d+\s*PM$/i.test(s)) return Number(s.match(/-?\d+/)?.[0]);
+      return null;
+    }
+    if (typeof v === "object") {
+      for (const k of ["value", "valor", "base", "total", "pm", "custo", "cost", "mana", "current"]) {
+        const r = parseCusto(v?.[k]);
+        if (r !== null) return r;
+      }
+    }
+    return null;
+  };
+
+  // Caminhos mais prováveis usados por versões diferentes do sistema T20.
   const candidatos = [
     item?.system?.pm,
     item?.system?.custo,
     item?.system?.cost,
     item?.system?.mana,
-    item?.system?.cost?.value,
-    item?.system?.pm?.value,
-    item?.system?.custo?.value,
-    item?.system?.mana?.value,
+    item?.system?.custoMana,
+    item?.system?.custoPM,
+    item?.system?.costPM,
+    item?.system?.manaCost,
+    item?.system?.mpCost,
+    item?.system?.precoPM,
+    item?.system?.execucao?.custo,
+    item?.system?.magia?.pm,
+    item?.system?.spell?.cost,
+    item?.system?.spell?.pm,
   ];
 
   for (const c of candidatos) {
-    const val = (c && typeof c === "object") ? (c.value ?? c.total ?? c.base ?? c.pm) : c;
-    const n = Number(String(val ?? "").match(/-?\d+/)?.[0]);
-    if (Number.isFinite(n)) return n;
+    const n = parseCusto(c);
+    if (n !== null && Number.isFinite(n)) return Math.max(0, n);
   }
 
-  const txt = t20HudItemTexto(item);
-  const m = txt.match(/\b(\d+)\s*PM\b/i);
-  if (m) return Number(m[1]);
+  // Varredura controlada no item.system. Ignora descrições, efeitos e aprimoramentos,
+  // porque esses campos contêm muitos outros valores de PM que não são o custo base.
+  const vistos = new Set();
+  const caminhosIgnorados = /(description|descri[cç][aã]o|efeitos?|effects?|changes?|aprimor|aument|enhance|upgrade|tempor[aá]ri|passiv|onuse|useeffects?)/i;
+  const caminhoCusto = /(custo|cost|pm|mana|mp)/i;
+
+  const visitar = (obj, path = "", depth = 0) => {
+    if (!obj || typeof obj !== "object" || depth > 6) return null;
+    if (vistos.has(obj)) return null;
+    vistos.add(obj);
+
+    // Primeiro prioriza caminhos que parecem custo base.
+    for (const [k, v] of Object.entries(obj)) {
+      const next = path ? `${path}.${k}` : k;
+      if (caminhosIgnorados.test(next)) continue;
+      if (caminhoCusto.test(next)) {
+        const n = parseCusto(v);
+        if (n !== null && Number.isFinite(n)) return Math.max(0, n);
+      }
+    }
+
+    for (const [k, v] of Object.entries(obj)) {
+      const next = path ? `${path}.${k}` : k;
+      if (caminhosIgnorados.test(next)) continue;
+      if (v && typeof v === "object") {
+        const n = visitar(v, next, depth + 1);
+        if (n !== null && Number.isFinite(n)) return Math.max(0, n);
+      }
+    }
+
+    return null;
+  };
+
+  const varrido = visitar(item?.system ?? {});
+  if (varrido !== null && Number.isFinite(varrido)) return Math.max(0, varrido);
+
+  // Último fallback: usa apenas metadados curtos, não a descrição completa.
+  const curto = [item?.system?.subtitulo, item?.system?.subtitle, item?.system?.resumo, item?.system?.summary]
+    .map(v => String(v ?? ""))
+    .find(v => /^\s*\d+\s*PM\s*$/i.test(v));
+  if (curto) return Number(curto.match(/\d+/)?.[0]);
+
   return 0;
 }
-
 function t20HudAprimoramentosUsoItem(item) {
   return t20HudAprimColetarDeItem(item).map((a, idx) => ({
     id: `apr-${idx}`,
