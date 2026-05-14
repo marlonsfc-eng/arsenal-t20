@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.1.2 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.1.4 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -5607,10 +5607,27 @@ class ArsenalConjurarMagiaDialog extends Application {
       } catch {}
     });
 
-    html.find(".t20-cast-search").on("input", ev => {
-      this.busca = ev.currentTarget.value ?? "";
-      this.render(false);
-    });
+    html.find(".t20-cast-search")
+      .on("keydown keypress keyup", ev => {
+        ev.stopPropagation();
+      })
+      .on("input", ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const valor = ev.currentTarget.value ?? "";
+        const pos = ev.currentTarget.selectionStart ?? valor.length;
+        this.busca = valor;
+        this.render(false);
+        setTimeout(() => {
+          try {
+            const input = this.element?.[0]?.querySelector?.(".t20-cast-search");
+            if (!input) return;
+            input.focus();
+            const p = Math.min(pos, String(this.busca ?? "").length);
+            input.setSelectionRange?.(p, p);
+          } catch {}
+        }, 0);
+      });
 
     html.find(".t20-cast-clear").on("click", ev => {
       ev.preventDefault();
@@ -5749,7 +5766,7 @@ function t20HudGrimorioTraduzirCodigo(valor, mapa = {}) {
 }
 
 function t20HudGrimorioExecucao(item) {
-  const v = item?.system?.execucao ?? item?.system?.ativacao?.execucao ?? item?.system?.activation?.type ?? item?.system?.activation ?? item?.system?.execution;
+  const v = item?.system?.execucao ?? item?.system?.ativacao?.execucao ?? item?.system?.ativacao?.execution ?? item?.system?.activation?.execucao ?? item?.system?.activation?.type ?? item?.system?.activation ?? item?.system?.execution;
   return t20HudGrimorioTraduzirCodigo(v, {
     action: "Ação", standard: "Ação", acao: "Ação", "ação": "Ação",
     move: "Movimento", movimento: "Movimento",
@@ -5761,7 +5778,7 @@ function t20HudGrimorioExecucao(item) {
 }
 
 function t20HudGrimorioAlcance(item) {
-  const v = item?.system?.alcance ?? item?.system?.range ?? item?.system?.distancia;
+  const v = item?.system?.alcance ?? item?.system?.ativacao?.alcance ?? item?.system?.ativacao?.range ?? item?.system?.activation?.alcance ?? item?.system?.activation?.range ?? item?.system?.range ?? item?.system?.distancia;
   return t20HudGrimorioTraduzirCodigo(v, {
     self: "Pessoal", personal: "Pessoal", pessoal: "Pessoal",
     touch: "Toque", toque: "Toque",
@@ -5821,8 +5838,12 @@ function t20HudGrimorioTraduzirDuracao(raw) {
 
 function t20HudGrimorioDuracaoDeObjeto(obj, depth = 0) {
   if (!obj || typeof obj !== "object" || depth > 5) return "";
+
+  const traduz = (v) => t20HudGrimorioTraduzirDuracao(v);
+
   const unitKeys = ["label", "name", "nome", "txt", "texto", "text", "tipo", "type", "unit", "unidade", "duration", "duracao", "duração"];
   const valueKeys = ["value", "valor", "qtd", "quantity", "quantidade", "amount"];
+
   let label = "";
   for (const k of unitKeys) {
     const v = obj?.[k];
@@ -5830,7 +5851,12 @@ function t20HudGrimorioDuracaoDeObjeto(obj, depth = 0) {
       label = v.trim();
       break;
     }
+    if (v && typeof v === "object") {
+      const nested = t20HudGrimorioDuracaoDeObjeto(v, depth + 1);
+      if (nested) return nested;
+    }
   }
+
   let valRaw;
   for (const k of valueKeys) {
     if (obj?.[k] !== undefined && obj?.[k] !== null && obj?.[k] !== "") {
@@ -5838,25 +5864,44 @@ function t20HudGrimorioDuracaoDeObjeto(obj, depth = 0) {
       break;
     }
   }
+
+  // No sistema T20/Foundry, muitos selects ficam salvos diretamente em "value".
+  // Ex.: { value: "sustentada" } ou { value: "Sustentada" }.
+  if (typeof valRaw === "string" && valRaw.trim() && valRaw.trim() !== "0") {
+    const translatedValue = traduz(valRaw.trim());
+    if (label && !/^instant/i.test(label) && !/^instant/i.test(valRaw.trim()) && !/^sustent/i.test(valRaw.trim()) && !/^perman/i.test(valRaw.trim())) {
+      return `${translatedValue} ${traduz(label)}`;
+    }
+    return translatedValue;
+  }
+
   if (label) {
-    const traduzida = t20HudGrimorioTraduzirDuracao(label);
+    const traduzida = traduz(label);
     if (valRaw !== undefined && valRaw !== null && String(valRaw) !== "0" && !/^instant/i.test(String(label))) return `${valRaw} ${traduzida}`;
     return traduzida;
   }
+
   for (const [k, v] of Object.entries(obj)) {
     const key = String(k).toLowerCase();
     if (/dur|duration/.test(key)) {
-      if (typeof v === "string" && v.trim()) return t20HudGrimorioTraduzirDuracao(v);
+      if (typeof v === "string" && v.trim()) return traduz(v);
       if (typeof v === "number" && v > 0) return String(v);
       const nested = t20HudGrimorioDuracaoDeObjeto(v, depth + 1);
       if (nested) return nested;
     }
   }
+
   return "";
 }
 
 function t20HudGrimorioBuscarDuracaoProfunda(item) {
   const candidatos = [
+    // Campo usado pela ficha do Tormenta20 na aba Detalhes > Ativação > Duração.
+    item?.system?.ativacao?.duracao,
+    item?.system?.ativacao?.duration,
+    item?.system?.activation?.duracao,
+    item?.system?.activation?.duration,
+
     item?.system?.duracao,
     item?.system?.duration,
     item?.system?.details?.duracao,
@@ -5914,6 +5959,10 @@ function t20HudGrimorioInfoMagia(item, circulo = null) {
   );
   const alvo = t20HudGrimorioValor(
     item?.system?.alvo ??
+    item?.system?.ativacao?.alvo ??
+    item?.system?.ativacao?.target ??
+    item?.system?.activation?.alvo ??
+    item?.system?.activation?.target ??
     item?.system?.alvoAreaEfeito ??
     item?.system?.target ??
     item?.system?.area
@@ -6164,10 +6213,27 @@ class ArsenalGrimorio extends Application {
   activateListeners(html) {
     super.activateListeners(html);
 
-    html.find(".t20-grimorio-busca").on("input", ev => {
-      this.busca = ev.currentTarget.value ?? "";
-      this.render(false);
-    });
+    html.find(".t20-grimorio-busca")
+      .on("keydown keypress keyup", ev => {
+        ev.stopPropagation();
+      })
+      .on("input", ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const valor = ev.currentTarget.value ?? "";
+        const pos = ev.currentTarget.selectionStart ?? valor.length;
+        this.busca = valor;
+        this.render(false);
+        setTimeout(() => {
+          try {
+            const input = this.element?.[0]?.querySelector?.(".t20-grimorio-busca");
+            if (!input) return;
+            input.focus();
+            const p = Math.min(pos, String(this.busca ?? "").length);
+            input.setSelectionRange?.(p, p);
+          } catch {}
+        }, 0);
+      });
 
     html.find(".t20-grimorio-magia").on("click", async ev => {
       const itemId = ev.currentTarget.dataset.itemId;
@@ -6924,6 +6990,20 @@ Hooks.on("canvasPan", () => {
   if (t20HudMode() === "token") atualizarArsenalHUD();
 });
 Hooks.on("canvasReady", () => atualizarArsenalHUD());
+
+Hooks.on("renderApplication", (app, html) => {
+  try {
+    const root = html instanceof jQuery ? html[0] : html;
+    if (!root?.querySelector?.("#arsenal-hud, .t20-grimorio-busca, .t20-cast-search")) return;
+    root.querySelectorAll("input, textarea, select").forEach(el => {
+      if (el._arsenalStopKeys) return;
+      el._arsenalStopKeys = true;
+      for (const evName of ["keydown", "keypress", "keyup"]) {
+        el.addEventListener(evName, ev => ev.stopPropagation(), true);
+      }
+    });
+  } catch {}
+});
 
 Hooks.on("getSceneControlButtons", (controls) => {
   if (Array.isArray(controls)) {
