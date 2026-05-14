@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.0.4 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.0.5 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -3944,6 +3944,24 @@ class ArsenalSustentadasPanel extends Application {
     return $(div);
   }
 
+  _descricaoCompleta() {
+    const bruto =
+      this.item?.system?.description?.value ??
+      this.item?.system?.descricao?.value ??
+      this.item?.system?.description ??
+      this.item?.system?.descricao ??
+      this.item?.description?.value ??
+      this.item?.description ??
+      "";
+    const html = String(bruto ?? "").trim();
+    if (!html) return "<em>Descrição não encontrada no item.</em>";
+    return html;
+  }
+
+  _textoDescricaoCompleta() {
+    return t20HudAprimTextoLimpo(this._descricaoCompleta()) || "Descrição não encontrada no item.";
+  }
+
   _html() {
     const tokens = canvas.tokens?.controlled ?? [];
     const actors = tokens.length ? tokens.map(t => t.actor).filter(Boolean) : [game.user.character].filter(Boolean);
@@ -5340,14 +5358,15 @@ class ArsenalConjurarMagiaDialog extends Application {
     this.item = item;
     this.selecionados = new Set();
     this.busca = "";
+    this.mostrarDescricao = false;
   }
 
   static get defaultOptions() {
     return foundry.utils.mergeObject(super.defaultOptions, {
       id: "arsenal-conjurar-magia",
       title: "Conjurar Magia — Arsenal T20",
-      width: 560,
-      height: 660,
+      width: 620,
+      height: 720,
       resizable: true,
       minimizable: true,
     });
@@ -5391,18 +5410,28 @@ class ArsenalConjurarMagiaDialog extends Application {
           <div style="font-weight:bold;color:${th.title};font-size:1.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.item.name}</div>
           <div style="font-size:0.82em;color:${th.muted}">${circulo ? `${circulo}º círculo` : "Magia"} · por ${this.actor?.name ?? "personagem"}</div>
         </div>
-        <div style="text-align:center;background:${th.panel};border:1px solid ${th.border};border-radius:8px;padding:7px 10px;min-width:72px">
-          <div style="font-size:0.72em;color:${th.muted};text-transform:uppercase">Custo</div>
-          <div style="font-weight:bold;color:${th.accent2};font-size:1.25em">${custos.total}</div>
-          <div style="font-size:0.72em;color:${th.muted}">PM</div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:7px;flex:0 0 auto">
+          <div style="text-align:center;background:${th.panel};border:1px solid ${th.border};border-radius:8px;padding:7px 10px;min-width:72px">
+            <div style="font-size:0.72em;color:${th.muted};text-transform:uppercase">Custo</div>
+            <div style="font-weight:bold;color:${th.accent2};font-size:1.25em">${custos.total}</div>
+            <div style="font-size:0.72em;color:${th.muted}">PM</div>
+          </div>
+          <button class="t20-cast-toggle-desc" title="Mostrar ou ocultar a descrição original completa da magia"
+            style="padding:6px 9px;border-radius:999px;background:${this.mostrarDescricao ? `${th.accent}22` : th.panel2};border:1px solid ${this.mostrarDescricao ? th.accent : th.border};color:${this.mostrarDescricao ? th.title : th.text};font-size:0.78em;font-weight:bold;cursor:pointer;white-space:nowrap">
+            ${this.mostrarDescricao ? "Ocultar descrição" : "Ver descrição completa"}
+          </button>
         </div>
       </div>
+
+      ${this.mostrarDescricao ? `<div style="margin:-2px 0 9px;padding:9px 10px;max-height:210px;overflow:auto;border-radius:8px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:0.9em;line-height:1.4">
+        <div style="font-size:0.76em;text-transform:uppercase;letter-spacing:0.04em;color:${th.muted};margin-bottom:5px">Descrição original</div>
+        <div>${this._descricaoCompleta()}</div>
+      </div>` : ""}
 
       <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
         <input class="t20-cast-search" type="text" placeholder="Filtrar aprimoramentos..."
           value="${this.busca ?? ""}"
           style="flex:1;box-sizing:border-box;padding:7px 9px;border-radius:6px;background:${th.panel};border:1px solid ${th.border};color:${th.text}">
-        <button class="t20-cast-clear" style="padding:7px 9px;border-radius:6px;background:${th.panel2};border:1px solid ${th.border};color:${th.text};cursor:pointer">Limpar</button>
       </div>
 
       <div style="display:flex;gap:8px;margin-bottom:8px;font-size:0.84em;color:${th.text};flex-wrap:wrap">
@@ -5425,8 +5454,9 @@ class ArsenalConjurarMagiaDialog extends Application {
         }).join("") : `<div style="color:${th.muted};text-align:center;padding:18px;border:1px dashed ${th.border};border-radius:8px">Nenhum aprimoramento de uso detectado.</div>`}
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;border-top:1px solid rgba(255,255,255,0.08);padding-top:9px;margin-top:9px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;border-top:1px solid rgba(255,255,255,0.08);padding-top:9px;margin-top:9px">
         <button class="t20-cast-original" style="padding:9px;border-radius:7px;background:${th.panel2};border:1px solid ${th.border};color:${th.text};font-weight:bold;cursor:pointer">Abrir original</button>
+        <button class="t20-cast-clear" style="padding:9px;border-radius:7px;background:${th.panel2};border:1px solid ${th.border};color:${th.text};font-weight:bold;cursor:pointer">Limpar</button>
         <button class="t20-cast-conjurar" style="padding:9px;border-radius:7px;background:#12351f;border:1px solid #34d399;color:#bbf7d0;font-weight:bold;cursor:pointer">Conjurar</button>
       </div>
       <div style="font-size:0.75em;color:${th.muted};margin-top:6px;line-height:1.25">
@@ -5438,6 +5468,15 @@ class ArsenalConjurarMagiaDialog extends Application {
   activateListeners(html) {
     super.activateListeners(html);
 
+    html.find(".t20-cast-toggle-desc").on("click", ev => {
+      ev.preventDefault();
+      this.mostrarDescricao = !this.mostrarDescricao;
+      this.render(false);
+      try {
+        setTimeout(() => this.setPosition({ height: this.mostrarDescricao ? 780 : 720 }), 20);
+      } catch {}
+    });
+
     html.find(".t20-cast-search").on("input", ev => {
       this.busca = ev.currentTarget.value ?? "";
       this.render(false);
@@ -5446,6 +5485,7 @@ class ArsenalConjurarMagiaDialog extends Application {
     html.find(".t20-cast-clear").on("click", ev => {
       ev.preventDefault();
       this.busca = "";
+      this.selecionados.clear();
       this.render(false);
     });
 
@@ -5865,7 +5905,7 @@ class ArsenalGrimorio extends Application {
     const layout = this._layout();
     const countsLabel = `${magias.length} magia(s)`;
 
-    return `<div style="background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};border-radius:8px;color:${th.text};font-family:serif;padding:10px;height:100%;max-height:none;box-sizing:border-box;display:flex;flex-direction:column">
+    return `<div style="background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};border-radius:8px;color:${th.text};font-family:serif;font-size:${layout === "cards" ? "14px" : "16px"};padding:10px;height:100%;max-height:none;box-sizing:border-box;display:flex;flex-direction:column">
       <div style="display:flex;align-items:center;gap:8px;border-bottom:1px solid ${th.accent}44;padding-bottom:8px;margin-bottom:8px;flex-wrap:nowrap">
         ${this.actor?.img ? `<img src="${this.actor.img}" style="width:34px;height:34px;border-radius:6px;object-fit:cover;border:1px solid ${th.accent}73;flex:0 0 auto">` : ""}
         <div style="min-width:0;flex:1 1 auto">
