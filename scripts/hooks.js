@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.0.5 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.1.0 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -4584,9 +4584,14 @@ function t20HudSetCollapsed(value) {
 
 function t20HudSecaoRecolhida(cat) {
   try {
-    return localStorage.getItem(`arsenal-t20.hud.sectionCollapsed.${game.user?.id ?? "user"}.${cat}`) === "1";
+    const key = `arsenal-t20.hud.sectionCollapsed.${game.user?.id ?? "user"}.${cat}`;
+    const raw = localStorage.getItem(key);
+    // Padrão: categorias recolhidas na primeira abertura.
+    // Depois que o usuário interage, respeita a preferência salva.
+    if (raw === null) return true;
+    return raw === "1";
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -4594,6 +4599,46 @@ function t20HudSetSecaoRecolhida(cat, value) {
   try {
     localStorage.setItem(`arsenal-t20.hud.sectionCollapsed.${game.user?.id ?? "user"}.${cat}`, value ? "1" : "0");
   } catch {}
+}
+
+function t20HudSecaoTemEstadoSalvo(cat) {
+  try {
+    return localStorage.getItem(`arsenal-t20.hud.sectionCollapsed.${game.user?.id ?? "user"}.${cat}`) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function t20HudSetTodasSecoesRecolhidas(value) {
+  for (const cat of T20_HUD_CATEGORIAS_PADRAO) {
+    t20HudSetSecaoRecolhida(cat, value);
+  }
+}
+
+function t20HudTodasSecoesRecolhidas() {
+  return T20_HUD_CATEGORIAS_PADRAO.every(cat => t20HudSecaoRecolhida(cat));
+}
+
+function t20HudThemeChoices() {
+  return {
+    darkGold: "Escuro",
+    arcane: "Arcano",
+    emerald: "Esmeralda",
+    crimson: "Carmesim",
+    steel: "Aço",
+    parchment: "Pergaminho",
+    ivoryGold: "Marfim",
+    sky: "Céu",
+    jadeLight: "Jade",
+    roseLight: "Rosa",
+    slateLight: "Ardósia",
+    foundryClassic: "Foundry"
+  };
+}
+
+function t20HudThemeKey() {
+  try { return game.settings.get("arsenal-t20", "arsenalHudColorTheme") ?? "foundryClassic"; }
+  catch { return "foundryClassic"; }
 }
 
 
@@ -5267,6 +5312,11 @@ function t20HudCustoBaseMagia(item) {
 
   return 0;
 }
+function t20HudAprimoramentoCumulativo(a) {
+  const texto = String(a?.texto ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return /^aumenta\b/.test(texto);
+}
+
 function t20HudAprimoramentosUsoItem(item) {
   return t20HudAprimColetarDeItem(item).map((a, idx) => ({
     id: `apr-${idx}`,
@@ -5275,6 +5325,7 @@ function t20HudAprimoramentosUsoItem(item) {
     custoNum: Number(String(a.custo ?? "").match(/-?\d+/)?.[0] ?? 0) || 0,
     texto: a.texto ?? "(sem descrição)",
     raw: a.raw ?? "",
+    cumulativo: t20HudAprimoramentoCumulativo(a),
   }));
 }
 
@@ -5356,7 +5407,7 @@ class ArsenalConjurarMagiaDialog extends Application {
     super(options);
     this.actor = actor;
     this.item = item;
-    this.selecionados = new Set();
+    this.selecionados = new Map();
     this.busca = "";
     this.mostrarDescricao = false;
   }
@@ -5381,12 +5432,25 @@ class ArsenalConjurarMagiaDialog extends Application {
       .filter(a => !q || `${a.custo} ${a.texto}`.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(q));
   }
 
+  _qtdSelecionada(index) {
+    return Number(this.selecionados.get(Number(index)) || 0);
+  }
+
+  _setQtdSelecionada(index, qtd) {
+    const idx = Number(index);
+    const n = Math.max(0, Number(qtd) || 0);
+    if (!n) this.selecionados.delete(idx);
+    else this.selecionados.set(idx, n);
+  }
+
+  _totalSelecionado() {
+    return Array.from(this.selecionados.values()).reduce((sum, n) => sum + (Number(n) || 0), 0);
+  }
+
   _custoTotal() {
     const base = t20HudCustoBaseMagia(this.item);
     const todos = t20HudAprimoramentosUsoItem(this.item);
-    const extra = todos
-      .filter(a => this.selecionados.has(a.index))
-      .reduce((sum, a) => sum + (Number(a.custoNum) || 0), 0);
+    const extra = todos.reduce((sum, a) => sum + ((Number(a.custoNum) || 0) * this._qtdSelecionada(a.index)), 0);
     return { base, extra, total: Math.max(0, base + extra) };
   }
 
@@ -5451,20 +5515,26 @@ class ArsenalConjurarMagiaDialog extends Application {
       <div style="display:flex;gap:8px;margin-bottom:8px;font-size:0.84em;color:${th.text};flex-wrap:wrap">
         <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">Base: ${custos.base} PM</span>
         <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">Aprim.: ${custos.extra >= 0 ? "+" : ""}${custos.extra} PM</span>
-        <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">${this.selecionados.size} selecionado(s)</span>
+        <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">${this._totalSelecionado()} selecionado(s)</span>
       </div>
 
       <div style="overflow:auto;min-height:0;flex:1;padding-right:4px">
         ${apr.length ? apr.map(a => {
-          const sel = this.selecionados.has(a.index);
-          return `<button class="t20-cast-aprim" data-index="${a.index}"
-            style="width:100%;text-align:left;margin-bottom:7px;padding:9px;border-radius:9px;border:1px solid ${sel ? th.accent2 : th.border};border-left:4px solid ${sel ? th.accent2 : th.accent};background:${sel ? `linear-gradient(180deg,${th.panel2},${th.panel})` : `linear-gradient(180deg,${th.panel},${th.bg2})`};color:${th.text};cursor:pointer">
+          const qtd = this._qtdSelecionada(a.index);
+          const sel = qtd > 0;
+          const cumulativo = !!a.cumulativo;
+          return `<div class="t20-cast-aprim" data-index="${a.index}" data-cumulativo="${cumulativo ? "1" : "0"}"
+            style="width:100%;box-sizing:border-box;text-align:left;margin-bottom:7px;padding:9px;border-radius:9px;border:1px solid ${sel ? th.accent2 : th.border};border-left:4px solid ${sel ? th.accent2 : th.accent};background:${sel ? `linear-gradient(180deg,${th.panel2},${th.panel})` : `linear-gradient(180deg,${th.panel},${th.bg2})`};color:${th.text};cursor:${cumulativo ? "default" : "pointer"}">
             <div style="display:flex;gap:8px;align-items:flex-start">
               <span style="flex:0 0 auto;min-width:48px;text-align:center;padding:3px 7px;border-radius:999px;background:${th.panel2};border:1px solid ${th.accent};color:${th.accent2};font-weight:bold;font-size:0.86em">${a.custo}</span>
               <span style="flex:1;line-height:1.34;font-size:0.94em">${a.texto}</span>
-              <span style="flex:0 0 auto;color:${sel ? th.accent2 : th.muted};font-weight:bold">${sel ? "✓" : ""}</span>
+              ${cumulativo ? `<span class="t20-cast-aprim-qty" style="flex:0 0 auto;display:inline-flex;align-items:center;gap:4px">
+                <button class="t20-cast-aprim-minus" data-index="${a.index}" type="button" title="Remover uma aplicação" style="width:24px;height:24px;border-radius:6px;border:1px solid ${th.border};background:${th.panel2};color:${th.text};font-weight:bold;cursor:pointer">−</button>
+                <span style="min-width:22px;text-align:center;padding:3px 5px;border-radius:5px;border:1px solid ${th.border};background:${th.panel};font-weight:bold;color:${sel ? th.accent2 : th.text}">${qtd}</span>
+                <button class="t20-cast-aprim-plus" data-index="${a.index}" type="button" title="Adicionar uma aplicação" style="width:24px;height:24px;border-radius:6px;border:1px solid ${th.accent};background:${th.panel2};color:${th.accent2};font-weight:bold;cursor:pointer">+</button>
+              </span>` : `<span style="flex:0 0 auto;color:${sel ? th.accent2 : th.muted};font-weight:bold">${sel ? "✓" : ""}</span>`}
             </div>
-          </button>`;
+          </div>`;
         }).join("") : `<div style="color:${th.muted};text-align:center;padding:18px;border:1px dashed ${th.border};border-radius:8px">Nenhum aprimoramento de uso detectado.</div>`}
       </div>
 
@@ -5505,9 +5575,28 @@ class ArsenalConjurarMagiaDialog extends Application {
 
     html.find(".t20-cast-aprim").on("click", ev => {
       ev.preventDefault();
+      if (ev.target?.closest?.(".t20-cast-aprim-qty")) return;
       const idx = Number(ev.currentTarget.dataset.index);
-      if (this.selecionados.has(idx)) this.selecionados.delete(idx);
-      else this.selecionados.add(idx);
+      const cumulativo = ev.currentTarget.dataset.cumulativo === "1";
+      if (cumulativo) return;
+      if (this._qtdSelecionada(idx) > 0) this._setQtdSelecionada(idx, 0);
+      else this._setQtdSelecionada(idx, 1);
+      this.render(false);
+    });
+
+    html.find(".t20-cast-aprim-minus").on("click", ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const idx = Number(ev.currentTarget.dataset.index);
+      this._setQtdSelecionada(idx, this._qtdSelecionada(idx) - 1);
+      this.render(false);
+    });
+
+    html.find(".t20-cast-aprim-plus").on("click", ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const idx = Number(ev.currentTarget.dataset.index);
+      this._setQtdSelecionada(idx, this._qtdSelecionada(idx) + 1);
       this.render(false);
     });
 
@@ -5523,7 +5612,9 @@ class ArsenalConjurarMagiaDialog extends Application {
   }
 
   async _conjurarPeloSistema() {
-    const selecoes = Array.from(this.selecionados).sort((a, b) => a - b);
+    const selecoes = Array.from(this.selecionados.entries())
+      .sort((a, b) => a[0] - b[0])
+      .flatMap(([idx, qtd]) => Array(Math.max(0, Number(qtd) || 0)).fill(idx));
     let detectou = false;
 
     const hookId = Hooks.on("renderAbilityUseDialog", (app, html) => {
@@ -6338,7 +6429,9 @@ class ArsenalHUD extends Application {
         <div style="min-width:0;align-self:end">
           <div style="color:${th.title};font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.05">${nome}</div>
         </div>
-        <div style="display:flex;gap:4px;align-items:start;justify-content:flex-end">
+        <div style="display:flex;gap:4px;align-items:start;justify-content:flex-end;flex-wrap:wrap">
+          ${collapsed ? "" : this._themeSelect(th)}
+          ${collapsed ? "" : `<button class="t20-hud-toggle-all" title="${t20HudTodasSecoesRecolhidas() ? "Expandir todas as categorias" : "Recolher todas as categorias"}" style="${this._smallCtrl(th)}">${t20HudTodasSecoesRecolhidas() ? "▾" : "▴"}</button>`}
           <button class="t20-hud-refresh" title="Atualizar" style="${this._smallCtrl(th)}">↻</button>
           <button class="t20-hud-minimize" title="${collapsed ? "Expandir HUD" : "Minimizar HUD"}" style="${this._smallCtrl(th)}">${collapsed ? "▣" : "—"}</button>
         </div>
@@ -6479,6 +6572,17 @@ class ArsenalHUD extends Application {
     </div>`;
   }
 
+  _themeSelect(th) {
+    const atual = t20HudThemeKey();
+    const opts = Object.entries(t20HudThemeChoices())
+      .map(([key, label]) => `<option value="${key}" ${key === atual ? "selected" : ""}>${label}</option>`)
+      .join("");
+    return `<select class="t20-hud-theme-select" title="Tema do HUD"
+      style="height:24px;max-width:92px;padding:1px 4px;border-radius:5px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:12px;cursor:pointer">
+      ${opts}
+    </select>`;
+  }
+
   _textBtn(bg, fg) {
     return `padding:4px 6px;border-radius:5px;background:${bg};border:1px solid ${fg};color:${fg};font-weight:bold;cursor:pointer;font-size:0.84em;line-height:1.1`;
   }
@@ -6593,6 +6697,25 @@ class ArsenalHUD extends Application {
       ev.stopPropagation();
       t20HudSetCollapsed(!t20HudIsCollapsed());
       this.render(false);
+    });
+
+    html.find(".t20-hud-toggle-all").on("click", ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const expandir = t20HudTodasSecoesRecolhidas();
+      t20HudSetTodasSecoesRecolhidas(!expandir);
+      this.render(false);
+    });
+
+    html.find(".t20-hud-theme-select").on("change", async ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const tema = ev.currentTarget.value;
+      if (!Object.prototype.hasOwnProperty.call(t20HudThemeChoices(), tema)) return;
+      try { await game.settings.set("arsenal-t20", "arsenalHudColorTheme", tema); }
+      catch (e) { console.warn("Arsenal T20 | não foi possível alterar o tema do HUD", e); }
+      this.render(false);
+      if (_arsenalGrimorio?.rendered) _arsenalGrimorio.render(false);
     });
 
     html.find(".t20-hud-sec-toggle").on("click", ev => {
