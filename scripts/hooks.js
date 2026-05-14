@@ -179,7 +179,8 @@ Hooks.once("ready", () => {
       sky: "Céu Claro",
       jadeLight: "Jade Claro",
       roseLight: "Rosa Claro",
-      slateLight: "Ardósia Clara"
+      slateLight: "Ardósia Clara",
+      foundryClassic: "Foundry Clássico"
     },
     default: "darkGold",
   });
@@ -4455,6 +4456,11 @@ function t20HudTheme() {
       border:"#94a3b8", accent:"#334155", accent2:"#1e293b",
       text:"#0f172a", title:"#111827", muted:"#64748b"
     },
+    foundryClassic: {
+      bg1:"#d8d1bd", bg2:"#bfb59d", panel:"#efe7d2", panel2:"#d7cdb5",
+      border:"#7a6a4f", accent:"#5c241c", accent2:"#7a2e23",
+      text:"#19140e", title:"#21170e", muted:"#5f5547"
+    },
   };
   return temas[key] ?? temas.darkGold;
 }
@@ -5081,17 +5087,18 @@ function t20HudAprimColetarDeItem(item) {
 }
 
 function t20HudHtmlAprimoramentosItem(item) {
+  const th = t20HudTheme();
   const aprim = t20HudAprimColetarDeItem(item);
   if (!aprim.length) {
-    return `<div style="font-size:0.82em;color:#9ca3af;padding:8px 10px;border:1px dashed #374151;border-radius:7px;margin-top:6px">Nenhum aprimoramento detectado nos efeitos da magia.</div>`;
+    return `<div style="font-size:0.82em;color:${th.muted};padding:8px 10px;border:1px dashed ${th.border};border-radius:7px;margin-top:6px">Nenhum aprimoramento detectado nos efeitos da magia.</div>`;
   }
 
   return `<div style="margin-top:7px;display:flex;flex-direction:column;gap:6px">
     ${aprim.map(a => `
-      <div style="padding:8px;border-radius:8px;background:#0f172a;border:1px solid #303b52;border-left:3px solid #8b5cf6">
+      <div style="padding:8px;border-radius:8px;background:${th.panel};border:1px solid ${th.border};border-left:3px solid ${th.accent}">
         <div style="display:flex;gap:8px;align-items:flex-start">
-          <span style="flex:0 0 auto;min-width:44px;text-align:center;padding:3px 6px;border-radius:999px;background:#2c2140;border:1px solid #8b5cf6;color:#ddd6fe;font-weight:bold;font-size:0.78em">${a.custo}</span>
-          <span style="color:#dbe2ef;line-height:1.3;font-size:0.86em">${a.texto}</span>
+          <span style="flex:0 0 auto;min-width:44px;text-align:center;padding:3px 6px;border-radius:999px;background:${th.panel2};border:1px solid ${th.accent};color:${th.accent2};font-weight:bold;font-size:0.78em">${a.custo}</span>
+          <span style="color:${th.text};line-height:1.3;font-size:0.86em">${a.texto}</span>
         </div>
       </div>
     `).join("")}
@@ -5257,57 +5264,58 @@ class ArsenalConjurarMagiaDialog extends Application {
   }
 
   _html() {
+    const th = t20HudTheme();
     const apr = this._aprimoramentos();
     const custos = this._custoTotal();
     const circulo = t20HudExtrairCirculoMagia(this.item);
 
-    return `<div style="height:100%;box-sizing:border-box;display:flex;flex-direction:column;background:linear-gradient(180deg,#111827,#0b1020);border:1px solid #374151;border-top:3px solid #c9a227;border-radius:8px;color:#e5e7eb;font-family:serif;padding:10px">
-      <div style="display:flex;gap:10px;align-items:center;border-bottom:1px solid rgba(201,162,39,0.25);padding-bottom:9px;margin-bottom:9px">
-        ${this.item.img ? `<img src="${this.item.img}" style="width:44px;height:44px;border-radius:7px;object-fit:cover;border:1px solid rgba(201,162,39,0.45)">` : ""}
+    return `<div style="height:100%;box-sizing:border-box;display:flex;flex-direction:column;background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};border-radius:8px;color:${th.text};font-family:serif;padding:10px">
+      <div style="display:flex;gap:10px;align-items:center;border-bottom:1px solid ${th.accent}44;padding-bottom:9px;margin-bottom:9px">
+        ${this.item.img ? `<img src="${this.item.img}" style="width:44px;height:44px;border-radius:7px;object-fit:cover;border:1px solid ${th.accent}73">` : ""}
         <div style="min-width:0;flex:1">
-          <div style="font-size:0.78em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">Conjuração Arsenal</div>
-          <div style="font-weight:bold;color:#f2e6c9;font-size:1.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.item.name}</div>
-          <div style="font-size:0.82em;color:#9ca3af">${circulo ? `${circulo}º círculo` : "Magia"} · por ${this.actor?.name ?? "personagem"}</div>
+          <div style="font-size:0.78em;color:${th.muted};text-transform:uppercase;letter-spacing:0.05em">Conjuração Arsenal</div>
+          <div style="font-weight:bold;color:${th.title};font-size:1.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.item.name}</div>
+          <div style="font-size:0.82em;color:${th.muted}">${circulo ? `${circulo}º círculo` : "Magia"} · por ${this.actor?.name ?? "personagem"}</div>
         </div>
-        <div style="text-align:center;background:#0f172a;border:1px solid #303b52;border-radius:8px;padding:7px 10px;min-width:72px">
-          <div style="font-size:0.72em;color:#9ca3af;text-transform:uppercase">Custo</div>
-          <div style="font-weight:bold;color:#facc15;font-size:1.25em">${custos.total}</div>
-          <div style="font-size:0.72em;color:#9ca3af">PM</div>
+        <div style="text-align:center;background:${th.panel};border:1px solid ${th.border};border-radius:8px;padding:7px 10px;min-width:72px">
+          <div style="font-size:0.72em;color:${th.muted};text-transform:uppercase">Custo</div>
+          <div style="font-weight:bold;color:${th.accent2};font-size:1.25em">${custos.total}</div>
+          <div style="font-size:0.72em;color:${th.muted}">PM</div>
         </div>
       </div>
 
       <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
         <input class="t20-cast-search" type="text" placeholder="Filtrar aprimoramentos..."
           value="${this.busca ?? ""}"
-          style="flex:1;box-sizing:border-box;padding:7px 9px;border-radius:6px;background:#0f172a;border:1px solid #303b52;color:#e5e7eb">
-        <button class="t20-cast-clear" style="padding:7px 9px;border-radius:6px;background:#1f2937;border:1px solid #64748b;color:#e5e7eb;cursor:pointer">Limpar</button>
+          style="flex:1;box-sizing:border-box;padding:7px 9px;border-radius:6px;background:${th.panel};border:1px solid ${th.border};color:${th.text}">
+        <button class="t20-cast-clear" style="padding:7px 9px;border-radius:6px;background:${th.panel2};border:1px solid ${th.border};color:${th.text};cursor:pointer">Limpar</button>
       </div>
 
-      <div style="display:flex;gap:8px;margin-bottom:8px;font-size:0.84em;color:#cbd5e1;flex-wrap:wrap">
-        <span style="padding:4px 7px;border-radius:999px;background:#0f172a;border:1px solid #303b52">Base: ${custos.base} PM</span>
-        <span style="padding:4px 7px;border-radius:999px;background:#0f172a;border:1px solid #303b52">Aprim.: ${custos.extra >= 0 ? "+" : ""}${custos.extra} PM</span>
-        <span style="padding:4px 7px;border-radius:999px;background:#0f172a;border:1px solid #303b52">${this.selecionados.size} selecionado(s)</span>
+      <div style="display:flex;gap:8px;margin-bottom:8px;font-size:0.84em;color:${th.text};flex-wrap:wrap">
+        <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">Base: ${custos.base} PM</span>
+        <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">Aprim.: ${custos.extra >= 0 ? "+" : ""}${custos.extra} PM</span>
+        <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">${this.selecionados.size} selecionado(s)</span>
       </div>
 
       <div style="overflow:auto;min-height:0;flex:1;padding-right:4px">
         ${apr.length ? apr.map(a => {
           const sel = this.selecionados.has(a.index);
           return `<button class="t20-cast-aprim" data-index="${a.index}"
-            style="width:100%;text-align:left;margin-bottom:7px;padding:9px;border-radius:9px;border:1px solid ${sel ? "#60a5fa" : "#374151"};border-left:4px solid ${sel ? "#60a5fa" : "#8b5cf6"};background:${sel ? "linear-gradient(180deg,#172554,#111827)" : "linear-gradient(180deg,#182235,#111827)"};color:#e5e7eb;cursor:pointer">
+            style="width:100%;text-align:left;margin-bottom:7px;padding:9px;border-radius:9px;border:1px solid ${sel ? th.accent2 : th.border};border-left:4px solid ${sel ? th.accent2 : th.accent};background:${sel ? `linear-gradient(180deg,${th.panel2},${th.panel})` : `linear-gradient(180deg,${th.panel},${th.bg2})`};color:${th.text};cursor:pointer">
             <div style="display:flex;gap:8px;align-items:flex-start">
-              <span style="flex:0 0 auto;min-width:48px;text-align:center;padding:3px 7px;border-radius:999px;background:#2c2140;border:1px solid #8b5cf6;color:#ddd6fe;font-weight:bold;font-size:0.78em">${a.custo}</span>
+              <span style="flex:0 0 auto;min-width:48px;text-align:center;padding:3px 7px;border-radius:999px;background:${th.panel2};border:1px solid ${th.accent};color:${th.accent2};font-weight:bold;font-size:0.78em">${a.custo}</span>
               <span style="flex:1;line-height:1.32;font-size:0.9em">${a.texto}</span>
-              <span style="flex:0 0 auto;color:${sel ? "#86efac" : "#64748b"};font-weight:bold">${sel ? "✓" : ""}</span>
+              <span style="flex:0 0 auto;color:${sel ? th.accent2 : th.muted};font-weight:bold">${sel ? "✓" : ""}</span>
             </div>
           </button>`;
-        }).join("") : `<div style="color:#9ca3af;text-align:center;padding:18px;border:1px dashed #374151;border-radius:8px">Nenhum aprimoramento de uso detectado.</div>`}
+        }).join("") : `<div style="color:${th.muted};text-align:center;padding:18px;border:1px dashed ${th.border};border-radius:8px">Nenhum aprimoramento de uso detectado.</div>`}
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;border-top:1px solid rgba(255,255,255,0.08);padding-top:9px;margin-top:9px">
-        <button class="t20-cast-original" style="padding:9px;border-radius:7px;background:#1f2937;border:1px solid #64748b;color:#e5e7eb;font-weight:bold;cursor:pointer">Abrir original</button>
+        <button class="t20-cast-original" style="padding:9px;border-radius:7px;background:${th.panel2};border:1px solid ${th.border};color:${th.text};font-weight:bold;cursor:pointer">Abrir original</button>
         <button class="t20-cast-conjurar" style="padding:9px;border-radius:7px;background:#12351f;border:1px solid #34d399;color:#bbf7d0;font-weight:bold;cursor:pointer">Conjurar</button>
       </div>
-      <div style="font-size:0.75em;color:#9ca3af;margin-top:6px;line-height:1.25">
+      <div style="font-size:0.75em;color:${th.muted};margin-top:6px;line-height:1.25">
         O Arsenal abre a janela original, tenta marcar os aprimoramentos por ordem e aciona “Lançar Magia”.
       </div>
     </div>`;
@@ -5427,41 +5435,42 @@ class ArsenalGrimorio extends Application {
   }
 
   _html() {
+    const th = t20HudTheme();
     const magias = this._magias();
 
-    return `<div style="background:linear-gradient(180deg,#111827,#0b1020);border:1px solid #374151;border-top:3px solid #c9a227;
-      border-radius:8px;color:#e5e7eb;font-family:serif;padding:10px;max-height:620px;display:flex;flex-direction:column">
-      <div style="display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(201,162,39,0.22);padding-bottom:8px;margin-bottom:8px">
-        ${this.actor?.img ? `<img src="${this.actor.img}" style="width:34px;height:34px;border-radius:6px;object-fit:cover;border:1px solid rgba(201,162,39,0.45)">` : ""}
+    return `<div style="background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};
+      border-radius:8px;color:${th.text};font-family:serif;padding:10px;max-height:620px;display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;gap:8px;border-bottom:1px solid ${th.accent}44;padding-bottom:8px;margin-bottom:8px">
+        ${this.actor?.img ? `<img src="${this.actor.img}" style="width:34px;height:34px;border-radius:6px;object-fit:cover;border:1px solid ${th.accent}73">` : ""}
         <div style="min-width:0;flex:1">
-          <div style="font-size:0.78em;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">Grimório — ${this.circulo}º Círculo</div>
-          <div style="color:#f2e6c9;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.actor?.name ?? "Conjurador"}</div>
+          <div style="font-size:0.78em;color:${th.muted};text-transform:uppercase;letter-spacing:0.05em">Grimório — ${this.circulo}º Círculo</div>
+          <div style="color:${th.title};font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.actor?.name ?? "Conjurador"}</div>
         </div>
-        <div style="font-size:0.82em;color:#9ca3af">${magias.length} magia(s)</div>
+        <div style="font-size:0.82em;color:${th.muted}">${magias.length} magia(s)</div>
       </div>
 
       <input class="t20-grimorio-busca" type="text" placeholder="Buscar magia..."
         value="${this.busca ?? ""}"
         style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:7px 9px;border-radius:6px;
-        background:#0f172a;border:1px solid #303b52;color:#e5e7eb">
+        background:${th.panel};border:1px solid ${th.border};color:${th.text}">
 
       <div style="overflow:auto;min-height:0">
         ${magias.length ? magias.map(item => {
           const aberta = this.expandidas.has(item.id);
-          return `<div style="margin-bottom:6px;border-radius:8px;background:linear-gradient(180deg,#182235,#111827);border:1px solid #374151;overflow:hidden">
+          return `<div style="margin-bottom:6px;border-radius:8px;background:linear-gradient(180deg,${th.panel2},${th.panel});border:1px solid ${th.border};overflow:hidden">
             <div style="display:flex;align-items:center;gap:6px;padding:6px">
               <button class="t20-grimorio-magia" data-item-id="${item.id}" title="Conjurar ${item.name}"
-                style="display:flex;align-items:center;gap:8px;flex:1;padding:2px;border:none;background:transparent;color:#e5e7eb;cursor:pointer;
+                style="display:flex;align-items:center;gap:8px;flex:1;padding:2px;border:none;background:transparent;color:${th.text};cursor:pointer;
                 font-size:0.92em;text-align:left;min-width:0">
-                ${item.img ? `<img src="${item.img}" style="width:28px;height:28px;border-radius:5px;object-fit:cover;border:1px solid rgba(201,162,39,0.35)">` : `<span style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:#0f172a">🪄</span>`}
+                ${item.img ? `<img src="${item.img}" style="width:28px;height:28px;border-radius:5px;object-fit:cover;border:1px solid ${th.accent}55">` : `<span style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:${th.bg2}">🪄</span>`}
                 <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</span>
               </button>
               <button class="t20-grimorio-expandir" data-item-id="${item.id}" title="${aberta ? "Ocultar aprimoramentos" : "Consultar aprimoramentos"}"
-                style="width:30px;height:30px;border-radius:6px;background:#1f2937;border:1px solid #64748b;color:#e5e7eb;cursor:pointer;font-weight:bold">${aberta ? "▴" : "▾"}</button>
+                style="width:30px;height:30px;border-radius:6px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-weight:bold">${aberta ? "▴" : "▾"}</button>
             </div>
             ${aberta ? `<div style="padding:0 8px 8px">${t20HudHtmlAprimoramentosItem(item)}</div>` : ""}
           </div>`;
-        }).join("") : `<div style="color:#9ca3af;padding:12px;text-align:center">Nenhuma magia encontrada neste círculo.</div>`}
+        }).join("") : `<div style="color:${th.muted};padding:12px;text-align:center">Nenhuma magia encontrada neste círculo.</div>`}
       </div>
     </div>`;
   }
