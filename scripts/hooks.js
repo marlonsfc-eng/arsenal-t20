@@ -399,88 +399,13 @@ function abrirPainelCondicoes() {
 }
 
 // Botão nos controles da cena — compatível com Foundry v11/v12/v13
-Hooks.on("getSceneControlButtons", (controls) => {
-  // v13: controls é um objeto com chaves; v11/v12: array
-  if (Array.isArray(controls)) {
-    const tokens = controls.find(c => c.name === "token");
-    if (tokens) {
-      tokens.tools.push({
-        name:    "arsenal-condicoes",
-        title:   "Condições Rápidas — Arsenal T20",
-        icon:    "fas fa-skull-crossbones",
-        button:  true,
-        onClick: () => abrirPainelCondicoes(),
-      });
-    }
-  } else {
-    // v13: controles são objetos com .tools como objeto também
-    const tokens = controls.token ?? controls.tokens;
-    if (tokens) {
-      tokens.tools["arsenal-condicoes"] = {
-        name:    "arsenal-condicoes",
-        title:   "Condições Rápidas — Arsenal T20",
-        icon:    "fas fa-skull-crossbones",
-        button:  true,
-        onChange: () => abrirPainelCondicoes(),
-        order:   100,
-      };
-    }
-  }
-});
+// Botão de ferramentas de Condições removido; função mantida para uso pelo HUD.
+
 
 // Botão fixo ao lado da barra de players (canto inferior esquerdo)
-Hooks.on("ready", () => {
-  const btn = document.createElement("button");
-  btn.id    = "arsenal-cond-btn";
-  btn.title = "Condições Rápidas — Arsenal T20";
-  btn.innerHTML = `<i class="fas fa-skull-crossbones" style="margin-right:4px"></i><span style="font-size:0.76em;font-family:'Cinzel',serif;letter-spacing:0.03em">Condições</span>`;
-  btn.style.cssText = `
-    position: fixed;
-    top: 454px;
-    left: 0;
-    z-index: 100;
-    height: 34px;
-    padding: 0 10px;
-    background: #1a1a26;
-    border: 1px solid #3a3a50;
-    border-radius: 0 6px 6px 0;
-    color: #c9a227;
-    font-size: 12px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    box-shadow: 2px 2px 8px rgba(0,0,0,0.6);
-    transition: all 0.2s;
-  `;
-  // Mantém os botões logo abaixo da barra de ferramentas esquerda, sem sobrepor a lista de jogadores.
-  const ajustarPosicao = () => {
-    const controls = document.getElementById("controls") ?? document.querySelector("#ui-left #controls");
-    if (controls) {
-      const rect = controls.getBoundingClientRect();
-      btn.style.top = `${Math.max(454, Math.ceil(rect.bottom + 8))}px`;
-    } else {
-      btn.style.top = "454px";
-    }
-  };
-  btn.addEventListener("mouseenter", () => {
-    btn.style.background = "#2a1a0a";
-    btn.style.borderColor = "#c9a227";
-    btn.style.color = "#f0c040";
-  });
-  btn.addEventListener("mouseleave", () => {
-    btn.style.background = "#1a1a26";
-    btn.style.borderColor = "#3a3a50";
-    btn.style.color = "#c9a227";
-  });
-  btn.addEventListener("click", () => abrirPainelCondicoes());
+// Botão flutuante de Condições removido; função mantida para uso pelo HUD.
+Hooks.on("ready", () => document.getElementById("arsenal-cond-btn")?.remove?.());
 
-  // Reposiciona após renderização dos controles
-  document.body.appendChild(btn);
-  setTimeout(ajustarPosicao, 500);
-  Hooks.on("renderPlayerList", ajustarPosicao);
-  Hooks.on("canvasReady", ajustarPosicao);
-});
 
 // Helper para verificar configurações
 function cfg(chave) {
@@ -1541,82 +1466,12 @@ Hooks.on("updateActor", (actor, changed) => {
   }
 });
 
-Hooks.on("getSceneControlButtons", (controls) => {
-  if (Array.isArray(controls)) {
-    const tokens = controls.find(c => c.name === "token");
-    if (tokens) {
-      tokens.tools.push({
-        name: "arsenal-aura-sagrada",
-        title: "Alternar Aura Sagrada — Arsenal T20",
-        icon: "fas fa-shield-alt",
-        button: true,
-        onClick: () => t20ToggleAuraSagrada(),
-      });
-    }
-  } else {
-    const tokens = controls.token ?? controls.tokens;
-    if (tokens) {
-      tokens.tools["arsenal-aura-sagrada"] = {
-        name: "arsenal-aura-sagrada",
-        title: "Alternar Aura Sagrada — Arsenal T20",
-        icon: "fas fa-shield-alt",
-        button: true,
-        onChange: () => t20ToggleAuraSagrada(),
-        order: 103,
-      };
-    }
-  }
-});
+// Botão de ferramentas de Aura removido; função mantida para uso pelo HUD.
 
-Hooks.once("ready", () => {
-  if (!game.user.isGM && !game.user.character) return;
-  if (document.getElementById("arsenal-aura-btn")) return;
 
-  const btn = document.createElement("button");
-  btn.id = "arsenal-aura-btn";
-  btn.title = "Alternar Aura Sagrada — Arsenal T20";
-  btn.innerHTML = `<i class="fas fa-shield-alt" style="margin-right:4px"></i><span style="font-size:0.76em;font-family:'Cinzel',serif;letter-spacing:0.03em">Aura</span>`;
-  btn.style.cssText = `
-    position: fixed;
-    top: 534px;
-    left: 0;
-    z-index: 102;
-    height: 34px;
-    padding: 0 10px;
-    background: #10231f;
-    border: 1px solid #2dd4bf;
-    border-radius: 0 6px 6px 0;
-    color: #7dd3fc;
-    font-size: 12px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    box-shadow: 2px 2px 8px rgba(0,0,0,0.55);
-  `;
+// Botão flutuante de Aura removido; função mantida para uso pelo HUD.
+Hooks.once("ready", () => document.getElementById("arsenal-aura-btn")?.remove?.());
 
-  const ajustarPosicaoAura = () => {
-    const recBtn = document.getElementById("arsenal-recursos-btn");
-    if (recBtn) {
-      const rect = recBtn.getBoundingClientRect();
-      btn.style.top = `${Math.ceil(rect.bottom + 6)}px`;
-    } else {
-      const controls = document.getElementById("controls") ?? document.querySelector("#ui-left #controls");
-      if (controls) {
-        const rect = controls.getBoundingClientRect();
-        btn.style.top = `${Math.max(534, Math.ceil(rect.bottom + 88))}px`;
-      } else {
-        btn.style.top = "534px";
-      }
-    }
-  };
-
-  btn.addEventListener("click", () => t20ToggleAuraSagrada());
-  document.body.appendChild(btn);
-  setTimeout(ajustarPosicaoAura, 800);
-  Hooks.on("renderPlayerList", ajustarPosicaoAura);
-  Hooks.on("canvasReady", ajustarPosicaoAura);
-});
 
 
 // ============================================================
@@ -4286,94 +4141,12 @@ Hooks.once("ready", () => {
   for (const actor of game.actors ?? []) {
     t20AtualizarCacheRecursos(actor);
   }
-
-  // Botão fixo discreto para o GM abrir o log sem usar o chat.
-  if (!document.getElementById("arsenal-recursos-btn")) {
-    const btn = document.createElement("button");
-    btn.id = "arsenal-recursos-btn";
-    btn.title = "Log de Recursos — Arsenal T20";
-    btn.innerHTML = `<i class="fas fa-chart-line" style="margin-right:4px"></i><span style="font-size:0.76em;font-family:'Cinzel',serif;letter-spacing:0.03em">Recursos</span>`;
-    btn.style.cssText = `
-      position: fixed;
-      top: 494px;
-      left: 0;
-      z-index: 101;
-      height: 34px;
-      padding: 0 10px;
-      background: #111827;
-      border: 1px solid #374151;
-      border-radius: 0 6px 6px 0;
-      color: #93c5fd;
-      font-size: 12px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      box-shadow: 2px 2px 8px rgba(0,0,0,0.55);
-    `;
-
-    const ajustarPosicaoRecursos = () => {
-      const condBtn = document.getElementById("arsenal-cond-btn");
-      if (condBtn) {
-        const rect = condBtn.getBoundingClientRect();
-        btn.style.top = `${Math.ceil(rect.bottom + 6)}px`;
-      } else {
-        const controls = document.getElementById("controls") ?? document.querySelector("#ui-left #controls");
-        if (controls) {
-          const rect = controls.getBoundingClientRect();
-          btn.style.top = `${Math.max(494, Math.ceil(rect.bottom + 48))}px`;
-        } else {
-          btn.style.top = "494px";
-        }
-      }
-    };
-
-    btn.addEventListener("mouseenter", () => {
-      btn.style.background = "#1f2937";
-      btn.style.borderColor = "#93c5fd";
-      btn.style.color = "#bfdbfe";
-    });
-    btn.addEventListener("mouseleave", () => {
-      btn.style.background = "#111827";
-      btn.style.borderColor = "#374151";
-      btn.style.color = "#93c5fd";
-    });
-    btn.addEventListener("click", () => abrirPainelRecursosArsenal());
-    document.body.appendChild(btn);
-    setTimeout(ajustarPosicaoRecursos, 500);
-    Hooks.on("renderPlayerList", ajustarPosicaoRecursos);
-    Hooks.on("canvasReady", ajustarPosicaoRecursos);
-  }
+  document.getElementById("arsenal-recursos-btn")?.remove?.();
 });
 
-Hooks.on("getSceneControlButtons", (controls) => {
-  if (!game.user.isGM) return;
 
-  if (Array.isArray(controls)) {
-    const tokens = controls.find(c => c.name === "token");
-    if (tokens) {
-      tokens.tools.push({
-        name: "arsenal-recursos",
-        title: "Log de Recursos — Arsenal T20",
-        icon: "fas fa-chart-line",
-        button: true,
-        onClick: () => abrirPainelRecursosArsenal(),
-      });
-    }
-  } else {
-    const tokens = controls.token ?? controls.tokens;
-    if (tokens) {
-      tokens.tools["arsenal-recursos"] = {
-        name: "arsenal-recursos",
-        title: "Log de Recursos — Arsenal T20",
-        icon: "fas fa-chart-line",
-        button: true,
-        onChange: () => abrirPainelRecursosArsenal(),
-        order: 102,
-      };
-    }
-  }
-});
+// Botão de ferramentas de Recursos removido; função mantida para uso pelo HUD.
+
 
 Hooks.on("updateCombat", (combat, changed) => {
   if (!game.user.isGM) return;
@@ -4439,6 +4212,13 @@ Hooks.on("updateActor", async (actor, changed, options, userId) => {
   });
 });
 
+
+
+Hooks.once("ready", () => {
+  for (const id of ["arsenal-cond-btn", "arsenal-recursos-btn", "arsenal-aura-btn"]) {
+    document.getElementById(id)?.remove?.();
+  }
+});
 
 // ============================================================
 // ARSENAL HUD — atalhos de favoritos, ataques, poderes, magias e perícias
