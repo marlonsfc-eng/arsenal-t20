@@ -14,7 +14,7 @@
   ],
   "esmodules": [],
   "scripts": [
-    "hooks.js"
+    "scripts/hooks.js"
   ],
   "styles": [
     "styles/t20-automation.css"
