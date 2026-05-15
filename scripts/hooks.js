@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.2.7 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.2.9 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -1045,7 +1045,7 @@ async function t20AtualizarCardOriginalComRerrol(sourceMessage, rerollMessage) {
   const totalAtaque = rollAtaque.total;
   const d20Result = rollAtaque.dice?.[0]?.results?.[0]?.result;
   const rollDano = rerollMessage.rolls?.find?.(r => !String(r?.formula ?? "").includes("d20"));
-  const danoPorTipo = rollDano ? extrairDanoPorTipo(rollDano) : t20DanoPorTipoMensagemIntegrada(sourceMessage);
+  const danoPorTipo = rollDano ? extrairDanoPorTipo(rollDano) : t20DanoPorTipoMensagemIntegrada(sourceMessage, dadosAlvos?.some?.(a => a?.possivelCritico && a?.acertou));
   const danoTotal = rollDano?.total ?? sourceMessage.rolls?.find?.(r => !String(r?.formula ?? "").includes("d20"))?.total ?? null;
 
   const wrapper = document.createElement("div");
@@ -1508,9 +1508,51 @@ async function criarMensagemGM(totalAtaque, dadosAlvos, danoPorTipo, danoTotal) 
 
 
 
-function t20DanoPorTipoMensagemIntegrada(message) {
+function t20RollEhDano(roll) {
+  const formula = String(roll?.formula ?? "");
+  if (!formula) return false;
+  // Ataque tem d20. Dano normalmente não. Mantém conservador para não confundir 2d20kh com dano.
+  return !/\bd20\b/i.test(formula);
+}
+
+function t20RollEhCriticoFoundry(roll) {
+  const dados = [
+    roll?.flavor,
+    roll?.options?.flavor,
+    roll?.options?.critical,
+    roll?.options?.critico,
+    roll?.options?.isCritical,
+    roll?.options?.criticalHit,
+    roll?.flags?.tormenta20?.critical,
+    roll?.flags?.tormenta20?.critico,
+    roll?.flags?.t20?.critical,
+    roll?.flags?.t20?.critico,
+    roll?.formula,
+  ].filter(v => v !== undefined && v !== null).join(" ").toLowerCase();
+
+  return /\b(crit|cr[ií]tico|critical)\b/.test(dados) || roll?.options?.critical === true || roll?.options?.critico === true || roll?.options?.isCritical === true;
+}
+
+function t20RollDanoOriginalFoundry(message, critico = false) {
+  const rolls = Array.from(message?.rolls ?? []).filter(t20RollEhDano);
+  if (!rolls.length) return null;
+
+  if (critico) {
+    // Usa apenas uma rolagem/fórmula que o próprio sistema/Foundry tenha marcado como crítica.
+    // Não monta fórmula manualmente.
+    const crit = rolls.find(t20RollEhCriticoFoundry);
+    if (crit) return crit;
+  }
+
+  // Padrão: último roll de dano não crítico; se não houver marcação, usa o último dano do card.
+  const naoCriticos = rolls.filter(r => !t20RollEhCriticoFoundry(r));
+  return (naoCriticos.length ? naoCriticos : rolls).at(-1);
+}
+
+
+function t20DanoPorTipoMensagemIntegrada(message, critico = false) {
   try {
-    const rollDano = message?.rolls?.find?.(r => !String(r?.formula ?? "").includes("d20"));
+    const rollDano = t20RollDanoOriginalFoundry(message, critico);
     return rollDano ? extrairDanoPorTipo(rollDano) : null;
   } catch {
     return null;
@@ -1622,12 +1664,14 @@ async function t20RerrolAtaqueIntegrado(btn) {
     await t20MostrarDadosRerrol(roll);
     const totalAtaque = roll.total;
     const d20Result = t20ResultadoD20Efetivo(roll) ?? roll.dice?.[0]?.results?.[0]?.result;
-    const danoPorTipo = t20DanoPorTipoMensagemIntegrada(msg);
-    const rollDano = msg.rolls?.find?.(r => !String(r?.formula ?? "").includes("d20"));
-    const danoTotal = rollDano?.total ?? null;
     const dadosAlvos = t20DadosAlvosDoCardIntegrado(card, totalAtaque, d20Result);
 
     if (!dadosAlvos.length) return ui.notifications.warn("Nenhum alvo encontrado no bloco do Arsenal para atualizar.");
+
+    const criticoAtual = dadosAlvos.some(a => a?.possivelCritico && a?.acertou);
+    const rollDano = t20RollDanoOriginalFoundry(msg, criticoAtual);
+    const danoPorTipo = rollDano ? extrairDanoPorTipo(rollDano) : null;
+    const danoTotal = rollDano?.total ?? null;
 
     const wrapper = document.createElement("div");
     wrapper.innerHTML = String(msg.content ?? "");
@@ -1642,7 +1686,7 @@ async function t20RerrolAtaqueIntegrado(btn) {
     const nota = document.createElement("div");
     nota.className = "t20-reroll-nota";
     nota.style.cssText = "font-size:1em;line-height:1.4;color:#4a211b;margin-top:8px;padding:6px 7px;border-radius:5px;background:rgba(92,42,34,0.10);font-weight:500";
-    nota.innerHTML = `🎲 Rerrol direto: <b>${totalAtaque}</b>${Number.isFinite(Number(d20Result)) ? ` <span style="color:#4f463a">(d20 válido: ${d20Result})</span>` : ""}. Este é o teste válido atual.`;
+    nota.innerHTML = `🎲 Rerrol direto: <b>${totalAtaque}</b>${Number.isFinite(Number(d20Result)) ? ` <span style="color:#4f463a">(d20 válido: ${d20Result})</span>` : ""}. Este é o teste válido atual.${criticoAtual && !t20RollEhCriticoFoundry(rollDano) ? `<br><span style="color:#7c2d12">O sistema não expôs uma rolagem crítica de dano neste card; mantive o dano original do Foundry.</span>` : ""}`;
     novoBloco.appendChild(nota);
 
     blocoAtual.replaceWith(novoBloco);
