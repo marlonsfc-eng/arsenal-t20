@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.2.3 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.2.4 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -866,56 +866,72 @@ function t20RerrolMensagemCorresponde(message, pending) {
   return true;
 }
 
+function t20SetValorVisualElemento(el, numero) {
+  if (!el) return false;
+  if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+    el.value = numero;
+    // innerHTML serializa o atributo, não necessariamente a propriedade value runtime.
+    el.setAttribute("value", numero);
+  } else {
+    el.textContent = numero;
+  }
+  el.classList?.add?.("t20-reroll-original-atualizado");
+  el.title = `Valor atualizado pelo Arsenal após rerrol: ${numero}`;
+  try {
+    el.style.borderColor = "#15803d";
+    el.style.background = "rgba(187,247,208,0.35)";
+    el.style.fontWeight = "bold";
+  } catch {}
+  return true;
+}
+
 function t20AtualizarValorAtaqueNoHtmlOriginal(wrapper, novoTotal) {
   if (!wrapper || !Number.isFinite(Number(novoTotal))) return false;
 
   const arsenal = wrapper.querySelector(".t20-arsenal-integrado");
   const numero = String(Math.round(Number(novoTotal)));
 
+  // Card do Tormenta20: "Ataque" -> fórmula -> total -> "Dano".
+  // Usamos a ordem visual, não o closest grande, porque o container pode conter Ataque e Dano juntos.
+  const todos = Array.from(wrapper.querySelectorAll("label, div, span, input, button, td, th"))
+    .filter(el => !arsenal?.contains?.(el));
+
+  let emSecaoAtaque = false;
+  for (const el of todos) {
+    const txt = String(el.tagName === "INPUT" || el.tagName === "TEXTAREA" ? el.value : el.textContent ?? "").trim();
+    const low = txt.toLowerCase();
+
+    if (low === "ataque" || /\bataque\b/.test(low)) {
+      emSecaoAtaque = true;
+      continue;
+    }
+
+    if (emSecaoAtaque && (low === "dano" || /\bdano\b/.test(low))) break;
+
+    // Ignora fórmula como 2d20kh + 17; pega só o total numérico.
+    if (emSecaoAtaque && /^\d+$/.test(txt)) {
+      return t20SetValorVisualElemento(el, numero);
+    }
+  }
+
+  // Fallback para classes comuns de total de rolagem.
   const candidatos = Array.from(wrapper.querySelectorAll("input, .dice-total, .roll-total, .total, .result, button, div, span"))
     .filter(el => !arsenal?.contains?.(el));
 
   for (const el of candidatos) {
-    const txt = String(el.tagName === "INPUT" ? el.value : el.textContent ?? "").trim();
+    const txt = String(el.tagName === "INPUT" || el.tagName === "TEXTAREA" ? el.value : el.textContent ?? "").trim();
     if (!/^\d+$/.test(txt)) continue;
 
-    const bloco = String(el.closest?.("section, article, div, tr, table, form")?.textContent ?? "").toLowerCase();
-    const parent = String(el.parentElement?.textContent ?? "").toLowerCase();
-    const prev = String(el.previousElementSibling?.textContent ?? "").toLowerCase();
+    const prevText = String(el.previousElementSibling?.textContent ?? "").toLowerCase();
+    const labelText = String(el.closest?.(".form-group, .roll, .dice-roll, .dice-result")?.textContent ?? "").toLowerCase();
 
-    if ([bloco, parent, prev].some(s => /\b(ataque|teste|rolagem)\b/.test(s)) && ![bloco, parent, prev].some(s => /\bdano\b/.test(s) && !/\bataque\b/.test(s))) {
-      if (el.tagName === "INPUT") el.value = numero;
-      else el.textContent = numero;
-      el.classList?.add?.("t20-reroll-original-atualizado");
-      el.title = `Valor atualizado pelo Arsenal após rerrol: ${numero}`;
-      return true;
-    }
-  }
-
-  const elements = Array.from(wrapper.querySelectorAll("input, div, span, button")).filter(el => !arsenal?.contains?.(el));
-  let viuAtaque = false;
-  for (const el of elements) {
-    const txt = String(el.tagName === "INPUT" ? el.value : el.textContent ?? "").trim();
-    const low = txt.toLowerCase();
-
-    if (/\bataque\b/.test(low)) {
-      viuAtaque = true;
-      continue;
-    }
-    if (viuAtaque && /\bdano\b/.test(low)) break;
-
-    if (viuAtaque && /^\d+$/.test(txt)) {
-      if (el.tagName === "INPUT") el.value = numero;
-      else el.textContent = numero;
-      el.classList?.add?.("t20-reroll-original-atualizado");
-      el.title = `Valor atualizado pelo Arsenal após rerrol: ${numero}`;
-      return true;
+    if (/\b(ataque|teste|rolagem)\b/.test(prevText) || /\b(ataque|teste|rolagem)\b/.test(labelText)) {
+      return t20SetValorVisualElemento(el, numero);
     }
   }
 
   return false;
 }
-
 
 async function t20AtualizarCardOriginalComRerrol(sourceMessage, rerollMessage) {
   const rollAtaque = rerollMessage?.rolls?.find?.(r => String(r?.formula ?? "").includes("d20"));
@@ -942,7 +958,7 @@ async function t20AtualizarCardOriginalComRerrol(sourceMessage, rerollMessage) {
 
   const nota = document.createElement("div");
   nota.className = "t20-reroll-nota";
-  nota.style.cssText = "font-size:0.95em;line-height:1.35;color:#5c2a22;margin-top:7px;padding:5px 6px;border-radius:5px;background:rgba(92,42,34,0.08)";
+  nota.style.cssText = "font-size:1em;line-height:1.4;color:#4a211b;margin-top:8px;padding:6px 7px;border-radius:5px;background:rgba(92,42,34,0.10);font-weight:500";
   nota.innerHTML = `🎲 Rerrol com diálogo: <b>${totalAtaque}</b>${Number.isFinite(Number(d20Result)) ? ` <span style="color:#4f463a">(d20: ${d20Result})</span>` : ""}. Este é o teste válido atual.`;
   novoBloco.appendChild(nota);
 
