@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.3.3 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.3.4 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -1236,8 +1236,8 @@ function t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, dan
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(92,42,34,0.28);padding-bottom:5px;margin-bottom:6px;flex-wrap:wrap">
       <b style="color:#3b211d">Arsenal T20</b>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-        <span class="t20-arsenal-ataque-total" style="font-size:0.95em;color:#4f463a;font-weight:600">Ataque ${Number.isFinite(Number(totalAtaque)) ? `• ${totalAtaque}` : ""}${temDano && Number.isFinite(Number(danoTotal)) ? ` • dano base ${danoTotal}` : ""}</span>
-        <button class="t20-reroll-ataque" title="Usar Vitória a Qualquer Custo: refaz o ataque pelo sistema e cobra apenas o custo progressivo do poder" style="padding:4px 8px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#6f6046,#554735);border:1px solid #7a7060;color:#fff;font-size:0.82em;font-weight:bold">🎲 Vitória ${2 + Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)} PM</button>
+        <button class="t20-reroll-ataque" title="Usar Vitória a Qualquer Custo: refaz o ataque pelo sistema e cobra apenas o custo progressivo do poder" style="padding:6px 10px;border-radius:8px;cursor:pointer;background:linear-gradient(135deg,#6d28d9 0%,#9333ea 45%,#f59e0b 140%);border:1px solid rgba(253,224,71,0.65);color:#fff;font-size:0.86em;font-weight:800;letter-spacing:0.01em;text-shadow:0 1px 1px rgba(0,0,0,0.35);box-shadow:0 2px 7px rgba(88,28,135,0.35)">✨ Vitória ${2 + Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)} PM</button>
+        <button class="t20-vitoria-reset" title="Zerar o custo progressivo de Vitória a Qualquer Custo neste card" style="padding:6px 9px;border-radius:8px;cursor:pointer;background:linear-gradient(180deg,#f8fafc,#d7d3c6);border:1px solid #7a7060;color:#3b211d;font-size:0.82em;font-weight:bold;box-shadow:0 1px 4px rgba(0,0,0,0.15)">↺ Zerar</button>
       </div>
     </div>
     ${opts?.isVitoria ? `<div style="font-size:0.9em;color:#4a211b;margin:4px 0 6px;padding:5px 6px;border-radius:5px;background:rgba(92,42,34,0.08)">🎲 Vitória a Qualquer Custo usada: <b>${opts.custoPago ?? "?"} PM</b>. Próximo uso neste teste: <b>${2 + Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)} PM</b>.</div>` : ""}
@@ -1612,6 +1612,46 @@ async function t20PersistirConteudoMensagem(message, content) {
     content: limpo,
   });
 }
+
+async function t20ResetarVitoriaIntegrado(btn) {
+  const card = btn.closest(".t20-arsenal-integrado");
+  if (!card) return;
+
+  card.dataset.vitoriaCount = "0";
+
+  const vitoriaBtn = card.querySelector(".t20-reroll-ataque");
+  if (vitoriaBtn) {
+    vitoriaBtn.innerHTML = "✨ Vitória 2 PM";
+    vitoriaBtn.title = "Usar Vitória a Qualquer Custo: refaz o ataque pelo sistema e cobra apenas o custo progressivo do poder";
+  }
+
+  const notas = card.querySelectorAll(".t20-vitoria-reset-nota");
+  notas.forEach(n => n.remove());
+
+  const nota = document.createElement("div");
+  nota.className = "t20-vitoria-reset-nota";
+  nota.style.cssText = "font-size:0.86em;color:#4f463a;margin:5px 0 2px;padding:5px 6px;border-radius:5px;background:rgba(248,250,252,0.55);border:1px solid rgba(122,112,96,0.35)";
+  nota.innerHTML = "↺ Contador de Vitória zerado. Próximo uso: <b>2 PM</b>.";
+  const header = card.querySelector(":scope > div");
+  header?.insertAdjacentElement?.("afterend", nota);
+
+  const msg = obterChatMessageDoBotao(btn);
+  if (msg) {
+    const contentRoot = card.closest(".message-content");
+    if (contentRoot) await t20PersistirConteudoMensagem(msg, contentRoot.innerHTML);
+    else {
+      const wrap = document.createElement("div");
+      wrap.innerHTML = msg.content ?? "";
+      const old = wrap.querySelector(".t20-arsenal-integrado");
+      if (old) {
+        old.replaceWith(card.cloneNode(true));
+        await t20PersistirConteudoMensagem(msg, wrap.innerHTML);
+      }
+    }
+  }
+  ui.notifications.info("Contador de Vitória a Qualquer Custo zerado.");
+}
+
 
 async function t20RerrolAtaqueIntegrado(btn) {
   const msg = obterChatMessageDoBotao(btn);
@@ -4282,6 +4322,14 @@ Hooks.on("renderChatMessageHTML", (message, html) => {
     btn._arsenalListenerAdded = true;
     btn.dataset.listenerAdded = "1";
     btn.addEventListener("click", () => t20RerrolAtaqueIntegrado(btn));
+  });
+
+  html.querySelectorAll(".t20-vitoria-reset").forEach(btn => {
+    btn.dataset.messageId = message.id;
+    if (btn._arsenalListenerAdded) return;
+    btn._arsenalListenerAdded = true;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", () => t20ResetarVitoriaIntegrado(btn));
   });
 });
 
@@ -8009,9 +8057,9 @@ function t20HtmlNotaVitoriaPM(override, custoOriginal) {
   if (!override) return "";
   const custo = Math.max(0, Number(override.custo) || 0);
   const original = Math.max(0, Number(custoOriginal) || 0);
-  return `<div style="margin:7px 0 0;padding:6px 7px;border-radius:6px;background:rgba(252,211,77,0.12);border:1px solid rgba(252,211,77,0.35);color:#fde68a;font-size:0.86em;line-height:1.35">
-    🎲 <b>Vitória a Qualquer Custo</b>: custo deste uso substituído para <b>${custo} PM</b>.
-    ${original && original !== custo ? `<br><span style="color:#ddd6fe">Custo detectado do ataque repetido: ${original} PM; não será cobrado novamente.</span>` : ""}
+  return `<div style="margin:8px 0 0;padding:8px 9px;border-radius:7px;background:#fff7ed;border:1px solid #d97706;color:#3b211d;font-size:0.88em;line-height:1.38;box-shadow:0 1px 4px rgba(0,0,0,0.12)">
+    ✨ <b style="color:#6d28d9">Vitória a Qualquer Custo</b>: custo deste uso substituído para <b>${custo} PM</b>.
+    ${original && original !== custo ? `<br><span style="color:#5c2a22">Custo detectado do ataque repetido: <b>${original} PM</b>; não será cobrado novamente.</span>` : ""}
   </div>`;
 }
 
