@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.3.2 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.3.3 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -761,6 +761,7 @@ Hooks.once("ready", () => {
 
 let _t20RerrolPendente = null;
 let _t20RerrolInfoParaProximoCard = null;
+let _t20VitoriaOverridePM = null;
 
 function t20ExtrairNomeItemMensagem(message) {
   const itemData = message?.flags?.tormenta20?.itemData ?? {};
@@ -1151,21 +1152,35 @@ async function t20ProcessarMensagemRerrolPendente(message) {
   if (Date.now() - pending.createdAt > 120000) {
     _t20RerrolPendente = null;
     _t20RerrolInfoParaProximoCard = null;
+    _t20VitoriaOverridePM = null;
     return false;
   }
   if (!t20RerrolMensagemCorresponde(message, pending)) return false;
 
-  // Marca dados para o bloco Arsenal do NOVO card.
+  const custoVitoria = t20CustoVitoria(pending);
+  const novoCount = Math.max(0, Number(pending.vitoriaCount ?? 0) || 0) + 1;
+
+  // Dados para o bloco Arsenal do NOVO card.
   _t20RerrolInfoParaProximoCard = {
     isVitoria: true,
-    vitoriaCount: Math.max(0, Number(pending.vitoriaCount ?? 0) || 0) + 1,
-    custoPago: t20CustoVitoria(pending),
+    vitoriaCount: novoCount,
+    custoPago: custoVitoria,
     sourceMessageId: pending.sourceMessageId,
   };
 
-  // Finaliza o PM depois que o sistema tiver terminado todos os updates.
-  const pendingCopy = foundry.utils.deepClone ? foundry.utils.deepClone(pending) : JSON.parse(JSON.stringify(pending));
-  setTimeout(() => t20FinalizarPMVitoria(pendingCopy, "card"), 0);
+  // Override direto do custo de PM do Arsenal:
+  // o próximo card de PM originado desta mensagem usará somente o custo da Vitória,
+  // ignorando o custo repetido de Golpe Divino/Ataque Pesado.
+  _t20VitoriaOverridePM = {
+    messageId: message.id,
+    actorId: pending.actorId,
+    actorUuid: pending.actorUuid,
+    itemId: pending.itemId,
+    itemName: pending.itemName,
+    custo: custoVitoria,
+    vitoriaCount: novoCount,
+    createdAt: Date.now(),
+  };
 
   _t20RerrolPendente = null;
 
@@ -1651,13 +1666,13 @@ async function t20RerrolAtaqueIntegrado(btn) {
     // Segurança: se nenhum novo card compatível aparecer, limpa o estado pendente e restaura PM se necessário.
     setTimeout(async () => {
       if (_t20RerrolPendente?.sourceMessageId === msg.id) {
-        await t20FinalizarPMVitoria(_t20RerrolPendente, "timeout");
         _t20RerrolPendente = null;
+        _t20VitoriaOverridePM = null;
       }
     }, 120000);
   } catch (e) {
-    await t20FinalizarPMVitoria(_t20RerrolPendente, "erro");
     _t20RerrolPendente = null;
+    _t20VitoriaOverridePM = null;
     console.warn("Arsenal T20 | erro ao refazer ataque por rerrol", e);
     ui.notifications.error("Erro ao refazer o ataque pelo rerrol.");
     btn.disabled = false;
@@ -7955,6 +7970,52 @@ function t20HtmlCardPM({ actor, nomeItem, custo, sustentavel = false, imgItem = 
   </div>`;
 }
 
+function t20VitoriaOverrideParaMensagem(message, actor, nomeItem) {
+  const ov = _t20VitoriaOverridePM;
+  if (!ov) return null;
+
+  if (Date.now() - Number(ov.createdAt ?? 0) > 120000) {
+    _t20VitoriaOverridePM = null;
+    return null;
+  }
+
+  if (ov.messageId && message?.id && ov.messageId !== message.id) return null;
+  if (ov.actorId && actor?.id && ov.actorId !== actor.id) return null;
+
+  const itemData = message?.flags?.tormenta20?.itemData ?? {};
+  const itemId = itemData?._id ?? itemData?.id ?? itemData?.itemId ?? message?.flags?.tormenta20?.itemId;
+
+  if (ov.itemId && itemId && ov.itemId !== itemId) return null;
+
+  // Alguns cards de arma do Tormenta20 chegam sem item id confiável.
+  // Se o messageId e actorId batem, aceitar é mais seguro que deixar cobrar o custo antigo.
+  return ov;
+}
+
+function t20AplicarOverrideVitoriaNoCusto(custo, override) {
+  if (!override || !Number.isFinite(Number(override.custo))) return custo;
+  const total = Math.max(0, Number(override.custo) || 0);
+  return {
+    ...custo,
+    base: total,
+    extra: 0,
+    total,
+    vitoriaOverride: true,
+    custoOriginal: Number(custo?.total ?? 0) || 0,
+  };
+}
+
+function t20HtmlNotaVitoriaPM(override, custoOriginal) {
+  if (!override) return "";
+  const custo = Math.max(0, Number(override.custo) || 0);
+  const original = Math.max(0, Number(custoOriginal) || 0);
+  return `<div style="margin:7px 0 0;padding:6px 7px;border-radius:6px;background:rgba(252,211,77,0.12);border:1px solid rgba(252,211,77,0.35);color:#fde68a;font-size:0.86em;line-height:1.35">
+    🎲 <b>Vitória a Qualquer Custo</b>: custo deste uso substituído para <b>${custo} PM</b>.
+    ${original && original !== custo ? `<br><span style="color:#ddd6fe">Custo detectado do ataque repetido: ${original} PM; não será cobrado novamente.</span>` : ""}
+  </div>`;
+}
+
+
 async function t20CriarCardPM(message) {
   const modo = t20PMModoControle();
   if (modo === "off") return;
@@ -7968,30 +8029,36 @@ async function t20CriarCardPM(message) {
 
   const nomeItem = t20ExtrairNomeItemDeMensagem(itemData, message);
   const imgItem = itemData.img ?? message.content?.match(/img[^>]+src="([^"]+)"/)?.[1] ?? "";
-  const custo = t20ExtrairCustoPM(itemData, message);
-  if (!custo.total) return;
+  const custoOriginal = t20ExtrairCustoPM(itemData, message);
+  if (!custoOriginal.total) return;
+
+  const overrideVitoria = t20VitoriaOverrideParaMensagem(message, actor, nomeItem);
+  const custo = t20AplicarOverrideVitoriaNoCusto(custoOriginal, overrideVitoria);
 
   const sustentavel = t20ItemEhSustentado(itemData, message);
   const whisper = t20WhisperGMAndActorOwners(actor);
+  const notaVitoria = t20HtmlNotaVitoriaPM(overrideVitoria, custoOriginal.total);
 
   if (modo === "auto") {
     await t20AplicarPMDireto(actor, custo.total);
     await ChatMessage.create({
-      content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: true }),
+      content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: true }) + notaVitoria,
       speaker: message.speaker,
       whisper,
-      flags: { "arsenal-t20": { tipo: "pm", origem: message.id, auto: true } }
+      flags: { "arsenal-t20": { tipo: "pm", origem: message.id, auto: true, vitoriaOverride: !!overrideVitoria, custoOriginal: custoOriginal.total, custoVitoria: custo.total } }
     });
+    if (overrideVitoria) _t20VitoriaOverridePM = null;
     return;
   }
 
   // manual
   await ChatMessage.create({
-    content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: false }),
+    content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: false }) + notaVitoria,
     speaker: message.speaker,
     whisper,
-    flags: { "arsenal-t20": { tipo: "pm", origem: message.id } }
+    flags: { "arsenal-t20": { tipo: "pm", origem: message.id, vitoriaOverride: !!overrideVitoria, custoOriginal: custoOriginal.total, custoVitoria: custo.total } }
   });
+  if (overrideVitoria) _t20VitoriaOverridePM = null;
 }
 
 async function t20AplicarPMBotao(btn) {
