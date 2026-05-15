@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.2.0 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.2.1 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -795,9 +795,12 @@ function t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, dan
   const temDano = danoPorTipo && Object.keys(danoPorTipo).length > 0;
 
   return `<div class="t20-arsenal-integrado" style="margin-top:10px;padding:8px;border-radius:6px;border:1px solid #7a7060;border-left:4px solid #5c2a22;background:rgba(215,211,198,0.78);color:#1f1b16;font-family:serif">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(92,42,34,0.28);padding-bottom:5px;margin-bottom:6px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(92,42,34,0.28);padding-bottom:5px;margin-bottom:6px;flex-wrap:wrap">
       <b style="color:#3b211d">Arsenal T20</b>
-      <span style="font-size:0.82em;color:#4f463a">Ataque ${Number.isFinite(Number(totalAtaque)) ? `• ${totalAtaque}` : ""}${temDano && Number.isFinite(Number(danoTotal)) ? ` • dano base ${danoTotal}` : ""}</span>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+        <span class="t20-arsenal-ataque-total" style="font-size:0.82em;color:#4f463a">Ataque ${Number.isFinite(Number(totalAtaque)) ? `• ${totalAtaque}` : ""}${temDano && Number.isFinite(Number(danoTotal)) ? ` • dano base ${danoTotal}` : ""}</span>
+        <button class="t20-reroll-ataque" title="Rolar novamente o teste de acerto com os mesmos bônus do ataque original" style="padding:4px 8px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#6f6046,#554735);border:1px solid #7a7060;color:#fff;font-size:0.82em;font-weight:bold">🎲 Rerrol</button>
+      </div>
     </div>
     ${dadosAlvos.map(a => {
       const res = t20LabelResultadoAtaque(a);
@@ -1114,6 +1117,115 @@ async function criarMensagemGM(totalAtaque, dadosAlvos, danoPorTipo, danoTotal) 
   }
 }
 
+
+
+function t20DanoPorTipoMensagemIntegrada(message) {
+  try {
+    const rollDano = message?.rolls?.find?.(r => !String(r?.formula ?? "").includes("d20"));
+    return rollDano ? extrairDanoPorTipo(rollDano) : null;
+  } catch {
+    return null;
+  }
+}
+
+function t20DadosAlvosDoCardIntegrado(card, totalAtaque, d20Result) {
+  const rows = Array.from(card?.querySelectorAll?.(".t20-arsenal-alvo") ?? []);
+  return rows.map(row => {
+    const tokenId = row.dataset.token;
+    const token = canvas.tokens?.get?.(tokenId);
+    const actor = token?.actor;
+    const nome = token?.name ?? row.querySelector("b")?.textContent?.trim() ?? "Alvo";
+
+    const defesa =
+      actor?.system?.attributes?.defesa?.value ??
+      actor?.system?.defesa?.value ?? 10;
+
+    const pvAtual = actor ? (foundry.utils.getProperty(actor, "system.attributes.pv.value") ?? "?") : "?";
+    const pvMax = actor ? (foundry.utils.getProperty(actor, "system.attributes.pv.max") ?? "?") : "?";
+    const tracos = actor?.system?.tracos?.resistencias ?? {};
+    const rdGeral = parseInt(tracos?.dano?.value) || parseInt(tracos?.dano?.base) || parseInt(tracos?.perda?.value) || parseInt(tracos?.perda?.base) || 0;
+
+    const erroNatural = Number(d20Result) === 1;
+    const possivelCritico = Number(d20Result) >= 20;
+    const acertou = !erroNatural && Number(totalAtaque) >= Number(defesa || 10);
+
+    return {
+      tokenId,
+      nome,
+      defesa,
+      pvAtual,
+      pvMax,
+      rdGeral,
+      tracos,
+      acertou,
+      erroNatural,
+      possivelCritico,
+    };
+  });
+}
+
+async function t20PersistirConteudoMensagem(message, content) {
+  const limpo = t20LimparListenersHtml(content);
+  if (game.user.isGM) await message.update({ content: limpo });
+  else game.socket.emit("module.arsenal-t20", {
+    tipo: "atualizarCardConsolidado",
+    messageId: message.id,
+    content: limpo,
+  });
+}
+
+async function t20RerrolAtaqueIntegrado(btn) {
+  const msg = obterChatMessageDoBotao(btn);
+  if (!msg) return ui.notifications.warn("Mensagem original não encontrada para rerrolar.");
+
+  const rollOriginal = msg.rolls?.find?.(r => String(r?.formula ?? "").includes("d20"));
+  if (!rollOriginal?.formula) return ui.notifications.warn("Não encontrei a fórmula do ataque original para rerrolar.");
+
+  const card = btn.closest(".t20-arsenal-integrado");
+  if (!card) return ui.notifications.warn("Bloco do Arsenal não encontrado no card.");
+
+  btn.disabled = true;
+  btn.style.opacity = "0.6";
+  const oldText = btn.innerHTML;
+  btn.innerHTML = "🎲 Rolando...";
+
+  try {
+    const roll = await new Roll(rollOriginal.formula).evaluate();
+    const totalAtaque = roll.total;
+    const d20Result = roll.dice?.[0]?.results?.[0]?.result;
+    const danoPorTipo = t20DanoPorTipoMensagemIntegrada(msg);
+    const rollDano = msg.rolls?.find?.(r => !String(r?.formula ?? "").includes("d20"));
+    const danoTotal = rollDano?.total ?? null;
+    const dadosAlvos = t20DadosAlvosDoCardIntegrado(card, totalAtaque, d20Result);
+
+    if (!dadosAlvos.length) return ui.notifications.warn("Nenhum alvo encontrado no bloco do Arsenal para atualizar.");
+
+    const novoBlocoWrapper = document.createElement("div");
+    novoBlocoWrapper.innerHTML = t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal).trim();
+    const novoBloco = novoBlocoWrapper.firstElementChild;
+    if (!novoBloco) return ui.notifications.warn("Não foi possível reconstruir o bloco do Arsenal.");
+
+    const nota = document.createElement("div");
+    nota.className = "t20-reroll-nota";
+    nota.style.cssText = "font-size:0.8em;color:#5c2a22;margin-top:5px";
+    nota.innerHTML = `🎲 Rerrol: <b>${totalAtaque}</b>${Number.isFinite(Number(d20Result)) ? ` <span style="color:#4f463a">(d20: ${d20Result})</span>` : ""}. Este é o teste válido atual.`;
+    novoBloco.appendChild(nota);
+
+    card.replaceWith(novoBloco);
+
+    const contentEl = novoBloco.closest?.(".message-content") ?? novoBloco.closest?.(".chat-message")?.querySelector?.(".message-content");
+    const content = contentEl?.innerHTML ?? msg.content;
+    await t20PersistirConteudoMensagem(msg, content);
+
+    ui.notifications.info(`Rerrol do ataque: ${totalAtaque}.`);
+  } catch (e) {
+    console.warn("Arsenal T20 | erro ao rerrolar ataque integrado", e);
+    ui.notifications.error("Erro ao rerrolar o ataque.");
+    btn.disabled = false;
+    btn.style.opacity = "1";
+    btn.innerHTML = oldText;
+  }
+}
 
 async function defesaAtivaDano(btn) {
   const grupo = btn.closest(".t20-dano-actions");
@@ -3708,6 +3820,14 @@ Hooks.on("renderChatMessageHTML", (message, html) => {
     btn._arsenalListenerAdded = true;
     btn.dataset.listenerAdded = "1";
     btn.addEventListener("click", () => defesaAtivaDano(btn));
+  });
+
+  html.querySelectorAll(".t20-reroll-ataque").forEach(btn => {
+    btn.dataset.messageId = message.id;
+    if (btn._arsenalListenerAdded) return;
+    btn._arsenalListenerAdded = true;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", () => t20RerrolAtaqueIntegrado(btn));
   });
 });
 
