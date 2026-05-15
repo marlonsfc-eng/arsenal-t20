@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.2.4 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.2.5 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -933,6 +933,69 @@ function t20AtualizarValorAtaqueNoHtmlOriginal(wrapper, novoTotal) {
   return false;
 }
 
+function t20SubstituirUltimaOcorrencia(str, regex, replacer) {
+  const matches = Array.from(str.matchAll(regex));
+  if (!matches.length) return { text: str, ok: false };
+  const m = matches[matches.length - 1];
+  const start = m.index;
+  const end = start + m[0].length;
+  return {
+    text: str.slice(0, start) + m[0].replace(regex, replacer) + str.slice(end),
+    ok: true,
+  };
+}
+
+function t20AtualizarValorAtaqueNoHtmlString(html, novoTotal) {
+  const numero = String(Math.round(Number(novoTotal)));
+  if (!html || !Number.isFinite(Number(novoTotal))) return { html, ok: false };
+
+  // Não mexer dentro do bloco Arsenal; apenas no card original do sistema.
+  const arsenalIdx = html.indexOf("t20-arsenal-integrado");
+  const head = arsenalIdx >= 0 ? html.slice(0, arsenalIdx) : html;
+  const tail = arsenalIdx >= 0 ? html.slice(arsenalIdx) : "";
+
+  const ataqueMatch = head.match(/>\s*Ataque\s*</i);
+  if (!ataqueMatch) return { html, ok: false };
+
+  const ataqueStart = ataqueMatch.index ?? 0;
+  const afterAtaque = head.slice(ataqueStart);
+  const danoMatch = afterAtaque.match(/>\s*Dano\s*</i);
+  const ataqueEnd = danoMatch ? ataqueStart + (danoMatch.index ?? afterAtaque.length) : head.length;
+
+  const before = head.slice(0, ataqueStart);
+  const secao = head.slice(ataqueStart, ataqueEnd);
+  const after = head.slice(ataqueEnd);
+
+  // No card T20, os campos visuais normalmente são inputs:
+  // Ataque -> input fórmula -> input total -> Dano.
+  // Alteramos somente o ÚLTIMO value numérico da seção Ataque.
+  let r = t20SubstituirUltimaOcorrencia(
+    secao,
+    /(<input\b[^>]*\bvalue=["'])(\d+)(["'][^>]*>)/gi,
+    `$1${numero}$3`
+  );
+  if (r.ok) return { html: before + r.text + after + tail, ok: true };
+
+  // Variação com value sem aspas.
+  r = t20SubstituirUltimaOcorrencia(
+    secao,
+    /(<input\b[^>]*\bvalue=)(\d+)(\s|>)/gi,
+    `$1${numero}$3`
+  );
+  if (r.ok) return { html: before + r.text + after + tail, ok: true };
+
+  // Fallback para cards que usam div/span/button com número isolado.
+  r = t20SubstituirUltimaOcorrencia(
+    secao,
+    /(>)(\s*)\d+(\s*)(<)/g,
+    `$1$2${numero}$3$4`
+  );
+  if (r.ok) return { html: before + r.text + after + tail, ok: true };
+
+  return { html, ok: false };
+}
+
+
 async function t20AtualizarCardOriginalComRerrol(sourceMessage, rerollMessage) {
   const rollAtaque = rerollMessage?.rolls?.find?.(r => String(r?.formula ?? "").includes("d20"));
   if (!sourceMessage || !rollAtaque) return false;
@@ -964,16 +1027,29 @@ async function t20AtualizarCardOriginalComRerrol(sourceMessage, rerollMessage) {
 
   card.replaceWith(novoBloco);
 
-  const atualizouOriginal = t20AtualizarValorAtaqueNoHtmlOriginal(wrapper, totalAtaque);
-  if (atualizouOriginal) {
+  let finalHtml = wrapper.innerHTML;
+  const patchOriginal = t20AtualizarValorAtaqueNoHtmlString(finalHtml, totalAtaque);
+  finalHtml = patchOriginal.html;
+
+  if (patchOriginal.ok) {
     const tag = document.createElement("div");
     tag.className = "t20-reroll-original-tag";
-    tag.style.cssText = "font-size:0.82em;color:#4f463a;margin-top:4px";
+    tag.style.cssText = "font-size:0.9em;color:#4f463a;margin-top:5px;line-height:1.3";
     tag.innerHTML = "↻ Valor de ataque do card original atualizado visualmente pelo Arsenal.";
     novoBloco.appendChild(tag);
+    // Recalcula o HTML final para incluir a tag criada acima e reaplica o patch no card original.
+    finalHtml = wrapper.innerHTML;
+    finalHtml = t20AtualizarValorAtaqueNoHtmlString(finalHtml, totalAtaque).html;
+  } else {
+    const tag = document.createElement("div");
+    tag.className = "t20-reroll-original-tag";
+    tag.style.cssText = "font-size:0.9em;color:#7c2d12;margin-top:5px;line-height:1.3";
+    tag.innerHTML = "⚠️ Não consegui localizar com segurança o campo de ataque do card original; use o bloco Arsenal como resultado válido.";
+    novoBloco.appendChild(tag);
+    finalHtml = wrapper.innerHTML;
   }
 
-  await t20PersistirConteudoMensagem(sourceMessage, wrapper.innerHTML);
+  await t20PersistirConteudoMensagem(sourceMessage, finalHtml);
   return true;
 }
 
@@ -1057,7 +1133,7 @@ function t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, dan
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(92,42,34,0.28);padding-bottom:5px;margin-bottom:6px;flex-wrap:wrap">
       <b style="color:#3b211d">Arsenal T20</b>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-        <span class="t20-arsenal-ataque-total" style="font-size:0.82em;color:#4f463a">Ataque ${Number.isFinite(Number(totalAtaque)) ? `• ${totalAtaque}` : ""}${temDano && Number.isFinite(Number(danoTotal)) ? ` • dano base ${danoTotal}` : ""}</span>
+        <span class="t20-arsenal-ataque-total" style="font-size:0.95em;color:#4f463a;font-weight:600">Ataque ${Number.isFinite(Number(totalAtaque)) ? `• ${totalAtaque}` : ""}${temDano && Number.isFinite(Number(danoTotal)) ? ` • dano base ${danoTotal}` : ""}</span>
         <button class="t20-reroll-ataque" title="Rolar novamente o teste de acerto com os mesmos bônus do ataque original" style="padding:4px 8px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#6f6046,#554735);border:1px solid #7a7060;color:#fff;font-size:0.82em;font-weight:bold">🎲 Rerrol</button>
       </div>
     </div>
