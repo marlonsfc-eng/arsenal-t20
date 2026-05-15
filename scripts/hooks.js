@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.2.2 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.2.3 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -866,6 +866,57 @@ function t20RerrolMensagemCorresponde(message, pending) {
   return true;
 }
 
+function t20AtualizarValorAtaqueNoHtmlOriginal(wrapper, novoTotal) {
+  if (!wrapper || !Number.isFinite(Number(novoTotal))) return false;
+
+  const arsenal = wrapper.querySelector(".t20-arsenal-integrado");
+  const numero = String(Math.round(Number(novoTotal)));
+
+  const candidatos = Array.from(wrapper.querySelectorAll("input, .dice-total, .roll-total, .total, .result, button, div, span"))
+    .filter(el => !arsenal?.contains?.(el));
+
+  for (const el of candidatos) {
+    const txt = String(el.tagName === "INPUT" ? el.value : el.textContent ?? "").trim();
+    if (!/^\d+$/.test(txt)) continue;
+
+    const bloco = String(el.closest?.("section, article, div, tr, table, form")?.textContent ?? "").toLowerCase();
+    const parent = String(el.parentElement?.textContent ?? "").toLowerCase();
+    const prev = String(el.previousElementSibling?.textContent ?? "").toLowerCase();
+
+    if ([bloco, parent, prev].some(s => /\b(ataque|teste|rolagem)\b/.test(s)) && ![bloco, parent, prev].some(s => /\bdano\b/.test(s) && !/\bataque\b/.test(s))) {
+      if (el.tagName === "INPUT") el.value = numero;
+      else el.textContent = numero;
+      el.classList?.add?.("t20-reroll-original-atualizado");
+      el.title = `Valor atualizado pelo Arsenal após rerrol: ${numero}`;
+      return true;
+    }
+  }
+
+  const elements = Array.from(wrapper.querySelectorAll("input, div, span, button")).filter(el => !arsenal?.contains?.(el));
+  let viuAtaque = false;
+  for (const el of elements) {
+    const txt = String(el.tagName === "INPUT" ? el.value : el.textContent ?? "").trim();
+    const low = txt.toLowerCase();
+
+    if (/\bataque\b/.test(low)) {
+      viuAtaque = true;
+      continue;
+    }
+    if (viuAtaque && /\bdano\b/.test(low)) break;
+
+    if (viuAtaque && /^\d+$/.test(txt)) {
+      if (el.tagName === "INPUT") el.value = numero;
+      else el.textContent = numero;
+      el.classList?.add?.("t20-reroll-original-atualizado");
+      el.title = `Valor atualizado pelo Arsenal após rerrol: ${numero}`;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+
 async function t20AtualizarCardOriginalComRerrol(sourceMessage, rerollMessage) {
   const rollAtaque = rerollMessage?.rolls?.find?.(r => String(r?.formula ?? "").includes("d20"));
   if (!sourceMessage || !rollAtaque) return false;
@@ -891,11 +942,21 @@ async function t20AtualizarCardOriginalComRerrol(sourceMessage, rerollMessage) {
 
   const nota = document.createElement("div");
   nota.className = "t20-reroll-nota";
-  nota.style.cssText = "font-size:0.8em;color:#5c2a22;margin-top:5px";
+  nota.style.cssText = "font-size:0.95em;line-height:1.35;color:#5c2a22;margin-top:7px;padding:5px 6px;border-radius:5px;background:rgba(92,42,34,0.08)";
   nota.innerHTML = `🎲 Rerrol com diálogo: <b>${totalAtaque}</b>${Number.isFinite(Number(d20Result)) ? ` <span style="color:#4f463a">(d20: ${d20Result})</span>` : ""}. Este é o teste válido atual.`;
   novoBloco.appendChild(nota);
 
   card.replaceWith(novoBloco);
+
+  const atualizouOriginal = t20AtualizarValorAtaqueNoHtmlOriginal(wrapper, totalAtaque);
+  if (atualizouOriginal) {
+    const tag = document.createElement("div");
+    tag.className = "t20-reroll-original-tag";
+    tag.style.cssText = "font-size:0.82em;color:#4f463a;margin-top:4px";
+    tag.innerHTML = "↻ Valor de ataque do card original atualizado visualmente pelo Arsenal.";
+    novoBloco.appendChild(tag);
+  }
+
   await t20PersistirConteudoMensagem(sourceMessage, wrapper.innerHTML);
   return true;
 }
@@ -995,7 +1056,7 @@ function t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, dan
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
           <div style="min-width:0">
             <b>${a.nome}</b>
-            <span class="t20-resultado-inline" style="margin-left:6px;color:${res.cor};font-weight:bold">${res.icon} ${res.texto}</span>
+            <span class="t20-resultado-inline" style="margin-left:6px;color:${res.cor};font-weight:bold;font-size:1.08em">${res.icon} ${res.texto}</span>
           </div>
           ${a.acertou && temDano ? `<div class="t20-dano-total" style="font-weight:bold;color:#3b211d">Dano final: ${totalLabel}</div>` : ""}
         </div>
