@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.3.0 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.3.1 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -1053,6 +1053,42 @@ async function t20AtualizarCardOriginalComRerrol(sourceMessage, rerollMessage) {
   return true;
 }
 
+function t20SnapshotPMActor(actor) {
+  try {
+    const { pm } = t20GetPVPaths();
+    const atual = foundry.utils.getProperty(actor, pm);
+    if (atual === undefined || atual === null) return null;
+    return { path: pm, value: Number(atual) };
+  } catch {
+    return null;
+  }
+}
+
+async function t20RestaurarPMRerrol(pending) {
+  try {
+    if (!pending?.actorId || !pending?.pmSnapshot) return false;
+    const actor = game.actors.get(pending.actorId) ?? await fromUuid(pending.actorUuid ?? "");
+    if (!actor) return false;
+
+    const path = pending.pmSnapshot.path;
+    const original = Number(pending.pmSnapshot.value);
+    if (!path || !Number.isFinite(original)) return false;
+
+    const atual = Number(foundry.utils.getProperty(actor, path));
+    if (!Number.isFinite(atual)) return false;
+
+    if (atual !== original) {
+      await actor.update({ [path]: original });
+      ui.notifications.info(`Rerrol Arsenal: PM restaurado para ${original}.`);
+      return true;
+    }
+  } catch (e) {
+    console.warn("Arsenal T20 | não foi possível restaurar PM do rerrol", e);
+  }
+  return false;
+}
+
+
 async function t20ProcessarMensagemRerrolPendente(message) {
   const pending = _t20RerrolPendente;
   if (!pending) return false;
@@ -1062,26 +1098,14 @@ async function t20ProcessarMensagemRerrolPendente(message) {
   }
   if (!t20RerrolMensagemCorresponde(message, pending)) return false;
 
-  const sourceMessage = game.messages.get(pending.sourceMessageId);
-  if (!sourceMessage) {
-    _t20RerrolPendente = null;
-    return false;
-  }
+  // Nova abordagem: o rerrol gera um card novo normalmente.
+  // O Arsenal só restaura o PM do ator, para que qualquer habilidade escolhida
+  // na caixa original não tenha custo nessa ação de rerrol.
+  await t20RestaurarPMRerrol(pending);
+  _t20RerrolPendente = null;
 
-  try {
-    const ok = await t20AtualizarCardOriginalComRerrol(sourceMessage, message);
-    if (ok) {
-      _t20RerrolPendente = null;
-      try { await message.delete(); } catch {}
-      ui.notifications.info("Rerrol aplicado ao card original.");
-      return true;
-    }
-  } catch (e) {
-    console.warn("Arsenal T20 | erro ao aplicar rerrol com diálogo", e);
-    ui.notifications.error("Erro ao aplicar rerrol ao card original.");
-    _t20RerrolPendente = null;
-  }
-
+  // Retorna false para NÃO bloquear o fluxo normal do createChatMessage.
+  // Assim o novo card do Foundry/Tormenta20 é criado e recebe o bloco Arsenal integrado.
   return false;
 }
 
@@ -1134,7 +1158,7 @@ function t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, dan
       <b style="color:#3b211d">Arsenal T20</b>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">
         <span class="t20-arsenal-ataque-total" style="font-size:0.95em;color:#4f463a;font-weight:600">Ataque ${Number.isFinite(Number(totalAtaque)) ? `• ${totalAtaque}` : ""}${temDano && Number.isFinite(Number(danoTotal)) ? ` • dano base ${danoTotal}` : ""}</span>
-        <button class="t20-reroll-ataque" title="Rolar novamente o teste de acerto com os mesmos bônus do ataque original" style="padding:4px 8px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#6f6046,#554735);border:1px solid #7a7060;color:#fff;font-size:0.82em;font-weight:bold">🎲 Rerrol</button>
+        <button class="t20-reroll-ataque" title="Refazer o ataque pelo sistema, gerando um novo card sem custo de PM" style="padding:4px 8px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#6f6046,#554735);border:1px solid #7a7060;color:#fff;font-size:0.82em;font-weight:bold">🎲 Rerrol</button>
       </div>
     </div>
     ${dadosAlvos.map(a => {
@@ -1513,12 +1537,9 @@ async function t20RerrolAtaqueIntegrado(btn) {
   const msg = obterChatMessageDoBotao(btn);
   if (!msg) return ui.notifications.warn("Mensagem original não encontrada para rerrolar.");
 
-  const card = btn.closest(".t20-arsenal-integrado");
-  if (!card) return ui.notifications.warn("Bloco do Arsenal não encontrado no card.");
-
   const item = await t20ResolverItemMensagem(msg);
   if (!item) {
-    return ui.notifications.warn("Não encontrei o item original para abrir a caixa de diálogo do rerrol. Abra o ataque manualmente pela ficha.");
+    return ui.notifications.warn("Não encontrei o item original para refazer o ataque. Use o ataque diretamente pela ficha.");
   }
 
   const actor = item.actor ?? await t20ResolverAtorMensagem(msg);
@@ -1527,17 +1548,21 @@ async function t20RerrolAtaqueIntegrado(btn) {
   btn.disabled = true;
   btn.style.opacity = "0.6";
   const oldText = btn.innerHTML;
-  btn.innerHTML = "🎲 Abrindo diálogo...";
+  btn.innerHTML = "🎲 Rerrol...";
 
   try {
     _t20RerrolPendente = {
       sourceMessageId: msg.id,
       actorId: actor.id,
+      actorUuid: actor.uuid,
       itemId: item.id,
       itemName: item.name,
+      pmSnapshot: t20SnapshotPMActor(actor),
       createdAt: Date.now(),
     };
 
+    // Reusa o fluxo original do sistema/Tormenta20.
+    // Isso gera um novo card e preserva regras nativas de crítico/dano/rolagens.
     if (typeof item.use === "function") await item.use();
     else if (typeof item.roll === "function") await item.roll();
     else if (typeof item.displayCard === "function") await item.displayCard();
@@ -1548,20 +1573,27 @@ async function t20RerrolAtaqueIntegrado(btn) {
       return ui.notifications.warn("O item original não possui método de uso automático. Abri a ficha do item.");
     }
 
+    // O botão pertence ao card antigo; reativa apenas para permitir novo rerrol se o usuário quiser.
     setTimeout(() => {
+      try {
+        btn.disabled = false;
+        btn.style.opacity = "1";
+        btn.innerHTML = oldText;
+      } catch {}
+    }, 1200);
+
+    // Segurança: se nenhum novo card compatível aparecer, limpa o estado pendente e restaura PM se necessário.
+    setTimeout(async () => {
       if (_t20RerrolPendente?.sourceMessageId === msg.id) {
+        await t20RestaurarPMRerrol(_t20RerrolPendente);
         _t20RerrolPendente = null;
-        try {
-          btn.disabled = false;
-          btn.style.opacity = "1";
-          btn.innerHTML = oldText;
-        } catch {}
       }
     }, 120000);
   } catch (e) {
+    await t20RestaurarPMRerrol(_t20RerrolPendente);
     _t20RerrolPendente = null;
-    console.warn("Arsenal T20 | erro ao abrir diálogo de rerrol", e);
-    ui.notifications.error("Erro ao abrir a caixa de diálogo do rerrol.");
+    console.warn("Arsenal T20 | erro ao refazer ataque por rerrol", e);
+    ui.notifications.error("Erro ao refazer o ataque pelo rerrol.");
     btn.disabled = false;
     btn.style.opacity = "1";
     btn.innerHTML = oldText;
