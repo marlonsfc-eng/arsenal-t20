@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.2.6 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.2.7 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -559,7 +559,7 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   if (!targets.length) return;
 
   const totalAtaque = rollAtaque.total;
-  const d20Result = rollAtaque.dice?.[0]?.results?.[0]?.result;
+  const d20Result = t20ResultadoD20Efetivo(rollAtaque) ?? rollAtaque.dice?.[0]?.results?.[0]?.result;
   const danoPorTipo = rollDano ? extrairDanoPorTipo(rollDano) : null;
 
   const dadosAlvos = targets.map(target => {
@@ -1064,7 +1064,7 @@ async function t20AtualizarCardOriginalComRerrol(sourceMessage, rerollMessage) {
   const nota = document.createElement("div");
   nota.className = "t20-reroll-nota";
   nota.style.cssText = "font-size:1em;line-height:1.4;color:#4a211b;margin-top:8px;padding:6px 7px;border-radius:5px;background:rgba(92,42,34,0.10);font-weight:500";
-  nota.innerHTML = `🎲 Rerrol com diálogo: <b>${totalAtaque}</b>${Number.isFinite(Number(d20Result)) ? ` <span style="color:#4f463a">(d20: ${d20Result})</span>` : ""}. Este é o teste válido atual.`;
+  nota.innerHTML = `🎲 Rerrol com diálogo: <b>${totalAtaque}</b>${Number.isFinite(Number(d20Result)) ? ` <span style="color:#4f463a">(d20 válido: ${d20Result})</span>` : ""}. Este é o teste válido atual.`;
   novoBloco.appendChild(nota);
 
   card.replaceWith(novoBloco);
@@ -1563,6 +1563,45 @@ async function t20PersistirConteudoMensagem(message, content) {
   });
 }
 
+function t20ResultadoD20Efetivo(roll) {
+  try {
+    const dado20 = roll?.dice?.find?.(d => Number(d.faces) === 20 || /d20/i.test(String(d.formula ?? "")));
+    const resultados = Array.from(dado20?.results ?? []);
+    if (!resultados.length) return null;
+
+    // Foundry marca dados descartados por kh/kl como inactive/discarded.
+    const ativos = resultados.filter(r => r.active !== false && !r.discarded && !r.rerolled);
+    if (ativos.length) {
+      // Em 2d20kh/kl normalmente sobra só um ativo. Se sobrar mais, usa o último ativo.
+      return Number(ativos.at(-1)?.result ?? ativos.at(-1)?.total);
+    }
+
+    const formula = String(roll?.formula ?? dado20?.formula ?? "").toLowerCase();
+    const valores = resultados
+      .map(r => Number(r.result ?? r.total))
+      .filter(n => Number.isFinite(n));
+
+    if (!valores.length) return null;
+    if (/kh|keep\s*h|khighest/.test(formula)) return Math.max(...valores);
+    if (/kl|keep\s*l|klowest/.test(formula)) return Math.min(...valores);
+
+    return valores.at(-1);
+  } catch {
+    return null;
+  }
+}
+
+async function t20MostrarDadosRerrol(roll) {
+  try {
+    if (game.dice3d?.showForRoll) {
+      await game.dice3d.showForRoll(roll, game.user, true, null, false);
+    }
+  } catch (e) {
+    console.warn("Arsenal T20 | Dice So Nice não conseguiu exibir o rerrol", e);
+  }
+}
+
+
 async function t20RerrolAtaqueIntegrado(btn) {
   const msg = obterChatMessageDoBotao(btn);
   if (!msg) return ui.notifications.warn("Mensagem original não encontrada para rerrolar.");
@@ -1580,8 +1619,9 @@ async function t20RerrolAtaqueIntegrado(btn) {
 
   try {
     const roll = await new Roll(rollOriginal.formula).evaluate();
+    await t20MostrarDadosRerrol(roll);
     const totalAtaque = roll.total;
-    const d20Result = roll.dice?.[0]?.results?.[0]?.result;
+    const d20Result = t20ResultadoD20Efetivo(roll) ?? roll.dice?.[0]?.results?.[0]?.result;
     const danoPorTipo = t20DanoPorTipoMensagemIntegrada(msg);
     const rollDano = msg.rolls?.find?.(r => !String(r?.formula ?? "").includes("d20"));
     const danoTotal = rollDano?.total ?? null;
@@ -1602,7 +1642,7 @@ async function t20RerrolAtaqueIntegrado(btn) {
     const nota = document.createElement("div");
     nota.className = "t20-reroll-nota";
     nota.style.cssText = "font-size:1em;line-height:1.4;color:#4a211b;margin-top:8px;padding:6px 7px;border-radius:5px;background:rgba(92,42,34,0.10);font-weight:500";
-    nota.innerHTML = `🎲 Rerrol direto: <b>${totalAtaque}</b>${Number.isFinite(Number(d20Result)) ? ` <span style="color:#4f463a">(d20: ${d20Result})</span>` : ""}. Este é o teste válido atual.`;
+    nota.innerHTML = `🎲 Rerrol direto: <b>${totalAtaque}</b>${Number.isFinite(Number(d20Result)) ? ` <span style="color:#4f463a">(d20 válido: ${d20Result})</span>` : ""}. Este é o teste válido atual.`;
     novoBloco.appendChild(nota);
 
     blocoAtual.replaceWith(novoBloco);
