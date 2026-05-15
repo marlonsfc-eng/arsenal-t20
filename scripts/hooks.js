@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.3.4 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.3.6 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -553,7 +553,11 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   // Rerrol v3.2.2: quando o botão Rerrol abre a caixa original do sistema,
   // o próximo card gerado por ela é usado para atualizar o card original e depois removido.
   await t20ProcessarMensagemRerrolPendente(message);
-  const arsenalOpts = _t20RerrolInfoParaProximoCard ?? {};
+  const actorMensagem = t20ActorDaMensagem(message);
+  const arsenalOpts = {
+    ...(_t20RerrolInfoParaProximoCard ?? {}),
+    temVitoria: t20ActorTemVitoriaQualquerCusto(actorMensagem),
+  };
 
   const rollDano = message.rolls.find(r => !r.formula?.includes("d20"));
   const targets = Array.from(game.user.targets);
@@ -762,6 +766,9 @@ Hooks.once("ready", () => {
 let _t20RerrolPendente = null;
 let _t20RerrolInfoParaProximoCard = null;
 let _t20VitoriaOverridePM = null;
+    _t20VitoriaPreselect = null;
+        _t20VitoriaPreselect = null;
+let _t20VitoriaPreselect = null;
 
 function t20ExtrairNomeItemMensagem(message) {
   const itemData = message?.flags?.tormenta20?.itemData ?? {};
@@ -1163,6 +1170,7 @@ async function t20ProcessarMensagemRerrolPendente(message) {
   // Dados para o bloco Arsenal do NOVO card.
   _t20RerrolInfoParaProximoCard = {
     isVitoria: true,
+    temVitoria: true,
     vitoriaCount: novoCount,
     custoPago: custoVitoria,
     sourceMessageId: pending.sourceMessageId,
@@ -1229,16 +1237,50 @@ function t20LabelResultadoAtaque(a) {
   return { texto: "Erro", icon: "❌", cor: "#991b1b" };
 }
 
+function t20NormalizarTextoArsenal(s) {
+  return String(s ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function t20ActorTemVitoriaQualquerCusto(actor) {
+  if (!actor?.items) return false;
+  return actor.items.some(item => {
+    const nome = t20NormalizarTextoArsenal(item?.name);
+    return nome === "vitoria a qualquer custo" || nome.includes("vitoria a qualquer custo");
+  });
+}
+
+function t20ActorDaMensagem(message) {
+  try {
+    const actorId = message?.speaker?.actor;
+    if (actorId) {
+      const actor = game.actors.get(actorId);
+      if (actor) return actor;
+    }
+
+    const tokenId = message?.speaker?.token;
+    if (tokenId) {
+      const token = canvas.tokens?.get?.(tokenId);
+      if (token?.actor) return token.actor;
+    }
+  } catch {}
+  return null;
+}
+
+
 function t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal, opts = {}) {
   const temDano = danoPorTipo && Object.keys(danoPorTipo).length > 0;
 
   return `<div class="t20-arsenal-integrado" data-vitoria-count="${Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)}" style="margin-top:10px;padding:8px;border-radius:6px;border:1px solid #7a7060;border-left:4px solid #5c2a22;background:rgba(215,211,198,0.78);color:#1f1b16;font-family:serif">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(92,42,34,0.28);padding-bottom:5px;margin-bottom:6px;flex-wrap:wrap">
       <b style="color:#3b211d">Arsenal T20</b>
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+      ${opts?.temVitoria ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">
         <button class="t20-reroll-ataque" title="Usar Vitória a Qualquer Custo: refaz o ataque pelo sistema e cobra apenas o custo progressivo do poder" style="padding:6px 10px;border-radius:8px;cursor:pointer;background:linear-gradient(135deg,#6d28d9 0%,#9333ea 45%,#f59e0b 140%);border:1px solid rgba(253,224,71,0.65);color:#fff;font-size:0.86em;font-weight:800;letter-spacing:0.01em;text-shadow:0 1px 1px rgba(0,0,0,0.35);box-shadow:0 2px 7px rgba(88,28,135,0.35)">✨ Vitória ${2 + Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)} PM</button>
         <button class="t20-vitoria-reset" title="Zerar o custo progressivo de Vitória a Qualquer Custo neste card" style="padding:6px 9px;border-radius:8px;cursor:pointer;background:linear-gradient(180deg,#f8fafc,#d7d3c6);border:1px solid #7a7060;color:#3b211d;font-size:0.82em;font-weight:bold;box-shadow:0 1px 4px rgba(0,0,0,0.15)">↺ Zerar</button>
-      </div>
+      </div>` : ""}
     </div>
     ${opts?.isVitoria ? `<div style="font-size:0.9em;color:#4a211b;margin:4px 0 6px;padding:5px 6px;border-radius:5px;background:rgba(92,42,34,0.08)">🎲 Vitória a Qualquer Custo usada: <b>${opts.custoPago ?? "?"} PM</b>. Próximo uso neste teste: <b>${2 + Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)} PM</b>.</div>` : ""}
     ${dadosAlvos.map(a => {
@@ -1653,9 +1695,152 @@ async function t20ResetarVitoriaIntegrado(btn) {
 }
 
 
+function t20TextoLimpoArsenal(htmlOuTexto) {
+  try {
+    const div = document.createElement("div");
+    div.innerHTML = String(htmlOuTexto ?? "");
+    return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
+  } catch {
+    return String(htmlOuTexto ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+}
+
+function t20ExtrairOpcoesUsoDaMensagem(message) {
+  const texto = t20TextoLimpoArsenal(message?.content ?? "");
+  const encontrados = [];
+  const ignorar = /^(dano|ataque|corte|impacto|perfuracao|perfuração|fogo|frio|eletricidade|acido|ácido|luz|trevas)$/i;
+
+  const regexes = [
+    /[•◦]\s*([+-]?\d+\s*PM|-)\s*:\s*([^•◦\n\r]+?)(?=(?:\s+[•◦]\s*[+-]?\d+\s*PM\s*:)|(?:\s+Ataque\b)|(?:\s+Dano\b)|$)/gi,
+    /(?:^|\s)([+-]?\d+\s*PM|-)\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^•◦\n\r]{2,80}?)(?=(?:\s+[+-]?\d+\s*PM\s+)|(?:\s+Ataque\b)|(?:\s+Dano\b)|$)/gi
+  ];
+
+  for (const rx of regexes) {
+    let m;
+    while ((m = rx.exec(texto))) {
+      let nome = String(m[2] ?? "").replace(/\s+/g, " ").trim();
+      nome = nome.replace(/\bAtaque\b.*$/i, "").replace(/\bDano\b.*$/i, "").trim();
+      nome = nome.replace(/[.,;:]+$/g, "").trim();
+      if (!nome || nome.length < 3 || ignorar.test(t20NormalizarTextoArsenal(nome))) continue;
+      if (!encontrados.some(e => t20NormalizarTextoArsenal(e.nome) === t20NormalizarTextoArsenal(nome))) {
+        encontrados.push({ nome, custo: String(m[1] ?? "").trim(), quantidade: 1 });
+      }
+    }
+  }
+
+  return encontrados;
+}
+
+function t20LinhaDialogContemNome(row, nome) {
+  const txt = t20NormalizarTextoArsenal(row?.textContent ?? "");
+  const alvo = t20NormalizarTextoArsenal(nome);
+  if (!txt || !alvo) return false;
+  return txt.includes(alvo);
+}
+
+function t20SetCheckboxArsenal(input, checked = true) {
+  if (!input) return false;
+  if (input.checked === checked) return true;
+  input.click?.();
+  input.checked = checked;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
+
+function t20IncrementarLinhaDialog(row, quantidade = 1) {
+  let fez = false;
+  const n = Math.max(1, Number(quantidade) || 1);
+
+  const inputNum = row.querySelector('input[type="number"], input[data-dtype="Number"]');
+  if (inputNum) {
+    const atual = Number(inputNum.value || 0);
+    inputNum.value = String(Math.max(atual, n));
+    inputNum.dispatchEvent(new Event("input", { bubbles: true }));
+    inputNum.dispatchEvent(new Event("change", { bubbles: true }));
+    fez = true;
+  }
+
+  if (!fez) {
+    const botoes = Array.from(row.querySelectorAll("button, a"));
+    const plus = botoes.find(b => /^\s*\+\s*$/.test(b.textContent ?? "") || /plus|increment|aument/i.test(String(b.className ?? "") + " " + String(b.title ?? "")));
+    if (plus) {
+      for (let i = 0; i < n; i++) plus.click?.();
+      fez = true;
+    }
+  }
+
+  return fez;
+}
+
+function t20AplicarPreselecaoVitoriaNoDialog(app, html) {
+  const pending = _t20VitoriaPreselect;
+  if (!pending || Date.now() - Number(pending.createdAt ?? 0) > 120000) {
+    _t20VitoriaPreselect = null;
+    return;
+  }
+
+  const actor = app?.actor ?? app?.item?.actor ?? app?.object?.actor;
+  if (pending.actorId && actor?.id && pending.actorId !== actor.id) return;
+
+  const item = app?.item ?? app?.object;
+  if (pending.itemId && item?.id && pending.itemId !== item.id) return;
+
+  const root = html instanceof jQuery ? html[0] : html;
+  if (!root) return;
+
+  const opcoes = Array.from(pending.opcoes ?? []);
+  if (!opcoes.length) return;
+
+  setTimeout(() => {
+    try {
+      const linhas = Array.from(root.querySelectorAll("tr, .form-group, li, label, div"))
+        .filter(el => el.querySelector?.("input, button, a"));
+
+      const aplicadas = [];
+
+      for (const op of opcoes) {
+        const linha = linhas.find(row => t20LinhaDialogContemNome(row, op.nome));
+        if (!linha) continue;
+
+        let ok = false;
+        const checkbox = linha.querySelector('input[type="checkbox"]');
+        if (checkbox) ok = t20SetCheckboxArsenal(checkbox, true) || ok;
+
+        ok = t20IncrementarLinhaDialog(linha, op.quantidade ?? 1) || ok;
+
+        if (ok) aplicadas.push(op.nome);
+      }
+
+      if (aplicadas.length) {
+        const aviso = document.createElement("div");
+        aviso.style.cssText = "margin:6px 0 8px;padding:6px 8px;border-radius:6px;background:#fff7ed;border:1px solid #d97706;color:#3b211d;font-size:0.88em;line-height:1.3";
+        aviso.innerHTML = `✨ Vitória: opções do ataque anterior pré-marcadas: <b>${aplicadas.join(", ")}</b>. Revise e confirme normalmente.`;
+        const form = root.querySelector("form") ?? root;
+        form.prepend?.(aviso);
+      }
+    } catch (e) {
+      console.warn("Arsenal T20 | erro ao pré-marcar opções de Vitória", e);
+    } finally {
+      _t20VitoriaPreselect = null;
+    }
+  }, 220);
+}
+
+// Hook global: quando Vitória abrir a AbilityUseDialog, pré-marca as opções usadas no ataque anterior.
+Hooks.on("renderAbilityUseDialog", (app, html) => {
+  if (_t20VitoriaPreselect) t20AplicarPreselecaoVitoriaNoDialog(app, html);
+});
+
+
 async function t20RerrolAtaqueIntegrado(btn) {
   const msg = obterChatMessageDoBotao(btn);
   if (!msg) return ui.notifications.warn("Mensagem original não encontrada para rerrolar.");
+
+  const actorCheck = t20ActorDaMensagem(msg);
+  if (actorCheck && !t20ActorTemVitoriaQualquerCusto(actorCheck)) {
+    return ui.notifications.warn(`${actorCheck.name} não possui Vitória a Qualquer Custo na ficha.`);
+  }
 
   const item = await t20ResolverItemMensagem(msg);
   if (!item) {
@@ -1671,6 +1856,16 @@ async function t20RerrolAtaqueIntegrado(btn) {
   btn.innerHTML = "🎲 Vitória...";
 
   try {
+    const opcoesUsoAnterior = t20ExtrairOpcoesUsoDaMensagem(msg);
+
+    _t20VitoriaPreselect = {
+      actorId: actor.id,
+      itemId: item.id,
+      itemName: item.name,
+      opcoes: opcoesUsoAnterior,
+      createdAt: Date.now(),
+    };
+
     _t20RerrolPendente = {
       sourceMessageId: msg.id,
       actorId: actor.id,
@@ -1678,6 +1873,7 @@ async function t20RerrolAtaqueIntegrado(btn) {
       itemId: item.id,
       itemName: item.name,
       vitoriaCount: t20ExtrairVitoriaCountDoCard(btn),
+      opcoesUsoAnterior,
       pmSnapshot: t20SnapshotPMActor(actor),
       createdAt: Date.now(),
     };
