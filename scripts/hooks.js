@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.2.1 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.2.2 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -550,6 +550,10 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   if (!rollAtaque) return;
   if (!mensagemEhAtaqueReal(message, rollAtaque)) return;
 
+  // Rerrol v3.2.2: quando o botão Rerrol abre a caixa original do sistema,
+  // o próximo card gerado por ela é usado para atualizar o card original e depois removido.
+  if (await t20ProcessarMensagemRerrolPendente(message)) return;
+
   const rollDano = message.rolls.find(r => !r.formula?.includes("d20"));
   const targets = Array.from(game.user.targets);
   if (!targets.length) return;
@@ -749,6 +753,184 @@ Hooks.once("ready", () => {
     }
   });
 });
+
+
+let _t20RerrolPendente = null;
+
+function t20ExtrairNomeItemMensagem(message) {
+  const itemData = message?.flags?.tormenta20?.itemData ?? {};
+  const candidatos = [
+    itemData?._id ? null : itemData?.name,
+    itemData?.nome,
+    itemData?.label,
+    message?.flags?.tormenta20?.item?.name,
+    message?.flags?.tormenta20?.item?.nome,
+  ].filter(Boolean);
+
+  for (const c of candidatos) {
+    const s = String(c ?? "").trim();
+    if (s && !/^item$/i.test(s)) return s;
+  }
+
+  try {
+    const div = document.createElement("div");
+    div.innerHTML = String(message?.content ?? "");
+    const title =
+      div.querySelector("h1,h2,h3,h4,.item-name,.card-title,.chat-card .title,.sheet-header h1")?.textContent ??
+      "";
+    if (title.trim()) return title.trim();
+  } catch {}
+
+  return "";
+}
+
+async function t20ResolverAtorMensagem(message) {
+  try {
+    const speaker = message?.speaker ?? {};
+    if (speaker.scene && speaker.token) {
+      const scene = game.scenes.get(speaker.scene);
+      const tokenDoc = scene?.tokens?.get(speaker.token);
+      if (tokenDoc?.actor) return tokenDoc.actor;
+    }
+    if (speaker.token) {
+      const token = canvas.tokens?.get?.(speaker.token);
+      if (token?.actor) return token.actor;
+    }
+    if (speaker.actor) {
+      const actor = game.actors.get(speaker.actor);
+      if (actor) return actor;
+    }
+    const actorUuid =
+      message?.flags?.tormenta20?.actorUuid ??
+      message?.flags?.core?.sourceActorUuid;
+    if (actorUuid) {
+      const doc = await fromUuid(actorUuid);
+      if (doc?.actor) return doc.actor;
+      if (doc) return doc;
+    }
+  } catch (e) {
+    console.warn("Arsenal T20 | erro ao resolver ator da mensagem", e);
+  }
+  return null;
+}
+
+async function t20ResolverItemMensagem(message) {
+  const actor = await t20ResolverAtorMensagem(message);
+  if (!actor) return null;
+
+  const itemData = message?.flags?.tormenta20?.itemData ?? {};
+  const ids = [
+    itemData?._id,
+    itemData?.id,
+    itemData?.itemId,
+    message?.flags?.tormenta20?.itemId,
+    message?.flags?.tormenta20?.item?._id,
+    message?.flags?.tormenta20?.item?.id,
+  ].filter(Boolean);
+
+  for (const id of ids) {
+    const item = actor.items?.get?.(String(id));
+    if (item) return item;
+  }
+
+  const nome = t20ExtrairNomeItemMensagem(message);
+  if (nome) {
+    const normalizar = s => String(s ?? "").trim().toLowerCase();
+    const item =
+      actor.items?.find?.(i => normalizar(i.name) === normalizar(nome)) ??
+      actor.items?.find?.(i => normalizar(i.name).includes(normalizar(nome)) || normalizar(nome).includes(normalizar(i.name)));
+    if (item) return item;
+  }
+
+  return null;
+}
+
+function t20RerrolMensagemCorresponde(message, pending) {
+  if (!pending) return false;
+  if (!message?.rolls?.some?.(r => String(r?.formula ?? "").includes("d20"))) return false;
+
+  const speaker = message.speaker ?? {};
+  if (pending.actorId && speaker.actor && pending.actorId !== speaker.actor) return false;
+
+  const itemData = message?.flags?.tormenta20?.itemData ?? {};
+  const itemId = itemData?._id ?? itemData?.id ?? itemData?.itemId ?? message?.flags?.tormenta20?.itemId;
+  if (pending.itemId && itemId && pending.itemId !== itemId) return false;
+
+  if (pending.itemName) {
+    const nome = t20ExtrairNomeItemMensagem(message);
+    if (nome && String(nome).trim().toLowerCase() !== String(pending.itemName).trim().toLowerCase()) {
+      // não retorna false aqui porque alguns cards do sistema não expõem nome de item no mesmo lugar
+    }
+  }
+
+  return true;
+}
+
+async function t20AtualizarCardOriginalComRerrol(sourceMessage, rerollMessage) {
+  const rollAtaque = rerollMessage?.rolls?.find?.(r => String(r?.formula ?? "").includes("d20"));
+  if (!sourceMessage || !rollAtaque) return false;
+
+  const totalAtaque = rollAtaque.total;
+  const d20Result = rollAtaque.dice?.[0]?.results?.[0]?.result;
+  const rollDano = rerollMessage.rolls?.find?.(r => !String(r?.formula ?? "").includes("d20"));
+  const danoPorTipo = rollDano ? extrairDanoPorTipo(rollDano) : t20DanoPorTipoMensagemIntegrada(sourceMessage);
+  const danoTotal = rollDano?.total ?? sourceMessage.rolls?.find?.(r => !String(r?.formula ?? "").includes("d20"))?.total ?? null;
+
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = String(sourceMessage.content ?? "");
+  const card = wrapper.querySelector(".t20-arsenal-integrado");
+  if (!card) return false;
+
+  const dadosAlvos = t20DadosAlvosDoCardIntegrado(card, totalAtaque, d20Result);
+  if (!dadosAlvos.length) return false;
+
+  const novoWrapper = document.createElement("div");
+  novoWrapper.innerHTML = t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal).trim();
+  const novoBloco = novoWrapper.firstElementChild;
+  if (!novoBloco) return false;
+
+  const nota = document.createElement("div");
+  nota.className = "t20-reroll-nota";
+  nota.style.cssText = "font-size:0.8em;color:#5c2a22;margin-top:5px";
+  nota.innerHTML = `🎲 Rerrol com diálogo: <b>${totalAtaque}</b>${Number.isFinite(Number(d20Result)) ? ` <span style="color:#4f463a">(d20: ${d20Result})</span>` : ""}. Este é o teste válido atual.`;
+  novoBloco.appendChild(nota);
+
+  card.replaceWith(novoBloco);
+  await t20PersistirConteudoMensagem(sourceMessage, wrapper.innerHTML);
+  return true;
+}
+
+async function t20ProcessarMensagemRerrolPendente(message) {
+  const pending = _t20RerrolPendente;
+  if (!pending) return false;
+  if (Date.now() - pending.createdAt > 120000) {
+    _t20RerrolPendente = null;
+    return false;
+  }
+  if (!t20RerrolMensagemCorresponde(message, pending)) return false;
+
+  const sourceMessage = game.messages.get(pending.sourceMessageId);
+  if (!sourceMessage) {
+    _t20RerrolPendente = null;
+    return false;
+  }
+
+  try {
+    const ok = await t20AtualizarCardOriginalComRerrol(sourceMessage, message);
+    if (ok) {
+      _t20RerrolPendente = null;
+      try { await message.delete(); } catch {}
+      ui.notifications.info("Rerrol aplicado ao card original.");
+      return true;
+    }
+  } catch (e) {
+    console.warn("Arsenal T20 | erro ao aplicar rerrol com diálogo", e);
+    ui.notifications.error("Erro ao aplicar rerrol ao card original.");
+    _t20RerrolPendente = null;
+  }
+
+  return false;
+}
 
 
 function t20CalcularDanoAlvoIntegrado(a, danoPorTipo = null) {
@@ -1178,49 +1360,55 @@ async function t20RerrolAtaqueIntegrado(btn) {
   const msg = obterChatMessageDoBotao(btn);
   if (!msg) return ui.notifications.warn("Mensagem original não encontrada para rerrolar.");
 
-  const rollOriginal = msg.rolls?.find?.(r => String(r?.formula ?? "").includes("d20"));
-  if (!rollOriginal?.formula) return ui.notifications.warn("Não encontrei a fórmula do ataque original para rerrolar.");
-
   const card = btn.closest(".t20-arsenal-integrado");
   if (!card) return ui.notifications.warn("Bloco do Arsenal não encontrado no card.");
+
+  const item = await t20ResolverItemMensagem(msg);
+  if (!item) {
+    return ui.notifications.warn("Não encontrei o item original para abrir a caixa de diálogo do rerrol. Abra o ataque manualmente pela ficha.");
+  }
+
+  const actor = item.actor ?? await t20ResolverAtorMensagem(msg);
+  if (!actor) return ui.notifications.warn("Não encontrei o ator original do ataque.");
 
   btn.disabled = true;
   btn.style.opacity = "0.6";
   const oldText = btn.innerHTML;
-  btn.innerHTML = "🎲 Rolando...";
+  btn.innerHTML = "🎲 Abrindo diálogo...";
 
   try {
-    const roll = await new Roll(rollOriginal.formula).evaluate();
-    const totalAtaque = roll.total;
-    const d20Result = roll.dice?.[0]?.results?.[0]?.result;
-    const danoPorTipo = t20DanoPorTipoMensagemIntegrada(msg);
-    const rollDano = msg.rolls?.find?.(r => !String(r?.formula ?? "").includes("d20"));
-    const danoTotal = rollDano?.total ?? null;
-    const dadosAlvos = t20DadosAlvosDoCardIntegrado(card, totalAtaque, d20Result);
+    _t20RerrolPendente = {
+      sourceMessageId: msg.id,
+      actorId: actor.id,
+      itemId: item.id,
+      itemName: item.name,
+      createdAt: Date.now(),
+    };
 
-    if (!dadosAlvos.length) return ui.notifications.warn("Nenhum alvo encontrado no bloco do Arsenal para atualizar.");
+    if (typeof item.use === "function") await item.use();
+    else if (typeof item.roll === "function") await item.roll();
+    else if (typeof item.displayCard === "function") await item.displayCard();
+    else if (typeof item.toMessage === "function") await item.toMessage();
+    else {
+      _t20RerrolPendente = null;
+      item.sheet?.render?.(true);
+      return ui.notifications.warn("O item original não possui método de uso automático. Abri a ficha do item.");
+    }
 
-    const novoBlocoWrapper = document.createElement("div");
-    novoBlocoWrapper.innerHTML = t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal).trim();
-    const novoBloco = novoBlocoWrapper.firstElementChild;
-    if (!novoBloco) return ui.notifications.warn("Não foi possível reconstruir o bloco do Arsenal.");
-
-    const nota = document.createElement("div");
-    nota.className = "t20-reroll-nota";
-    nota.style.cssText = "font-size:0.8em;color:#5c2a22;margin-top:5px";
-    nota.innerHTML = `🎲 Rerrol: <b>${totalAtaque}</b>${Number.isFinite(Number(d20Result)) ? ` <span style="color:#4f463a">(d20: ${d20Result})</span>` : ""}. Este é o teste válido atual.`;
-    novoBloco.appendChild(nota);
-
-    card.replaceWith(novoBloco);
-
-    const contentEl = novoBloco.closest?.(".message-content") ?? novoBloco.closest?.(".chat-message")?.querySelector?.(".message-content");
-    const content = contentEl?.innerHTML ?? msg.content;
-    await t20PersistirConteudoMensagem(msg, content);
-
-    ui.notifications.info(`Rerrol do ataque: ${totalAtaque}.`);
+    setTimeout(() => {
+      if (_t20RerrolPendente?.sourceMessageId === msg.id) {
+        _t20RerrolPendente = null;
+        try {
+          btn.disabled = false;
+          btn.style.opacity = "1";
+          btn.innerHTML = oldText;
+        } catch {}
+      }
+    }, 120000);
   } catch (e) {
-    console.warn("Arsenal T20 | erro ao rerrolar ataque integrado", e);
-    ui.notifications.error("Erro ao rerrolar o ataque.");
+    _t20RerrolPendente = null;
+    console.warn("Arsenal T20 | erro ao abrir diálogo de rerrol", e);
+    ui.notifications.error("Erro ao abrir a caixa de diálogo do rerrol.");
     btn.disabled = false;
     btn.style.opacity = "1";
     btn.innerHTML = oldText;
