@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.1.0 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.2.0 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -587,13 +587,14 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
     };
   });
 
-  if (cfg("mensagemPublica")) await criarMensagemPublica(totalAtaque, dadosAlvos);
-
+  // v3.2.0: não cria cards separados. O resultado e os botões do Arsenal
+  // são integrados diretamente no card original do sistema Tormenta20.
   if (game.user.isGM) {
-    if (cfg("danoAutoGM")) await criarMensagemGM(totalAtaque, dadosAlvos, danoPorTipo, rollDano?.total ?? null);
+    await t20IntegrarAtaqueNoCardOriginal(message, totalAtaque, dadosAlvos, danoPorTipo, rollDano?.total ?? null);
   } else {
     game.socket.emit("module.arsenal-t20", {
       tipo: "atacou",
+      messageId: message.id,
       totalAtaque, dadosAlvos,
       danoPorTipo,
       danoTotal: rollDano?.total ?? null
@@ -711,7 +712,12 @@ Hooks.once("ready", () => {
   game.socket.on("module.arsenal-t20", async (data) => {
     if (!game.user.isGM) return;
     if (data.tipo === "atacou") {
-      if (cfg("danoAutoGM")) await criarMensagemGM(data.totalAtaque, data.dadosAlvos, data.danoPorTipo, data.danoTotal);
+      if (data.messageId) {
+        const msg = game.messages.get(data.messageId);
+        if (msg) await t20IntegrarAtaqueNoCardOriginal(msg, data.totalAtaque, data.dadosAlvos, data.danoPorTipo, data.danoTotal);
+      } else if (cfg("danoAutoGM")) {
+        await criarMensagemGM(data.totalAtaque, data.dadosAlvos, data.danoPorTipo, data.danoTotal);
+      }
     }
     if (data.tipo === "aplicarCondicoes") {
       const actor = await resolverActorParaAutomacao(data);
@@ -743,6 +749,116 @@ Hooks.once("ready", () => {
     }
   });
 });
+
+
+function t20CalcularDanoAlvoIntegrado(a, danoPorTipo = null) {
+  const temDano = danoPorTipo && Object.keys(danoPorTipo).length > 0;
+  let danoFinalTotal = 0;
+  let danoPerda = 0;
+
+  if (temDano && a?.acertou) {
+    for (const [tipo, valor] of Object.entries(danoPorTipo)) {
+      if (isNaN(valor) || valor === null) continue;
+      const tipoNorm = tipo === "perfuração" ? "perfuracao" : tipo;
+      const ePerda = tipoNorm === "perda";
+
+      if (ePerda) {
+        danoPerda += Number(valor) || 0;
+        continue;
+      }
+
+      const { dano } = calcularDanoComResistencias(Number(valor) || 0, tipoNorm, a.tracos);
+      danoFinalTotal += dano;
+    }
+
+    if (a.rdGeral > 0 && danoFinalTotal > 0) {
+      danoFinalTotal = Math.max(0, danoFinalTotal - a.rdGeral);
+    }
+  }
+
+  return {
+    temDano,
+    danoFinalTotal,
+    danoPerda,
+    total: Math.max(0, danoFinalTotal + danoPerda),
+  };
+}
+
+function t20LabelResultadoAtaque(a) {
+  if (a.erroNatural) return { texto: "Erro natural", icon: "💨", cor: "#6b7280" };
+  if (a.possivelCritico && a.acertou) return { texto: "Crítico", icon: "⚔️", cor: "#b45309" };
+  if (a.acertou) return { texto: "Acerto", icon: "✅", cor: "#15803d" };
+  return { texto: "Erro", icon: "❌", cor: "#991b1b" };
+}
+
+function t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal) {
+  const temDano = danoPorTipo && Object.keys(danoPorTipo).length > 0;
+
+  return `<div class="t20-arsenal-integrado" style="margin-top:10px;padding:8px;border-radius:6px;border:1px solid #7a7060;border-left:4px solid #5c2a22;background:rgba(215,211,198,0.78);color:#1f1b16;font-family:serif">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(92,42,34,0.28);padding-bottom:5px;margin-bottom:6px">
+      <b style="color:#3b211d">Arsenal T20</b>
+      <span style="font-size:0.82em;color:#4f463a">Ataque ${Number.isFinite(Number(totalAtaque)) ? `• ${totalAtaque}` : ""}${temDano && Number.isFinite(Number(danoTotal)) ? ` • dano base ${danoTotal}` : ""}</span>
+    </div>
+    ${dadosAlvos.map(a => {
+      const res = t20LabelResultadoAtaque(a);
+      const dano = t20CalcularDanoAlvoIntegrado(a, danoPorTipo);
+      const totalLabel = dano.danoPerda > 0
+        ? `${dano.total} (${dano.danoFinalTotal} dano + ${dano.danoPerda} perda de PV)`
+        : `${dano.total}`;
+
+      return `<div class="t20-arsenal-alvo" data-token="${a.tokenId}" style="padding:6px 0;border-top:1px solid rgba(122,112,96,0.28)">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+          <div style="min-width:0">
+            <b>${a.nome}</b>
+            <span class="t20-resultado-inline" style="margin-left:6px;color:${res.cor};font-weight:bold">${res.icon} ${res.texto}</span>
+          </div>
+          ${a.acertou && temDano ? `<div class="t20-dano-total" style="font-weight:bold;color:#3b211d">Dano final: ${totalLabel}</div>` : ""}
+        </div>
+        ${a.acertou && temDano ? t20HtmlBotoesDano({ tokenId: a.tokenId, danoFinalTotal: dano.danoFinalTotal, danoPerda: dano.danoPerda }) : ""}
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+
+function t20LimparListenersHtml(content = "") {
+  return String(content ?? "")
+    .replace(/\sdata-listener-added="[^"]*"/g, "")
+    .replace(/\sdata-listener-added='[^']*'/g, "")
+    .replace(/\sdata-listener-added\b/g, "");
+}
+
+async function t20PersistirMensagemDoBotao(btn) {
+  try {
+    const msg = obterChatMessageDoBotao(btn);
+    if (!msg) return;
+    const contentEl =
+      btn.closest?.(".message-content") ??
+      btn.closest?.(".chat-message")?.querySelector?.(".message-content");
+    let content = contentEl?.innerHTML ?? msg.content;
+    content = t20LimparListenersHtml(content);
+    if (game.user.isGM) await msg.update({ content });
+    else game.socket.emit("module.arsenal-t20", {
+      tipo: "atualizarCardConsolidado",
+      messageId: msg.id,
+      content,
+    });
+  } catch (e) {
+    console.warn("Arsenal T20 | não foi possível persistir mensagem do botão", e);
+  }
+}
+
+async function t20IntegrarAtaqueNoCardOriginal(message, totalAtaque, dadosAlvos, danoPorTipo, danoTotal) {
+  if (!message || !dadosAlvos?.length) return;
+  if (String(message.content ?? "").includes("t20-arsenal-integrado")) return;
+
+  const bloco = t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal);
+  const content = `${message.content ?? ""}${bloco}`;
+  try {
+    await message.update({ content });
+  } catch (e) {
+    console.warn("Arsenal T20 | não foi possível integrar o Arsenal ao card original", e);
+  }
+}
 
 async function criarMensagemPublica(totalAtaque, dadosAlvos) {
   let html = `
@@ -1067,6 +1183,7 @@ async function defesaAtivaDano(btn) {
   }
 
   ui.notifications.info(`Defesa ativa aplicada: dano ${totalAtual} → ${novoTotal}.`);
+  await t20PersistirMensagemDoBotao(btn);
 }
 
 
@@ -1078,9 +1195,12 @@ async function aplicarDano(btn) {
   if (!token) return;
 
   if (dano <= 0 && danoPerda <= 0) {
-    return ChatMessage.create({
-      content: `🛡️ <b>${token.name}</b> absorveu todo o dano.`
-    });
+    const grupoZero = btn.closest(".t20-dano-actions") ?? btn.closest("div");
+    const notaZero = grupoZero?.parentElement?.querySelector(".t20-defesa-ativa-nota");
+    if (notaZero) notaZero.innerHTML = `🛡️ <b>${token.name}</b> absorveu todo o dano.`;
+    ui.notifications.info(`${token.name} absorveu todo o dano.`);
+    await t20PersistirMensagemDoBotao(btn);
+    return;
   }
 
   const pvPath  = "system.attributes.pv.value";
@@ -1106,16 +1226,24 @@ async function aplicarDano(btn) {
 
   const danTotal = dano + danoPerda;
 
-  // Mensagem pública sem revelar PV atual/máximo do alvo.
-  ChatMessage.create({
-    content: `<div style="background:linear-gradient(180deg,#171b26 0%,#0f1420 100%);border:1px solid #2b3347;border-left:4px solid #b94a58;padding:8px 11px;border-radius:6px;box-shadow:0 4px 10px rgba(0,0,0,0.22);color:#d7dcea">
-      💔 <b>${token.name}</b> sofreu <b>${danTotal} de dano</b>.
-    </div>`
-  });
-
   const grupo = btn.closest(".t20-dano-actions") ?? btn.closest("div");
+  const nota = grupo?.parentElement?.querySelector(".t20-defesa-ativa-nota");
+  if (nota) {
+    nota.innerHTML = `💔 <b>${token.name}</b> sofreu <b>${danTotal}</b> de dano.`;
+    nota.style.color = "#5c2a22";
+  }
+  const alvo = btn.closest(".t20-arsenal-alvo");
+  const inline = alvo?.querySelector(".t20-resultado-inline");
+  if (inline) {
+    inline.innerHTML = `💔 ${danTotal} dano aplicado`;
+    inline.style.color = "#5c2a22";
+  }
+
   grupo?.querySelectorAll("button")
     .forEach(b => { b.disabled = true; b.style.opacity = "0.5"; });
+
+  ui.notifications.info(`${token.name} sofreu ${danTotal} de dano.`);
+  await t20PersistirMensagemDoBotao(btn);
 }
 
 
