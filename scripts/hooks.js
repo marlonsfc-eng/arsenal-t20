@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.3.1 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.3.2 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -552,7 +552,8 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
 
   // Rerrol v3.2.2: quando o botão Rerrol abre a caixa original do sistema,
   // o próximo card gerado por ela é usado para atualizar o card original e depois removido.
-  if (await t20ProcessarMensagemRerrolPendente(message)) return;
+  await t20ProcessarMensagemRerrolPendente(message);
+  const arsenalOpts = _t20RerrolInfoParaProximoCard ?? {};
 
   const rollDano = message.rolls.find(r => !r.formula?.includes("d20"));
   const targets = Array.from(game.user.targets);
@@ -594,15 +595,18 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   // v3.2.0: não cria cards separados. O resultado e os botões do Arsenal
   // são integrados diretamente no card original do sistema Tormenta20.
   if (game.user.isGM) {
-    await t20IntegrarAtaqueNoCardOriginal(message, totalAtaque, dadosAlvos, danoPorTipo, rollDano?.total ?? null);
+    await t20IntegrarAtaqueNoCardOriginal(message, totalAtaque, dadosAlvos, danoPorTipo, rollDano?.total ?? null, arsenalOpts);
+    _t20RerrolInfoParaProximoCard = null;
   } else {
     game.socket.emit("module.arsenal-t20", {
       tipo: "atacou",
       messageId: message.id,
       totalAtaque, dadosAlvos,
       danoPorTipo,
-      danoTotal: rollDano?.total ?? null
+      danoTotal: rollDano?.total ?? null,
+      arsenalOpts
     });
+    _t20RerrolInfoParaProximoCard = null;
   }
 });
 
@@ -718,7 +722,7 @@ Hooks.once("ready", () => {
     if (data.tipo === "atacou") {
       if (data.messageId) {
         const msg = game.messages.get(data.messageId);
-        if (msg) await t20IntegrarAtaqueNoCardOriginal(msg, data.totalAtaque, data.dadosAlvos, data.danoPorTipo, data.danoTotal);
+        if (msg) await t20IntegrarAtaqueNoCardOriginal(msg, data.totalAtaque, data.dadosAlvos, data.danoPorTipo, data.danoTotal, data.arsenalOpts ?? {});
       } else if (cfg("danoAutoGM")) {
         await criarMensagemGM(data.totalAtaque, data.dadosAlvos, data.danoPorTipo, data.danoTotal);
       }
@@ -756,6 +760,7 @@ Hooks.once("ready", () => {
 
 
 let _t20RerrolPendente = null;
+let _t20RerrolInfoParaProximoCard = null;
 
 function t20ExtrairNomeItemMensagem(message) {
   const itemData = message?.flags?.tormenta20?.itemData ?? {};
@@ -1089,23 +1094,82 @@ async function t20RestaurarPMRerrol(pending) {
 }
 
 
+function t20CustoVitoria(pending) {
+  const count = Math.max(0, Number(pending?.vitoriaCount ?? 0) || 0);
+  return 2 + count;
+}
+
+async function t20FinalizarPMVitoria(pending, motivo = "") {
+  try {
+    if (!pending?.actorId || !pending?.pmSnapshot) return false;
+    const actor = game.actors.get(pending.actorId) ?? await fromUuid(pending.actorUuid ?? "");
+    if (!actor) return false;
+
+    const path = pending.pmSnapshot.path;
+    const pmAntes = Number(pending.pmSnapshot.value);
+    const custo = t20CustoVitoria(pending);
+
+    if (!path || !Number.isFinite(pmAntes)) return false;
+
+    // Espera e relê para pegar gastos tardios do sistema/Tormenta20.
+    const delays = [250, 800, 1500];
+    let atual = Number(foundry.utils.getProperty(actor, path));
+    for (const d of delays) {
+      await new Promise(resolve => setTimeout(resolve, d));
+      atual = Number(foundry.utils.getProperty(actor, path));
+    }
+
+    if (!Number.isFinite(atual)) return false;
+
+    const finalCorreto = Math.max(0, pmAntes - custo);
+
+    if (atual !== finalCorreto) {
+      await actor.update({ [path]: finalCorreto });
+    }
+
+    const gastoSistema = Math.max(0, pmAntes - atual);
+    const restaurado = Math.max(0, gastoSistema - custo);
+    ui.notifications.info(`Vitória a Qualquer Custo: ${custo} PM. ${restaurado ? `Restaurei ${restaurado} PM do custo repetido do ataque.` : "Nenhum custo repetido precisou ser restaurado."}`);
+    return true;
+  } catch (e) {
+    console.warn("Arsenal T20 | erro ao finalizar PM de Vitória a Qualquer Custo", e);
+    return false;
+  }
+}
+
+function t20ExtrairVitoriaCountDoCard(btn) {
+  const card = btn?.closest?.(".t20-arsenal-integrado");
+  const raw = card?.dataset?.vitoriaCount;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+
 async function t20ProcessarMensagemRerrolPendente(message) {
   const pending = _t20RerrolPendente;
   if (!pending) return false;
   if (Date.now() - pending.createdAt > 120000) {
     _t20RerrolPendente = null;
+    _t20RerrolInfoParaProximoCard = null;
     return false;
   }
   if (!t20RerrolMensagemCorresponde(message, pending)) return false;
 
-  // Nova abordagem: o rerrol gera um card novo normalmente.
-  // O Arsenal só restaura o PM do ator, para que qualquer habilidade escolhida
-  // na caixa original não tenha custo nessa ação de rerrol.
-  await t20RestaurarPMRerrol(pending);
+  // Marca dados para o bloco Arsenal do NOVO card.
+  _t20RerrolInfoParaProximoCard = {
+    isVitoria: true,
+    vitoriaCount: Math.max(0, Number(pending.vitoriaCount ?? 0) || 0) + 1,
+    custoPago: t20CustoVitoria(pending),
+    sourceMessageId: pending.sourceMessageId,
+  };
+
+  // Finaliza o PM depois que o sistema tiver terminado todos os updates.
+  const pendingCopy = foundry.utils.deepClone ? foundry.utils.deepClone(pending) : JSON.parse(JSON.stringify(pending));
+  setTimeout(() => t20FinalizarPMVitoria(pendingCopy, "card"), 0);
+
   _t20RerrolPendente = null;
 
-  // Retorna false para NÃO bloquear o fluxo normal do createChatMessage.
-  // Assim o novo card do Foundry/Tormenta20 é criado e recebe o bloco Arsenal integrado.
+  // Não bloqueia o fluxo: o novo card é processado normalmente e recebe o bloco Arsenal.
   return false;
 }
 
@@ -1150,17 +1214,18 @@ function t20LabelResultadoAtaque(a) {
   return { texto: "Erro", icon: "❌", cor: "#991b1b" };
 }
 
-function t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal) {
+function t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal, opts = {}) {
   const temDano = danoPorTipo && Object.keys(danoPorTipo).length > 0;
 
-  return `<div class="t20-arsenal-integrado" style="margin-top:10px;padding:8px;border-radius:6px;border:1px solid #7a7060;border-left:4px solid #5c2a22;background:rgba(215,211,198,0.78);color:#1f1b16;font-family:serif">
+  return `<div class="t20-arsenal-integrado" data-vitoria-count="${Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)}" style="margin-top:10px;padding:8px;border-radius:6px;border:1px solid #7a7060;border-left:4px solid #5c2a22;background:rgba(215,211,198,0.78);color:#1f1b16;font-family:serif">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(92,42,34,0.28);padding-bottom:5px;margin-bottom:6px;flex-wrap:wrap">
       <b style="color:#3b211d">Arsenal T20</b>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">
         <span class="t20-arsenal-ataque-total" style="font-size:0.95em;color:#4f463a;font-weight:600">Ataque ${Number.isFinite(Number(totalAtaque)) ? `• ${totalAtaque}` : ""}${temDano && Number.isFinite(Number(danoTotal)) ? ` • dano base ${danoTotal}` : ""}</span>
-        <button class="t20-reroll-ataque" title="Refazer o ataque pelo sistema, gerando um novo card sem custo de PM" style="padding:4px 8px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#6f6046,#554735);border:1px solid #7a7060;color:#fff;font-size:0.82em;font-weight:bold">🎲 Rerrol</button>
+        <button class="t20-reroll-ataque" title="Usar Vitória a Qualquer Custo: refaz o ataque pelo sistema e cobra apenas o custo progressivo do poder" style="padding:4px 8px;border-radius:6px;cursor:pointer;background:linear-gradient(180deg,#6f6046,#554735);border:1px solid #7a7060;color:#fff;font-size:0.82em;font-weight:bold">🎲 Vitória ${2 + Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)} PM</button>
       </div>
     </div>
+    ${opts?.isVitoria ? `<div style="font-size:0.9em;color:#4a211b;margin:4px 0 6px;padding:5px 6px;border-radius:5px;background:rgba(92,42,34,0.08)">🎲 Vitória a Qualquer Custo usada: <b>${opts.custoPago ?? "?"} PM</b>. Próximo uso neste teste: <b>${2 + Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)} PM</b>.</div>` : ""}
     ${dadosAlvos.map(a => {
       const res = t20LabelResultadoAtaque(a);
       const dano = t20CalcularDanoAlvoIntegrado(a, danoPorTipo);
@@ -1209,11 +1274,11 @@ async function t20PersistirMensagemDoBotao(btn) {
   }
 }
 
-async function t20IntegrarAtaqueNoCardOriginal(message, totalAtaque, dadosAlvos, danoPorTipo, danoTotal) {
+async function t20IntegrarAtaqueNoCardOriginal(message, totalAtaque, dadosAlvos, danoPorTipo, danoTotal, opts = {}) {
   if (!message || !dadosAlvos?.length) return;
   if (String(message.content ?? "").includes("t20-arsenal-integrado")) return;
 
-  const bloco = t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal);
+  const bloco = t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal, opts);
   const content = `${message.content ?? ""}${bloco}`;
   try {
     await message.update({ content });
@@ -1548,7 +1613,7 @@ async function t20RerrolAtaqueIntegrado(btn) {
   btn.disabled = true;
   btn.style.opacity = "0.6";
   const oldText = btn.innerHTML;
-  btn.innerHTML = "🎲 Rerrol...";
+  btn.innerHTML = "🎲 Vitória...";
 
   try {
     _t20RerrolPendente = {
@@ -1557,6 +1622,7 @@ async function t20RerrolAtaqueIntegrado(btn) {
       actorUuid: actor.uuid,
       itemId: item.id,
       itemName: item.name,
+      vitoriaCount: t20ExtrairVitoriaCountDoCard(btn),
       pmSnapshot: t20SnapshotPMActor(actor),
       createdAt: Date.now(),
     };
@@ -1585,12 +1651,12 @@ async function t20RerrolAtaqueIntegrado(btn) {
     // Segurança: se nenhum novo card compatível aparecer, limpa o estado pendente e restaura PM se necessário.
     setTimeout(async () => {
       if (_t20RerrolPendente?.sourceMessageId === msg.id) {
-        await t20RestaurarPMRerrol(_t20RerrolPendente);
+        await t20FinalizarPMVitoria(_t20RerrolPendente, "timeout");
         _t20RerrolPendente = null;
       }
     }, 120000);
   } catch (e) {
-    await t20RestaurarPMRerrol(_t20RerrolPendente);
+    await t20FinalizarPMVitoria(_t20RerrolPendente, "erro");
     _t20RerrolPendente = null;
     console.warn("Arsenal T20 | erro ao refazer ataque por rerrol", e);
     ui.notifications.error("Erro ao refazer o ataque pelo rerrol.");
