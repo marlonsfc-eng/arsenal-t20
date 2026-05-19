@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.3.7 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.4.0 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -6168,12 +6168,86 @@ function t20HudClicarLancarMagiaAbilityUseDialog(root) {
   return false;
 }
 
+
+function t20HudAprimCustoNumeroGenerico(obj) {
+  const parse = (v) => {
+    if (v === null || v === undefined) return null;
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string") {
+      const m = v.match(/([+-]?\d+)\s*PM\b/i);
+      if (m) return Number(m[1]);
+      if (/^[+-]?\d+$/.test(v.trim())) return Number(v.trim());
+      return null;
+    }
+    if (typeof v === "object") {
+      for (const k of ["pm", "custo", "cost", "custoPM", "costPM", "mana", "mp", "valor", "value"]) {
+        const r = parse(v?.[k]);
+        if (r !== null && Number.isFinite(r)) return r;
+      }
+    }
+    return null;
+  };
+  return parse(obj);
+}
+
+function t20HudActorAprimoramentosMagia(actor) {
+  if (!actor) return [];
+  const saida = [];
+  const vistos = new Set();
+  const itens = Array.from(actor.items ?? []);
+  for (const item of itens) {
+    const nome = String(item?.name ?? "").trim();
+    const desc = t20HudAprimTextoLimpo(item?.system?.description?.value ?? item?.system?.descricao?.value ?? item?.system?.description ?? item?.system?.descricao ?? item?.description?.value ?? item?.description ?? "");
+    const tipo = String(item?.type ?? "").toLowerCase();
+    const bruto = `${nome} ${desc}`;
+    const norm = t20HudAprimNorm(bruto);
+    const pareceMagia = /(magia|mágica|conjura|conjuração|conjuracao|arcana|divina|círculo|circulo|aprimoramento|aprimorar|metamagia)/i.test(bruto);
+    if (!pareceMagia) continue;
+    if (!/(power|poder|habilidade|ability|feat|feature|vantagem|classe|class)/i.test(tipo) && !/(poder|habilidade|arcano|divino|magia|conjura)/i.test(bruto)) continue;
+    const custo =
+      t20HudAprimCustoNumeroGenerico(item?.system?.pm) ??
+      t20HudAprimCustoNumeroGenerico(item?.system?.custo) ??
+      t20HudAprimCustoNumeroGenerico(item?.system?.cost) ??
+      t20HudAprimCustoNumeroGenerico(desc) ??
+      t20HudAprimCustoNumeroGenerico(nome);
+    if (!Number.isFinite(custo) || custo <= 0) continue;
+    const key = `${item.id}:${custo}:${norm.slice(0,120)}`;
+    if (vistos.has(key)) continue;
+    vistos.add(key);
+    saida.push({
+      id: item.id,
+      item,
+      nome,
+      custoNum: Math.max(0, custo),
+      custo: `${Math.max(0, custo)} PM`,
+      texto: desc ? desc.slice(0, 260) : nome,
+    });
+  }
+  return saida.sort((a,b) => a.nome.localeCompare(b.nome, "pt-BR"));
+}
+
+function t20HudGrimorioEhReacao(item) {
+  const vals = [
+    item?.system?.execucao,
+    item?.system?.execution,
+    item?.system?.ativacao?.execucao,
+    item?.system?.ativacao?.execution,
+    item?.system?.activation?.type,
+    item?.system?.activation?.execucao,
+    item?.system?.activation,
+    t20HudGrimorioExecucao(item),
+    t20HudGrimorioCampoDescricao(item, "Execu[cç][aã]o")
+  ].map(v => t20HudGrimorioValor(v)).filter(Boolean).join(" ");
+  return /rea[cç][aã]o|reaction/i.test(vals);
+}
+
 class ArsenalConjurarMagiaDialog extends Application {
   constructor(actor, item, options = {}) {
     super(options);
     this.actor = actor;
     this.item = item;
     this.selecionados = new Map();
+    this.actorSelecionados = new Map();
     this.busca = "";
     this.mostrarDescricao = true;
   }
@@ -6198,6 +6272,12 @@ class ArsenalConjurarMagiaDialog extends Application {
       .filter(a => !q || `${a.custo} ${a.texto}`.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(q));
   }
 
+  _actorAprimoramentos() {
+    const q = String(this.busca ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return t20HudActorAprimoramentosMagia(this.actor)
+      .filter(a => !q || `${a.nome} ${a.custo} ${a.texto}`.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(q));
+  }
+
   _qtdSelecionada(index) {
     return Number(this.selecionados.get(Number(index)) || 0);
   }
@@ -6217,7 +6297,8 @@ class ArsenalConjurarMagiaDialog extends Application {
     const base = t20HudCustoBaseMagia(this.item);
     const todos = t20HudAprimoramentosUsoItem(this.item);
     const extra = todos.reduce((sum, a) => sum + ((Number(a.custoNum) || 0) * this._qtdSelecionada(a.index)), 0);
-    return { base, extra, total: Math.max(0, base + extra) };
+    const actorExtra = t20HudActorAprimoramentosMagia(this.actor).reduce((sum, a) => sum + ((Number(a.custoNum) || 0) * (Number(this.actorSelecionados.get(a.id)) || 0)), 0);
+    return { base, extra, actorExtra, total: Math.max(0, base + extra + actorExtra) };
   }
 
   _descricaoCompleta() {
@@ -6265,6 +6346,7 @@ class ArsenalConjurarMagiaDialog extends Application {
   _html() {
     const th = t20HudTheme();
     const apr = this._aprimoramentos();
+    const actorApr = this._actorAprimoramentos();
     const custos = this._custoTotal();
     const circulo = t20HudExtrairCirculoMagia(this.item);
 
@@ -6305,10 +6387,12 @@ class ArsenalConjurarMagiaDialog extends Application {
       <div style="display:flex;gap:8px;margin-bottom:8px;font-size:0.84em;color:${th.text};flex-wrap:wrap">
         <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">Base: ${custos.base} PM</span>
         <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">Aprim.: ${custos.extra >= 0 ? "+" : ""}${custos.extra} PM</span>
+        <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">Personagem: +${custos.actorExtra ?? 0} PM</span>
         <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">${this._totalSelecionado()} selecionado(s)</span>
       </div>
 
       <div style="overflow:auto;min-height:0;flex:1;padding-right:4px">
+        <div style="font-size:0.78em;text-transform:uppercase;letter-spacing:0.04em;color:${th.muted};margin:2px 0 6px">Aprimoramentos da magia</div>
         ${apr.length ? apr.map(a => {
           const qtd = this._qtdSelecionada(a.index);
           const sel = qtd > 0;
@@ -6325,7 +6409,20 @@ class ArsenalConjurarMagiaDialog extends Application {
               </span>` : `<span style="flex:0 0 auto;color:${sel ? th.accent2 : th.muted};font-weight:bold">${sel ? "✓" : ""}</span>`}
             </div>
           </div>`;
-        }).join("") : `<div style="color:${th.muted};text-align:center;padding:18px;border:1px dashed ${th.border};border-radius:8px">Nenhum aprimoramento de uso detectado.</div>`}
+        }).join("") : `<div style="color:${th.muted};text-align:center;padding:12px;border:1px dashed ${th.border};border-radius:8px;margin-bottom:8px">Nenhum aprimoramento de uso detectado.</div>`}
+
+        <div style="font-size:0.78em;text-transform:uppercase;letter-spacing:0.04em;color:${th.muted};margin:11px 0 6px">Aprimoramentos do personagem</div>
+        ${actorApr.length ? actorApr.map(a => {
+          const sel = (Number(this.actorSelecionados.get(a.id)) || 0) > 0;
+          return `<div class="t20-cast-actor-aprim" data-id="${a.id}"
+            style="width:100%;box-sizing:border-box;text-align:left;margin-bottom:7px;padding:9px;border-radius:9px;border:1px solid ${sel ? th.accent2 : th.border};border-left:4px solid ${sel ? th.accent2 : th.accent};background:${sel ? `linear-gradient(180deg,${th.panel2},${th.panel})` : `linear-gradient(180deg,${th.panel},${th.bg2})`};color:${th.text};cursor:pointer">
+            <div style="display:flex;gap:8px;align-items:flex-start">
+              <span style="flex:0 0 auto;min-width:48px;text-align:center;padding:3px 7px;border-radius:999px;background:${th.panel2};border:1px solid ${th.accent};color:${th.accent2};font-weight:bold;font-size:0.86em">${a.custo}</span>
+              <span style="flex:1;line-height:1.35;font-size:0.96em"><b>${a.nome}</b><br><span style="color:${th.muted}">${a.texto}</span></span>
+              <span style="flex:0 0 auto;color:${sel ? th.accent2 : th.muted};font-weight:bold">${sel ? "✓" : ""}</span>
+            </div>
+          </div>`;
+        }).join("") : `<div style="color:${th.muted};text-align:center;padding:12px;border:1px dashed ${th.border};border-radius:8px">Nenhum aprimoramento específico do personagem detectado.</div>`}
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;border-top:1px solid rgba(255,255,255,0.08);padding-top:9px;margin-top:9px">
@@ -6377,6 +6474,7 @@ class ArsenalConjurarMagiaDialog extends Application {
       ev.preventDefault();
       this.busca = "";
       this.selecionados.clear();
+      this.actorSelecionados.clear();
       this.render(false);
     });
 
@@ -6404,6 +6502,15 @@ class ArsenalConjurarMagiaDialog extends Application {
       ev.stopPropagation();
       const idx = Number(ev.currentTarget.dataset.index);
       this._setQtdSelecionada(idx, this._qtdSelecionada(idx) + 1);
+      this.render(false);
+    });
+
+    html.find(".t20-cast-actor-aprim").on("click", ev => {
+      ev.preventDefault();
+      const id = ev.currentTarget.dataset.id;
+      const atual = Number(this.actorSelecionados.get(id)) || 0;
+      if (atual > 0) this.actorSelecionados.delete(id);
+      else this.actorSelecionados.set(id, 1);
       this.render(false);
     });
 
@@ -6436,6 +6543,12 @@ class ArsenalConjurarMagiaDialog extends Application {
           await t20HudDelay(250);
           const clicou = t20HudClicarLancarMagiaAbilityUseDialog(root);
           if (!clicou) ui.notifications.warn("Arsenal T20: não consegui acionar o botão Lançar Magia automaticamente.");
+          const extraPersonagem = this._custoTotal().actorExtra ?? 0;
+          if (clicou && extraPersonagem > 0) {
+            await t20HudDelay(300);
+            await t20AplicarPMDireto(this.actor, extraPersonagem);
+            ui.notifications.info(`${this.actor.name}: ${extraPersonagem} PM gastos em aprimoramentos do personagem.`);
+          }
           setTimeout(() => {
             try { app.close?.(); } catch {}
           }, 350);
@@ -6459,10 +6572,10 @@ class ArsenalConjurarMagiaDialog extends Application {
 
 let _arsenalGrimorio = null;
 
-function abrirArsenalGrimorio(actor, circulo) {
+function abrirArsenalGrimorio(actor, circulo = null, filtro = "circle") {
   if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
   if (_arsenalGrimorio?.rendered) _arsenalGrimorio.close();
-  _arsenalGrimorio = new ArsenalGrimorio(actor, circulo);
+  _arsenalGrimorio = new ArsenalGrimorio(actor, circulo, { filtro });
   _arsenalGrimorio.render(true);
 }
 
@@ -6819,10 +6932,11 @@ function t20HudGrimorioInfoMagia(item, circulo = null) {
 }
 
 class ArsenalGrimorio extends Application {
-  constructor(actor, circulo, options = {}) {
+  constructor(actor, circulo = null, options = {}) {
     super(options);
     this.actor = actor;
-    this.circulo = Number(circulo);
+    this.circulo = Number(circulo) || 1;
+    this.filtro = options?.filtro === "reaction" ? "reaction" : "circle";
     this.busca = "";
     this.expandidas = new Set();
     this.descricoesAbertas = new Set();
@@ -6833,8 +6947,8 @@ class ArsenalGrimorio extends Application {
     return foundry.utils.mergeObject(super.defaultOptions, {
       id: "arsenal-grimorio",
       title: "Grimório — Arsenal T20",
-      width: 620,
-      height: 650,
+      width: 760,
+      height: 700,
       resizable: true,
       minimizable: true,
     });
@@ -6857,8 +6971,25 @@ class ArsenalGrimorio extends Application {
   _magias() {
     const q = String(this.busca ?? "").trim().toLowerCase();
     return t20HudTodasMagiasActor(this.actor)
-      .filter(item => t20HudExtrairCirculoMagia(item) === this.circulo)
+      .filter(item => this.filtro === "reaction" ? t20HudGrimorioEhReacao(item) : t20HudExtrairCirculoMagia(item) === this.circulo)
       .filter(item => !q || String(item.name ?? "").toLowerCase().includes(q));
+  }
+
+  _navCirculos(th) {
+    const grupos = t20HudMagiasPorCirculo(this.actor);
+    const botoes = [1,2,3,4,5].map(c => {
+      const ativo = this.filtro === "circle" && this.circulo === c;
+      const qtd = grupos[c]?.length ?? 0;
+      return `<button class="t20-grimorio-nav" data-filter="circle" data-circulo="${c}" type="button"
+        style="padding:7px 10px;border-radius:999px;border:1px solid ${ativo ? th.accent : th.border};background:${ativo ? `${th.accent}2e` : th.panel};color:${ativo ? th.title : th.text};cursor:pointer;font-weight:${ativo ? "800" : "600"};font-size:0.86em">${c}º <span style="color:${ativo ? th.accent2 : th.muted}">${qtd}</span></button>`;
+    }).join("");
+    const reacaoAtivo = this.filtro === "reaction";
+    const reacaoQtd = t20HudTodasMagiasActor(this.actor).filter(t20HudGrimorioEhReacao).length;
+    return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px;align-items:center">
+      ${botoes}
+      <button class="t20-grimorio-nav" data-filter="reaction" type="button"
+        style="padding:7px 11px;border-radius:999px;border:1px solid ${reacaoAtivo ? th.accent : th.border};background:${reacaoAtivo ? `${th.accent}2e` : th.panel};color:${reacaoAtivo ? th.title : th.text};cursor:pointer;font-weight:${reacaoAtivo ? "800" : "600"};font-size:0.86em">⚡ Reação <span style="color:${reacaoAtivo ? th.accent2 : th.muted}">${reacaoQtd}</span></button>
+    </div>`;
   }
 
   _layoutButton(layout, label, ativo, th, opts = {}) {
@@ -7027,12 +7158,14 @@ class ArsenalGrimorio extends Application {
       <div style="display:flex;align-items:center;gap:8px;border-bottom:1px solid ${th.accent}44;padding-bottom:8px;margin-bottom:8px;flex-wrap:nowrap">
         ${this.actor?.img ? `<img src="${this.actor.img}" style="width:34px;height:34px;border-radius:6px;object-fit:cover;border:1px solid ${th.accent}73;flex:0 0 auto">` : ""}
         <div style="min-width:0;flex:1 1 auto">
-          <div style="font-size:0.82em;color:${th.muted};text-transform:uppercase;letter-spacing:0.05em">Grimório — ${this.circulo}º Círculo</div>
+          <div style="font-size:0.82em;color:${th.muted};text-transform:uppercase;letter-spacing:0.05em">Grimório — ${this.filtro === "reaction" ? "Magias de Reação" : `${this.circulo}º Círculo`}</div>
           <div style="color:${th.title};font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.actor?.name ?? "Conjurador"}</div>
         </div>
         ${this._layoutSelector(layout, th)}
         <div style="font-size:0.88em;color:${th.muted};white-space:nowrap;flex:0 0 auto;text-align:right">${countsLabel}</div>
       </div>
+
+      ${this._navCirculos(th)}
 
       <div style="position:sticky;top:0;z-index:2;background:linear-gradient(180deg,${th.bg1},${th.bg2});padding-bottom:8px;margin-bottom:2px">
         <input class="t20-grimorio-busca" type="text" placeholder="Buscar magia..." value="${this.busca ?? ""}"
@@ -7095,6 +7228,15 @@ class ArsenalGrimorio extends Application {
       const id = ev.currentTarget.dataset.itemId;
       if (this.descricoesAbertas.has(id)) this.descricoesAbertas.delete(id);
       else this.descricoesAbertas.add(id);
+      this.render(false);
+    });
+
+    html.find(".t20-grimorio-nav").on("click", ev => {
+      ev.preventDefault();
+      const filtro = ev.currentTarget.dataset.filter;
+      this.filtro = filtro === "reaction" ? "reaction" : "circle";
+      if (this.filtro === "circle") this.circulo = Number(ev.currentTarget.dataset.circulo) || 1;
+      this.busca = "";
       this.render(false);
     });
 
@@ -7187,6 +7329,16 @@ function t20HudFormatarRecursos(actor) {
 
 async function t20HudRolarPericia(actor, periciaId) {
   if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+
+  try {
+    for (const fn of ["rollSkill", "rollPericia", "rollPerícia", "testePericia", "testarPericia"]) {
+      if (typeof actor[fn] === "function") return await actor[fn](periciaId);
+    }
+    const pericia = actor.system?.pericias?.[periciaId] ?? actor.system?.skills?.[periciaId];
+    if (pericia && typeof pericia.roll === "function") return await pericia.roll();
+  } catch (e) {
+    console.warn("Arsenal T20 | rolagem original de perícia falhou, usando fallback", e);
+  }
 
   const raw = actor.system?.pericias?.[periciaId] ?? actor.system?.skills?.[periciaId];
   const p = t20HudParsePericia(raw);
@@ -7311,6 +7463,196 @@ async function t20HudRemoverTodasCondicoes(actor) {
   if (!efeitos.length) return ui.notifications.info(`${actor.name} não possui condições detectadas.`);
   await actor.deleteEmbeddedDocuments("ActiveEffect", efeitos.map(e => e.id));
   ui.notifications.info(`${efeitos.length} condição(ões) removida(s) de ${actor.name}.`);
+}
+
+
+function t20HudPrimeiroNumeroActor(actor, paths) {
+  for (const p of paths) {
+    const v = foundry.utils.getProperty(actor, p);
+    const n = Number(v?.value ?? v?.total ?? v?.mod ?? v);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function t20HudDefesaActor(actor) {
+  return t20HudPrimeiroNumeroActor(actor, [
+    "system.attributes.defesa.value", "system.attributes.defesa.total", "system.attributes.def.value", "system.attributes.def.total",
+    "system.defesa.value", "system.defesa.total", "system.def.value", "system.def.total", "system.attributes.ac.value", "system.attributes.ac.total"
+  ]);
+}
+
+function t20HudResistenciaActor(actor, id) {
+  const paths = [
+    `system.pericias.${id}.total`, `system.pericias.${id}.value`, `system.pericias.${id}.bonus`, `system.pericias.${id}.mod`,
+    `system.skills.${id}.total`, `system.skills.${id}.value`, `system.skills.${id}.bonus`, `system.skills.${id}.mod`,
+    `system.attributes.${id}.value`, `system.attributes.${id}.total`
+  ];
+  return t20HudPrimeiroNumeroActor(actor, paths);
+}
+
+function t20HudNDNivelActor(actor) {
+  const candidatos = [
+    ["ND", "system.attributes.nd"], ["ND", "system.nd"], ["ND", "system.nivelDesafio"], ["ND", "system.challenge"], ["ND", "system.details.cr"],
+    ["Nível", "system.attributes.nivel.value"], ["Nível", "system.attributes.nivel"], ["Nível", "system.nivel"], ["Nível", "system.level"], ["Nível", "system.details.level"]
+  ];
+  for (const [label, path] of candidatos) {
+    const v = foundry.utils.getProperty(actor, path);
+    const val = v?.value ?? v?.total ?? v;
+    if (val !== undefined && val !== null && String(val).trim() !== "") return `${label} ${val}`;
+  }
+  return "ND/Nível —";
+}
+
+function t20HudColetarDefesasEspeciais(actor) {
+  const texto = [];
+  const add = (kind, value) => {
+    const clean = t20HudAprimTextoLimpo(value);
+    if (!clean || clean.length > 180) return;
+    texto.push({ kind, value: clean });
+  };
+  const sys = actor?.system ?? {};
+  const candidatos = [
+    ["res", sys.resistencias], ["res", sys.resistances], ["res", sys.tracos?.resistencias], ["res", sys.traits?.resistances],
+    ["imu", sys.imunidades], ["imu", sys.immunities], ["imu", sys.tracos?.imunidades], ["imu", sys.traits?.immunities],
+    ["vul", sys.vulnerabilidades], ["vul", sys.vulnerabilities], ["vul", sys.tracos?.vulnerabilidades], ["vul", sys.traits?.vulnerabilities]
+  ];
+  const walkVal = (kind, obj, depth = 0) => {
+    if (obj === null || obj === undefined || depth > 3) return;
+    if (typeof obj === "string" || typeof obj === "number") return add(kind, obj);
+    if (Array.isArray(obj)) return obj.forEach(v => walkVal(kind, v, depth + 1));
+    if (typeof obj === "object") {
+      const label = obj.label ?? obj.name ?? obj.nome ?? obj.value ?? obj.valor ?? obj.txt ?? obj.texto;
+      if (label) add(kind, label);
+      else for (const [k,v] of Object.entries(obj)) {
+        if (v === true) add(kind, k);
+        else walkVal(kind, v, depth + 1);
+      }
+    }
+  };
+  for (const [kind, obj] of candidatos) walkVal(kind, obj);
+
+  const desc = t20HudAprimTextoLimpo(actor?.system?.description?.value ?? actor?.system?.descricao?.value ?? actor?.system?.description ?? actor?.system?.descricao ?? "");
+  const scan = (kind, labels) => {
+    for (const label of labels) {
+      const re = new RegExp(`${label}\\s*:?\\s*([^.;\\n]+)`, "i");
+      const m = desc.match(re);
+      if (m?.[1]) add(kind, m[1]);
+    }
+  };
+  scan("res", ["Resist[eê]ncias?", "RD", "Resistances?"]);
+  scan("imu", ["Imunidades?", "Immunities?"]);
+  scan("vul", ["Vulnerabilidades?", "Vulnerabilities?"]);
+
+  const vistos = new Set();
+  return texto.filter(x => {
+    const k = `${x.kind}:${t20HudAprimNorm(x.value)}`;
+    if (vistos.has(k)) return false;
+    vistos.add(k);
+    return true;
+  }).slice(0, 12);
+}
+
+function t20HudTodasPericiasActor(actor) {
+  if (!actor) return [];
+  const pericias = actor.system?.pericias ?? actor.system?.skills ?? {};
+  const ids = new Set([...Object.keys(T20_HUD_PERICIAS_LABELS), ...Object.keys(pericias)]);
+  return Array.from(ids).map(id => {
+    const p = t20HudParsePericia(pericias[id]);
+    const label = p.label ?? p.name ?? p.nome ?? T20_HUD_PERICIAS_LABELS[id] ?? id;
+    const bonus = t20HudBonusPericia(p);
+    const treinada = t20HudPericiaTreinada(p);
+    return { id, label, bonus, treinada };
+  }).sort((a,b) => a.label.localeCompare(b.label, "pt-BR"));
+}
+
+let _arsenalPericias = null;
+function abrirArsenalPericias(actor) {
+  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+  if (_arsenalPericias?.rendered) _arsenalPericias.close();
+  _arsenalPericias = new ArsenalPericias(actor);
+  _arsenalPericias.render(true);
+}
+
+class ArsenalPericias extends Application {
+  constructor(actor, options = {}) {
+    super(options);
+    this.actor = actor;
+    this.busca = "";
+  }
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: "arsenal-pericias",
+      title: "Perícias — Arsenal T20",
+      width: 640,
+      height: 680,
+      resizable: true,
+      minimizable: true,
+    });
+  }
+  async getData() { return {}; }
+  get template() { return null; }
+  async _renderInner() {
+    const div = document.createElement("div");
+    div.innerHTML = this._html();
+    return $(div);
+  }
+  _pericias() {
+    const q = String(this.busca ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return t20HudTodasPericiasActor(this.actor).filter(p => !q || `${p.label} ${p.id}`.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(q));
+  }
+  _html() {
+    const th = t20HudTheme();
+    const pericias = this._pericias();
+    const treinadas = pericias.filter(p => p.treinada).length;
+    return `<div style="height:100%;box-sizing:border-box;display:flex;flex-direction:column;background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};border-radius:8px;color:${th.text};font-family:serif;padding:10px">
+      <div style="display:flex;align-items:center;gap:9px;border-bottom:1px solid ${th.accent}44;padding-bottom:8px;margin-bottom:8px">
+        ${this.actor?.img ? `<img src="${this.actor.img}" style="width:38px;height:38px;border-radius:8px;object-fit:cover;border:1px solid ${th.accent}66">` : ""}
+        <div style="min-width:0;flex:1">
+          <div style="font-size:0.82em;color:${th.muted};text-transform:uppercase;letter-spacing:0.05em">Perícias</div>
+          <div style="color:${th.title};font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.actor?.name ?? "Personagem"}</div>
+        </div>
+        <div style="font-size:0.86em;color:${th.muted};white-space:nowrap">${treinadas} treinada(s)</div>
+      </div>
+      <input class="t20-pericias-busca" type="text" placeholder="Buscar perícia..." value="${this.busca ?? ""}"
+        style="width:100%;box-sizing:border-box;margin-bottom:9px;padding:7px 9px;border-radius:6px;background:${th.panel};border:1px solid ${th.border};color:${th.text}">
+      <div style="overflow:auto;min-height:0;flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:8px;align-content:start;padding-right:3px">
+        ${pericias.map(p => {
+          const corBorda = p.treinada ? th.accent : th.border;
+          const bg = p.treinada ? `linear-gradient(180deg,${th.panel2},${th.panel})` : th.panel;
+          return `<button class="t20-pericias-roll" data-pericia-id="${p.id}" title="Rolar ${p.label}"
+            style="display:flex;align-items:center;gap:8px;min-height:50px;text-align:left;padding:8px;border-radius:10px;background:${bg};border:1px solid ${corBorda};border-left:4px solid ${corBorda};color:${th.text};cursor:pointer;box-shadow:${p.treinada ? `0 0 0 1px ${th.accent}22 inset` : "none"}">
+            <span style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:${th.bg2};color:${p.treinada ? th.accent2 : th.muted}">${p.treinada ? "◆" : "◇"}</span>
+            <span style="flex:1;min-width:0">
+              <span style="display:block;font-weight:${p.treinada ? "800" : "600"};color:${p.treinada ? th.title : th.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.label}</span>
+              <span style="font-size:0.82em;color:${th.muted}">${p.treinada ? "Treinada" : "Não treinada"}</span>
+            </span>
+            <b style="color:${p.treinada ? th.accent2 : th.text};font-size:1.02em">${p.bonus >= 0 ? "+" : ""}${p.bonus}</b>
+          </button>`;
+        }).join("")}
+      </div>
+      <div style="font-size:0.76em;color:${th.muted};margin-top:8px;line-height:1.3">Ao clicar, o Arsenal tenta abrir a rolagem original do sistema. Se ela não existir, usa uma rolagem simples de fallback.</div>
+    </div>`;
+  }
+  activateListeners(html) {
+    super.activateListeners(html);
+    html.find(".t20-pericias-busca").on("keydown keypress keyup", ev => ev.stopPropagation()).on("input", ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      const valor = ev.currentTarget.value ?? "";
+      const pos = ev.currentTarget.selectionStart ?? valor.length;
+      this.busca = valor;
+      this.render(false);
+      setTimeout(() => {
+        const input = this.element?.[0]?.querySelector?.(".t20-pericias-busca");
+        input?.focus?.();
+        input?.setSelectionRange?.(Math.min(pos, this.busca.length), Math.min(pos, this.busca.length));
+      }, 0);
+    });
+    html.find(".t20-pericias-roll").on("click", async ev => {
+      ev.preventDefault();
+      await t20HudRolarPericia(this.actor, ev.currentTarget.dataset.periciaId);
+    });
+  }
 }
 
 let _arsenalHUD = null;
@@ -7451,6 +7793,12 @@ class ArsenalHUD extends Application {
     const collapsed = t20HudIsCollapsed();
     const personagemJogador = t20HudActorEhPersonagemJogador(actor);
     const th = t20HudTheme();
+    const defesa = actor ? t20HudDefesaActor(actor) : null;
+    const fort = actor ? t20HudResistenciaActor(actor, "fort") : null;
+    const refl = actor ? t20HudResistenciaActor(actor, "refl") : null;
+    const vont = actor ? (t20HudResistenciaActor(actor, "vond") ?? t20HudResistenciaActor(actor, "vont")) : null;
+    const ndNivel = actor ? t20HudNDNivelActor(actor) : "ND/Nível —";
+    const especiais = actor ? t20HudColetarDefesasEspeciais(actor) : [];
 
     return `<div style="
       height:100%;box-sizing:border-box;display:flex;flex-direction:column;position:relative;
@@ -7477,6 +7825,17 @@ class ArsenalHUD extends Application {
             <button class="t20-hud-action" title="Cura manual" data-action="cura" style="${this._iconBtn("#14351f","#4ade80")}">💚</button>
           </div>` : ""}
       </div>
+
+      ${collapsed || !actor ? "" : `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:7px;flex-shrink:0">
+        <div title="Defesa" style="padding:5px 6px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};text-align:center"><div style="font-size:0.68em;color:${th.muted};text-transform:uppercase">DEF</div><b style="color:${th.title}">${defesa ?? "—"}</b></div>
+        <div title="Fortitude" style="padding:5px 6px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};text-align:center"><div style="font-size:0.68em;color:${th.muted};text-transform:uppercase">Fort</div><b>${fort ?? "—"}</b></div>
+        <div title="Reflexos" style="padding:5px 6px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};text-align:center"><div style="font-size:0.68em;color:${th.muted};text-transform:uppercase">Refl</div><b>${refl ?? "—"}</b></div>
+        <div title="Vontade" style="padding:5px 6px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};text-align:center"><div style="font-size:0.68em;color:${th.muted};text-transform:uppercase">Vont</div><b>${vont ?? "—"}</b></div>
+        <div style="grid-column:1 / -1;display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:5px 6px;border-radius:7px;background:${th.panel2};border:1px solid ${th.border}">
+          <span style="font-size:0.78em;color:${th.accent2};font-weight:bold">${ndNivel}</span>
+          ${especiais.length ? especiais.map(e => `<span title="${e.kind === "imu" ? "Imunidade" : e.kind === "vul" ? "Vulnerabilidade" : "Resistência"}" style="padding:2px 6px;border-radius:999px;border:1px solid ${e.kind === "imu" ? "#facc15" : e.kind === "vul" ? "#f87171" : "#60a5fa"};color:${e.kind === "imu" ? "#fde68a" : e.kind === "vul" ? "#fecaca" : "#bfdbfe"};background:rgba(0,0,0,0.18);font-size:0.76em;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.kind === "imu" ? "Imu" : e.kind === "vul" ? "Vul" : "Res"}: ${e.value}</span>`).join("") : `<span style="font-size:0.76em;color:${th.muted}">Sem resistências/imunidades detectadas.</span>`}
+        </div>
+      </div>`}
 
       ${collapsed ? "" : (!actor ? `<div style="color:${th.muted};padding:6px">Selecione um token para usar o HUD.</div>` : `
         <div style="${bottom ? "display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:7px;overflow:auto;min-height:0;flex:1;padding-right:2px" : "overflow:auto;min-height:0;flex:1;padding-right:2px"}">
@@ -7524,7 +7883,12 @@ class ArsenalHUD extends Application {
         if (cat === "magias" && t20HudSpellMode() === "grimoire") {
           return this._secaoGrimorio(actor, bottom, layout);
         }
-        return this._secao(defs[cat].titulo, defs[cat].itens, bottom, defs[cat].tipo, cat, layout);
+        if (cat === "pericias") {
+          return this._secaoPericias(actor, bottom, layout);
+        }
+        const def = defs[cat];
+        if (!def) return "";
+        return this._secao(def.titulo, def.itens, bottom, def.tipo, cat, layout);
       })
       .join("");
   }
@@ -7545,29 +7909,42 @@ class ArsenalHUD extends Application {
 
   _secaoGrimorio(actor, bottom, layout = "compact") {
     const grupos = t20HudMagiasPorCirculo(actor);
-    const cards = layout === "cards";
     const circulos = [1, 2, 3, 4, 5];
-    const total = circulos.reduce((s, c) => s + (grupos[c]?.length ?? 0), 0);
+    const total = circulos.reduce((sum, c) => sum + (grupos[c]?.length ?? 0), 0);
+    const reacoes = t20HudTodasMagiasActor(actor).filter(t20HudGrimorioEhReacao).length;
     const recolhida = t20HudSecaoRecolhida("magias");
     const th = t20HudTheme();
 
     return `<div style="${bottom ? "min-width:0" : "margin-bottom:9px"}">
       ${this._secaoHeader("🪄 Grimório", "magias", total)}
-      ${recolhida ? "" : `<div style="display:grid;grid-template-columns:${cards ? "repeat(auto-fit,minmax(118px,1fr))" : "repeat(auto-fit,minmax(92px,1fr))"};gap:6px">
-        ${circulos.map(c => {
-          const qtd = grupos[c]?.length ?? 0;
-          const disabled = qtd <= 0;
-          return `<button class="t20-hud-grimorio-circulo" data-circulo="${c}" ${disabled ? "disabled" : ""}
-            style="min-height:${cards ? "54px" : "42px"};padding:7px;border-radius:8px;
-            background:${disabled ? th.panel : `linear-gradient(180deg,${th.panel2},${th.panel})`};
-            border:1px solid ${disabled ? th.border : th.accent};color:${disabled ? th.muted : th.text};
-            cursor:${disabled ? "not-allowed" : "pointer"};font-weight:bold;text-align:center;font-size:${cards ? "0.92em" : "0.86em"};
-            box-shadow:${disabled ? "none" : "inset 0 1px 0 rgba(255,255,255,0.05)"}">
-            <div>${c}º Círculo</div>
-            <div style="font-size:0.78em;color:${disabled ? th.muted : th.accent2}">${qtd} magia(s)</div>
-          </button>`;
-        }).join("")}
-      </div>`}
+      ${recolhida ? "" : `<button class="t20-hud-grimorio-open" type="button"
+        style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:${layout === "cards" ? "72px" : "56px"};padding:10px;border-radius:12px;
+        background:linear-gradient(135deg,${th.panel2},${th.panel});border:1px solid ${th.accent};color:${th.title};cursor:pointer;font-weight:900;font-size:1.06em;letter-spacing:0.02em;box-shadow:0 5px 14px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.06)">
+        <span style="font-size:1.35em">📖</span>
+        <span style="display:flex;flex-direction:column;line-height:1.15">
+          <span>Grimório</span>
+          <span style="font-size:0.74em;color:${th.muted};font-weight:600">${total} magia(s) · ${reacoes} reação(ões)</span>
+        </span>
+      </button>`}
+    </div>`;
+  }
+
+  _secaoPericias(actor, bottom, layout = "compact") {
+    const pericias = t20HudTodasPericiasActor(actor);
+    const treinadas = pericias.filter(p => p.treinada).length;
+    const recolhida = t20HudSecaoRecolhida("pericias");
+    const th = t20HudTheme();
+    return `<div style="${bottom ? "min-width:0" : "margin-bottom:9px"}">
+      ${this._secaoHeader("🎲 Perícias", "pericias", pericias.length)}
+      ${recolhida ? "" : `<button class="t20-hud-pericias-open" type="button"
+        style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:${layout === "cards" ? "68px" : "54px"};padding:10px;border-radius:12px;
+        background:linear-gradient(135deg,${th.panel2},${th.panel});border:1px solid ${th.accent};color:${th.title};cursor:pointer;font-weight:900;font-size:1.02em;box-shadow:0 5px 14px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.06)">
+        <span style="font-size:1.28em">🎲</span>
+        <span style="display:flex;flex-direction:column;line-height:1.15">
+          <span>Perícias</span>
+          <span style="font-size:0.74em;color:${th.muted};font-weight:600">${treinadas} treinada(s)</span>
+        </span>
+      </button>`}
     </div>`;
   }
 
@@ -7790,6 +8167,19 @@ class ArsenalHUD extends Application {
       const actor = t20HudActorSelecionado();
       const circulo = Number(ev.currentTarget.dataset.circulo);
       abrirArsenalGrimorio(actor, circulo);
+    });
+
+    html.find(".t20-hud-grimorio-open").on("click", ev => {
+      ev.preventDefault();
+      const actor = t20HudActorSelecionado();
+      const grupos = t20HudMagiasPorCirculo(actor);
+      const primeiro = [1,2,3,4,5].find(c => (grupos[c]?.length ?? 0) > 0) ?? 1;
+      abrirArsenalGrimorio(actor, primeiro);
+    });
+
+    html.find(".t20-hud-pericias-open").on("click", ev => {
+      ev.preventDefault();
+      abrirArsenalPericias(t20HudActorSelecionado());
     });
 
     html.find(".t20-hud-action").on("click", async ev => {
