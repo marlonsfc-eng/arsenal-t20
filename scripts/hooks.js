@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.3.6 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.3.7 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -766,9 +766,6 @@ Hooks.once("ready", () => {
 let _t20RerrolPendente = null;
 let _t20RerrolInfoParaProximoCard = null;
 let _t20VitoriaOverridePM = null;
-    _t20VitoriaPreselect = null;
-        _t20VitoriaPreselect = null;
-let _t20VitoriaPreselect = null;
 
 function t20ExtrairNomeItemMensagem(message) {
   const itemData = message?.flags?.tormenta20?.itemData ?? {};
@@ -1695,144 +1692,6 @@ async function t20ResetarVitoriaIntegrado(btn) {
 }
 
 
-function t20TextoLimpoArsenal(htmlOuTexto) {
-  try {
-    const div = document.createElement("div");
-    div.innerHTML = String(htmlOuTexto ?? "");
-    return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
-  } catch {
-    return String(htmlOuTexto ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-  }
-}
-
-function t20ExtrairOpcoesUsoDaMensagem(message) {
-  const texto = t20TextoLimpoArsenal(message?.content ?? "");
-  const encontrados = [];
-  const ignorar = /^(dano|ataque|corte|impacto|perfuracao|perfuração|fogo|frio|eletricidade|acido|ácido|luz|trevas)$/i;
-
-  const regexes = [
-    /[•◦]\s*([+-]?\d+\s*PM|-)\s*:\s*([^•◦\n\r]+?)(?=(?:\s+[•◦]\s*[+-]?\d+\s*PM\s*:)|(?:\s+Ataque\b)|(?:\s+Dano\b)|$)/gi,
-    /(?:^|\s)([+-]?\d+\s*PM|-)\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^•◦\n\r]{2,80}?)(?=(?:\s+[+-]?\d+\s*PM\s+)|(?:\s+Ataque\b)|(?:\s+Dano\b)|$)/gi
-  ];
-
-  for (const rx of regexes) {
-    let m;
-    while ((m = rx.exec(texto))) {
-      let nome = String(m[2] ?? "").replace(/\s+/g, " ").trim();
-      nome = nome.replace(/\bAtaque\b.*$/i, "").replace(/\bDano\b.*$/i, "").trim();
-      nome = nome.replace(/[.,;:]+$/g, "").trim();
-      if (!nome || nome.length < 3 || ignorar.test(t20NormalizarTextoArsenal(nome))) continue;
-      if (!encontrados.some(e => t20NormalizarTextoArsenal(e.nome) === t20NormalizarTextoArsenal(nome))) {
-        encontrados.push({ nome, custo: String(m[1] ?? "").trim(), quantidade: 1 });
-      }
-    }
-  }
-
-  return encontrados;
-}
-
-function t20LinhaDialogContemNome(row, nome) {
-  const txt = t20NormalizarTextoArsenal(row?.textContent ?? "");
-  const alvo = t20NormalizarTextoArsenal(nome);
-  if (!txt || !alvo) return false;
-  return txt.includes(alvo);
-}
-
-function t20SetCheckboxArsenal(input, checked = true) {
-  if (!input) return false;
-  if (input.checked === checked) return true;
-  input.click?.();
-  input.checked = checked;
-  input.dispatchEvent(new Event("change", { bubbles: true }));
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-  return true;
-}
-
-function t20IncrementarLinhaDialog(row, quantidade = 1) {
-  let fez = false;
-  const n = Math.max(1, Number(quantidade) || 1);
-
-  const inputNum = row.querySelector('input[type="number"], input[data-dtype="Number"]');
-  if (inputNum) {
-    const atual = Number(inputNum.value || 0);
-    inputNum.value = String(Math.max(atual, n));
-    inputNum.dispatchEvent(new Event("input", { bubbles: true }));
-    inputNum.dispatchEvent(new Event("change", { bubbles: true }));
-    fez = true;
-  }
-
-  if (!fez) {
-    const botoes = Array.from(row.querySelectorAll("button, a"));
-    const plus = botoes.find(b => /^\s*\+\s*$/.test(b.textContent ?? "") || /plus|increment|aument/i.test(String(b.className ?? "") + " " + String(b.title ?? "")));
-    if (plus) {
-      for (let i = 0; i < n; i++) plus.click?.();
-      fez = true;
-    }
-  }
-
-  return fez;
-}
-
-function t20AplicarPreselecaoVitoriaNoDialog(app, html) {
-  const pending = _t20VitoriaPreselect;
-  if (!pending || Date.now() - Number(pending.createdAt ?? 0) > 120000) {
-    _t20VitoriaPreselect = null;
-    return;
-  }
-
-  const actor = app?.actor ?? app?.item?.actor ?? app?.object?.actor;
-  if (pending.actorId && actor?.id && pending.actorId !== actor.id) return;
-
-  const item = app?.item ?? app?.object;
-  if (pending.itemId && item?.id && pending.itemId !== item.id) return;
-
-  const root = html instanceof jQuery ? html[0] : html;
-  if (!root) return;
-
-  const opcoes = Array.from(pending.opcoes ?? []);
-  if (!opcoes.length) return;
-
-  setTimeout(() => {
-    try {
-      const linhas = Array.from(root.querySelectorAll("tr, .form-group, li, label, div"))
-        .filter(el => el.querySelector?.("input, button, a"));
-
-      const aplicadas = [];
-
-      for (const op of opcoes) {
-        const linha = linhas.find(row => t20LinhaDialogContemNome(row, op.nome));
-        if (!linha) continue;
-
-        let ok = false;
-        const checkbox = linha.querySelector('input[type="checkbox"]');
-        if (checkbox) ok = t20SetCheckboxArsenal(checkbox, true) || ok;
-
-        ok = t20IncrementarLinhaDialog(linha, op.quantidade ?? 1) || ok;
-
-        if (ok) aplicadas.push(op.nome);
-      }
-
-      if (aplicadas.length) {
-        const aviso = document.createElement("div");
-        aviso.style.cssText = "margin:6px 0 8px;padding:6px 8px;border-radius:6px;background:#fff7ed;border:1px solid #d97706;color:#3b211d;font-size:0.88em;line-height:1.3";
-        aviso.innerHTML = `✨ Vitória: opções do ataque anterior pré-marcadas: <b>${aplicadas.join(", ")}</b>. Revise e confirme normalmente.`;
-        const form = root.querySelector("form") ?? root;
-        form.prepend?.(aviso);
-      }
-    } catch (e) {
-      console.warn("Arsenal T20 | erro ao pré-marcar opções de Vitória", e);
-    } finally {
-      _t20VitoriaPreselect = null;
-    }
-  }, 220);
-}
-
-// Hook global: quando Vitória abrir a AbilityUseDialog, pré-marca as opções usadas no ataque anterior.
-Hooks.on("renderAbilityUseDialog", (app, html) => {
-  if (_t20VitoriaPreselect) t20AplicarPreselecaoVitoriaNoDialog(app, html);
-});
-
-
 async function t20RerrolAtaqueIntegrado(btn) {
   const msg = obterChatMessageDoBotao(btn);
   if (!msg) return ui.notifications.warn("Mensagem original não encontrada para rerrolar.");
@@ -1856,16 +1715,6 @@ async function t20RerrolAtaqueIntegrado(btn) {
   btn.innerHTML = "🎲 Vitória...";
 
   try {
-    const opcoesUsoAnterior = t20ExtrairOpcoesUsoDaMensagem(msg);
-
-    _t20VitoriaPreselect = {
-      actorId: actor.id,
-      itemId: item.id,
-      itemName: item.name,
-      opcoes: opcoesUsoAnterior,
-      createdAt: Date.now(),
-    };
-
     _t20RerrolPendente = {
       sourceMessageId: msg.id,
       actorId: actor.id,
@@ -1873,7 +1722,6 @@ async function t20RerrolAtaqueIntegrado(btn) {
       itemId: item.id,
       itemName: item.name,
       vitoriaCount: t20ExtrairVitoriaCountDoCard(btn),
-      opcoesUsoAnterior,
       pmSnapshot: t20SnapshotPMActor(actor),
       createdAt: Date.now(),
     };
