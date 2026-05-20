@@ -1,4 +1,4 @@
-// hooks.js - Tormenta20 Attack Automation v1.6
+// hooks.js - Tormenta20 Attack Automation v3.4.1
 
 Hooks.once("ready", () => {
   // Registrar configurações do módulo
@@ -766,6 +766,7 @@ Hooks.once("ready", () => {
 let _t20RerrolPendente = null;
 let _t20RerrolInfoParaProximoCard = null;
 let _t20VitoriaOverridePM = null;
+let _t20ArsenalPendingPMAdjustments = [];
 
 function t20ExtrairNomeItemMensagem(message) {
   const itemData = message?.flags?.tormenta20?.itemData ?? {};
@@ -5322,6 +5323,12 @@ function t20HudItemConsumivel(item) {
   return temInventario && categoriaInventario;
 }
 
+function t20HudItemSubtitulo(item) {
+  if (!item) return "";
+  const partes = [item.system?.tipo, item.system?.categoria, item.system?.subtipo, item.system?.activation?.type, item.system?.ativacao?.execucao].filter(Boolean).map(v => String(v));
+  return partes.find(Boolean) ?? String(item.type ?? "");
+}
+
 function t20HudQuantidadeItem(item) {
   const candidatos = [
     item?.system?.quantidade,
@@ -6174,9 +6181,21 @@ function t20HudAprimCustoNumeroGenerico(obj) {
     if (v === null || v === undefined) return null;
     if (typeof v === "number" && Number.isFinite(v)) return v;
     if (typeof v === "string") {
-      const m = v.match(/([+-]?\d+)\s*PM\b/i);
-      if (m) return Number(m[1]);
-      if (/^[+-]?\d+$/.test(v.trim())) return Number(v.trim());
+      const texto = String(v).replace(/[−–—]/g, "-");
+      const direto = texto.match(/([+-]?\s*\d+)\s*PM\b/i);
+      if (direto) {
+        const n = Number(direto[1].replace(/\s+/g, ""));
+        if (Number.isFinite(n)) {
+          const antes = texto.slice(Math.max(0, direto.index - 80), direto.index).toLowerCase();
+          if (n > 0 && /reduz|reduzir|diminui|diminuir|descont|menor|custa\s+menos|sem\s+custo|gratuit/i.test(antes)) return -n;
+          return n;
+        }
+      }
+      const reducao = texto.match(/(?:reduz|reduzir|diminui|diminuir|desconta?|custa\s+menos)[^\n.;:]{0,80}?(\d+)\s*PM\b/i);
+      if (reducao) return -Math.abs(Number(reducao[1]) || 0);
+      const bonusAprim = texto.match(/(?:recebe|ganha|fornece|concede)[^\n.;:]{0,80}?([+-]?\s*\d+)\s*PM[^\n.;:]{0,80}?(?:aprimoramento|aprimorar|magia)/i);
+      if (bonusAprim) return Number(bonusAprim[1].replace(/\s+/g, ""));
+      if (/^[+-]?\d+$/.test(texto.trim())) return Number(texto.trim());
       return null;
     }
     if (typeof v === "object") {
@@ -6189,6 +6208,7 @@ function t20HudAprimCustoNumeroGenerico(obj) {
   };
   return parse(obj);
 }
+
 
 function t20HudActorAprimoramentosMagia(actor) {
   if (!actor) return [];
@@ -6210,16 +6230,17 @@ function t20HudActorAprimoramentosMagia(actor) {
       t20HudAprimCustoNumeroGenerico(item?.system?.cost) ??
       t20HudAprimCustoNumeroGenerico(desc) ??
       t20HudAprimCustoNumeroGenerico(nome);
-    if (!Number.isFinite(custo) || custo <= 0) continue;
+    if (!Number.isFinite(custo) || custo === 0) continue;
     const key = `${item.id}:${custo}:${norm.slice(0,120)}`;
     if (vistos.has(key)) continue;
     vistos.add(key);
+    const custoLabel = `${custo > 0 ? "+" : "−"}${Math.abs(custo)} PM`;
     saida.push({
       id: item.id,
       item,
       nome,
-      custoNum: Math.max(0, custo),
-      custo: `${Math.max(0, custo)} PM`,
+      custoNum: Number(custo),
+      custo: custoLabel,
       texto: desc ? desc.slice(0, 260) : nome,
     });
   }
@@ -6387,7 +6408,7 @@ class ArsenalConjurarMagiaDialog extends Application {
       <div style="display:flex;gap:8px;margin-bottom:8px;font-size:0.84em;color:${th.text};flex-wrap:wrap">
         <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">Base: ${custos.base} PM</span>
         <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">Aprim.: ${custos.extra >= 0 ? "+" : ""}${custos.extra} PM</span>
-        <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">Personagem: +${custos.actorExtra ?? 0} PM</span>
+        <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">Personagem: ${Number(custos.actorExtra ?? 0) >= 0 ? "+" : "−"}${Math.abs(Number(custos.actorExtra ?? 0) || 0)} PM</span>
         <span style="padding:4px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border}">${this._totalSelecionado()} selecionado(s)</span>
       </div>
 
@@ -6543,11 +6564,13 @@ class ArsenalConjurarMagiaDialog extends Application {
           await t20HudDelay(250);
           const clicou = t20HudClicarLancarMagiaAbilityUseDialog(root);
           if (!clicou) ui.notifications.warn("Arsenal T20: não consegui acionar o botão Lançar Magia automaticamente.");
-          const extraPersonagem = this._custoTotal().actorExtra ?? 0;
-          if (clicou && extraPersonagem > 0) {
-            await t20HudDelay(300);
-            await t20AplicarPMDireto(this.actor, extraPersonagem);
-            ui.notifications.info(`${this.actor.name}: ${extraPersonagem} PM gastos em aprimoramentos do personagem.`);
+          const extraPersonagem = Number(this._custoTotal().actorExtra ?? 0) || 0;
+          if (clicou && extraPersonagem !== 0) {
+            const selecionadosActor = t20HudActorAprimoramentosMagia(this.actor)
+              .filter(a => (Number(this.actorSelecionados.get(a.id)) || 0) > 0)
+              .map(a => `${a.nome}: ${a.custo}`);
+            t20ArsenalRegistrarAjustePMPendente({ actor: this.actor, item: this.item, delta: extraPersonagem, detalhes: selecionadosActor, origem: "grimorio" });
+            ui.notifications.info(`${this.actor.name}: ajuste de ${extraPersonagem >= 0 ? "+" : "−"}${Math.abs(extraPersonagem)} PM será incluído no card de PM.`);
           }
           setTimeout(() => {
             try { app.close?.(); } catch {}
@@ -6977,18 +7000,21 @@ class ArsenalGrimorio extends Application {
 
   _navCirculos(th) {
     const grupos = t20HudMagiasPorCirculo(this.actor);
+    const btnStyle = (ativo) => `box-sizing:border-box;width:auto !important;min-width:72px;flex:1 1 72px;max-width:120px;padding:8px 10px;border-radius:12px;border:1px solid ${ativo ? th.accent : th.border};background:${ativo ? `linear-gradient(180deg,${th.panel2},${th.panel})` : th.panel};color:${ativo ? th.title : th.text};cursor:pointer;font-weight:${ativo ? "900" : "700"};font-size:0.9em;text-align:center;box-shadow:${ativo ? `0 0 0 1px ${th.accent}44 inset,0 4px 10px rgba(0,0,0,.16)` : "inset 0 1px 0 rgba(255,255,255,.04)"}`;
     const botoes = [1,2,3,4,5].map(c => {
       const ativo = this.filtro === "circle" && this.circulo === c;
       const qtd = grupos[c]?.length ?? 0;
-      return `<button class="t20-grimorio-nav" data-filter="circle" data-circulo="${c}" type="button"
-        style="padding:7px 10px;border-radius:999px;border:1px solid ${ativo ? th.accent : th.border};background:${ativo ? `${th.accent}2e` : th.panel};color:${ativo ? th.title : th.text};cursor:pointer;font-weight:${ativo ? "800" : "600"};font-size:0.86em">${c}º <span style="color:${ativo ? th.accent2 : th.muted}">${qtd}</span></button>`;
+      return `<button class="t20-grimorio-nav" data-filter="circle" data-circulo="${c}" type="button" style="${btnStyle(ativo)}">
+        <span style="display:block;line-height:1.05">${c}º</span><span style="display:block;font-size:.78em;color:${ativo ? th.accent2 : th.muted};line-height:1.05">${qtd}</span>
+      </button>`;
     }).join("");
     const reacaoAtivo = this.filtro === "reaction";
     const reacaoQtd = t20HudTodasMagiasActor(this.actor).filter(t20HudGrimorioEhReacao).length;
-    return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px;align-items:center">
+    return `<div class="t20-grimorio-nav-row" style="display:flex;gap:7px;flex-wrap:nowrap;margin:0 0 9px;align-items:stretch;overflow-x:auto;padding:2px 1px 4px;scrollbar-width:thin">
       ${botoes}
-      <button class="t20-grimorio-nav" data-filter="reaction" type="button"
-        style="padding:7px 11px;border-radius:999px;border:1px solid ${reacaoAtivo ? th.accent : th.border};background:${reacaoAtivo ? `${th.accent}2e` : th.panel};color:${reacaoAtivo ? th.title : th.text};cursor:pointer;font-weight:${reacaoAtivo ? "800" : "600"};font-size:0.86em">⚡ Reação <span style="color:${reacaoAtivo ? th.accent2 : th.muted}">${reacaoQtd}</span></button>
+      <button class="t20-grimorio-nav" data-filter="reaction" type="button" style="${btnStyle(reacaoAtivo)};min-width:104px;max-width:150px">
+        <span style="display:block;line-height:1.05">⚡ Reação</span><span style="display:block;font-size:.78em;color:${reacaoAtivo ? th.accent2 : th.muted};line-height:1.05">${reacaoQtd}</span>
+      </button>
     </div>`;
   }
 
@@ -7655,6 +7681,27 @@ class ArsenalPericias extends Application {
   }
 }
 
+class ArsenalCategoriaPopup extends Application {
+  constructor(actor, categoria, titulo, itens = [], tipo = "item", options = {}) { super(options); this.actor = actor; this.categoria = categoria; this.titulo = titulo; this.itens = itens ?? []; this.tipo = tipo; this.busca = ""; }
+  static get defaultOptions() { return foundry.utils.mergeObject(super.defaultOptions, { id: "arsenal-categoria-popup", title: "Arsenal T20", width: 620, height: 560, resizable: true, minimizable: true }); }
+  async getData() { return {}; }
+  get template() { return null; }
+  async _renderInner() { const div = document.createElement("div"); div.innerHTML = this._html(); return $(div); }
+  _filtrados() { const q = String(this.busca ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); if (!q) return this.itens; return this.itens.filter(i => String(i.name ?? i.label ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(q)); }
+  _html() { const th = t20HudTheme(); const lista = this._filtrados(); return `<div style="height:100%;box-sizing:border-box;display:flex;flex-direction:column;background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};border-radius:8px;color:${th.text};font-family:serif;padding:10px"><div style="display:flex;gap:10px;align-items:center;border-bottom:1px solid ${th.accent}44;padding-bottom:9px;margin-bottom:9px">${this.actor?.img ? `<img src="${this.actor.img}" style="width:42px;height:42px;border-radius:8px;object-fit:cover;border:1px solid ${th.accent}66">` : ""}<div style="flex:1;min-width:0"><div style="font-size:.78em;color:${th.muted};text-transform:uppercase;letter-spacing:.05em">${this.actor?.name ?? "Personagem"}</div><div style="font-weight:900;color:${th.title};font-size:1.12em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.titulo}</div></div><div style="color:${th.muted};font-size:.86em;white-space:nowrap">${lista.length}/${this.itens.length}</div></div><input class="t20-cat-busca" type="text" placeholder="Buscar..." value="${this.busca ?? ""}" style="width:100%;box-sizing:border-box;margin-bottom:9px;padding:8px 10px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};color:${th.text}"><div style="overflow:auto;min-height:0;flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:8px;align-content:start;padding-right:3px">${lista.length ? lista.map(item => { const img = this.tipo === "pericia" ? "" : item.img; const label = this.tipo === "pericia" ? `${item.label} ${item.bonus >= 0 ? "+" : ""}${item.bonus}` : item.name; const subtitulo = this.tipo === "pericia" ? (item.treinada ? "Treinada" : "Não treinada") : t20HudItemSubtitulo(item); const qtd = this.tipo === "pericia" ? "" : t20HudQuantidadeItem(item); const treinada = this.tipo === "pericia" && item.treinada; return `<button class="t20-cat-use" data-id="${item.id}" title="${label}" style="display:flex;align-items:center;gap:9px;min-height:58px;text-align:left;padding:9px;border-radius:12px;background:linear-gradient(180deg,${th.panel2},${th.panel});border:1px solid ${treinada ? th.accent : th.border};border-left:4px solid ${treinada ? th.accent : th.border};color:${th.text};cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)">${img ? `<img src="${img}" style="width:34px;height:34px;border-radius:7px;object-fit:cover;border:1px solid ${th.accent}55">` : `<span style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:${th.bg2};color:${treinada ? th.accent2 : th.muted}">${this.tipo === "pericia" ? (treinada ? "◆" : "◇") : "•"}</span>`}<span style="flex:1;min-width:0"><b style="display:block;color:${treinada ? th.title : th.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</b><span style="display:block;font-size:.8em;color:${th.muted};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${subtitulo ?? ""}</span></span>${qtd ? `<span style="padding:2px 6px;border-radius:999px;background:${th.panel};border:1px solid ${th.border};color:${th.accent2};font-size:.78em;font-weight:bold">x${qtd}</span>` : ""}</button>`; }).join("") : `<div style="grid-column:1/-1;color:${th.muted};text-align:center;padding:18px;border:1px dashed ${th.border};border-radius:10px">Nenhum item encontrado.</div>`}</div></div>`; }
+  activateListeners(html) { super.activateListeners(html); html.find(".t20-cat-busca").on("keydown keypress keyup", ev => ev.stopPropagation()).on("input", ev => { ev.preventDefault(); ev.stopPropagation(); const valor = ev.currentTarget.value ?? ""; const pos = ev.currentTarget.selectionStart ?? valor.length; this.busca = valor; this.render(false); setTimeout(() => { const input = this.element?.[0]?.querySelector?.(".t20-cat-busca"); input?.focus?.(); input?.setSelectionRange?.(Math.min(pos, this.busca.length), Math.min(pos, this.busca.length)); }, 0); }); html.find(".t20-cat-use").on("click", async ev => { ev.preventDefault(); const id = ev.currentTarget.dataset.id; if (this.tipo === "pericia") return t20HudRolarPericia(this.actor, id); return t20HudUsarItem(this.actor, id); }); }
+}
+let _arsenalCategoriaPopup = null;
+function abrirArsenalCategoriaPopup(actor, categoria) {
+  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+  const grupos = t20HudItensActor(actor); const pericias = t20HudTodasPericiasActor(actor);
+  const defs = { favoritos: { titulo: "⭐ Favoritos", itens: grupos.favoritos ?? [], tipo: "item" }, ataques: { titulo: "⚔️ Ataques", itens: grupos.ataques ?? [], tipo: "item" }, poderes: { titulo: "✨ Poderes/Habilidades", itens: grupos.poderes ?? [], tipo: "item" }, consumiveis: { titulo: "🧪 Consumíveis", itens: grupos.consumiveis ?? [], tipo: "item" }, pericias: { titulo: "🎲 Perícias", itens: pericias, tipo: "pericia" } };
+  const def = defs[categoria]; if (!def) return;
+  if (_arsenalCategoriaPopup?.rendered) _arsenalCategoriaPopup.close();
+  _arsenalCategoriaPopup = new ArsenalCategoriaPopup(actor, categoria, def.titulo, def.itens, def.tipo);
+  _arsenalCategoriaPopup.render(true);
+}
+
 let _arsenalHUD = null;
 
 function abrirArsenalHUD(force = false) {
@@ -7868,29 +7915,20 @@ class ArsenalHUD extends Application {
   }
 
   _renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador, layout = "compact", actor = null) {
+    const th = t20HudTheme();
+    const totalMagias = t20HudTodasMagiasActor(actor).length;
+    const todasPericias = t20HudTodasPericiasActor(actor);
     const defs = {
-      favoritos:  { titulo: "⭐ Favoritos", itens: grupos.favoritos ?? [], tipo: "item" },
-      ataques:    { titulo: "⚔️ Ataques", itens: grupos.ataques, tipo: "item" },
-      magias:     { titulo: "🪄 Magias", itens: grupos.magias, tipo: "item" },
-      consumiveis:{ titulo: "🧪 Consumíveis", itens: grupos.consumiveis ?? [], tipo: "item" },
-      poderes:    { titulo: "✨ Poderes/Habilidades", itens: grupos.poderes, tipo: "item" },
-      pericias:   { titulo: "🎲 Perícias treinadas", itens: personagemJogador ? pericias : [], tipo: "pericia" },
+      favoritos:  { titulo: "Favoritos", icone: "⭐", qtd: (grupos.favoritos ?? []).length, action: "categoria", categoria: "favoritos" },
+      ataques:    { titulo: "Ataques", icone: "⚔️", qtd: (grupos.ataques ?? []).length, action: "categoria", categoria: "ataques" },
+      poderes:    { titulo: "Poderes/Habilidades", icone: "✨", qtd: (grupos.poderes ?? []).length, action: "categoria", categoria: "poderes" },
+      magias:     { titulo: "Grimório", icone: "📖", qtd: totalMagias, action: "grimorio" },
+      pericias:   { titulo: "Perícias", icone: "🎲", qtd: todasPericias.length, detalhe: `${todasPericias.filter(p => p.treinada).length} treinada(s)`, action: "pericias" },
+      consumiveis:{ titulo: "Consumíveis", icone: "🧪", qtd: (grupos.consumiveis ?? []).length, action: "categoria", categoria: "consumiveis" },
     };
-
-    return t20HudGetCategoryOrder()
-      .filter(cat => cat !== "pericias" || personagemJogador)
-      .map(cat => {
-        if (cat === "magias" && t20HudSpellMode() === "grimoire") {
-          return this._secaoGrimorio(actor, bottom, layout);
-        }
-        if (cat === "pericias") {
-          return this._secaoPericias(actor, bottom, layout);
-        }
-        const def = defs[cat];
-        if (!def) return "";
-        return this._secao(def.titulo, def.itens, bottom, def.tipo, cat, layout);
-      })
-      .join("");
+    const order = t20HudGetCategoryOrder().filter(cat => cat !== "pericias" || personagemJogador);
+    const grid = bottom || layout === "cards";
+    return `<div class="t20-hud-shortcuts" style="display:grid;grid-template-columns:${grid ? "repeat(auto-fit,minmax(142px,1fr))" : "1fr"};gap:7px;align-content:start">${order.map(cat => { const d = defs[cat]; if (!d) return ""; const detalhe = d.detalhe ?? `${d.qtd} item(ns)`; return `<button class="t20-hud-shortcut" data-action="${d.action}" data-categoria="${d.categoria ?? cat}" type="button" style="display:flex;align-items:center;gap:10px;width:100%;min-height:54px;padding:9px 10px;border-radius:12px;background:linear-gradient(135deg,${th.panel2},${th.panel});border:1px solid ${th.border};border-left:4px solid ${th.accent};color:${th.text};cursor:pointer;text-align:left;box-shadow:0 4px 12px rgba(0,0,0,.16),inset 0 1px 0 rgba(255,255,255,.05)"><span style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:10px;background:${th.bg2};border:1px solid ${th.border};font-size:1.15em">${d.icone}</span><span style="flex:1;min-width:0;line-height:1.12"><b style="display:block;color:${th.title};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.titulo}</b><span style="display:block;color:${th.muted};font-size:.8em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${detalhe}</span></span><span style="padding:2px 7px;border-radius:999px;background:${th.panel};border:1px solid ${th.border};color:${th.accent2};font-size:.82em;font-weight:800">${d.qtd}</span></button>`; }).join("")}</div>`;
   }
 
   _secaoHeader(titulo, cat, qtd = null) {
@@ -8152,6 +8190,16 @@ class ArsenalHUD extends Application {
       t20HudMoverCategoria(ev.currentTarget.dataset.cat, parseInt(ev.currentTarget.dataset.dir) || 0);
     });
 
+    html.find(".t20-hud-shortcut").on("click", ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      const actor = t20HudActorSelecionado();
+      const action = ev.currentTarget.dataset.action;
+      const categoria = ev.currentTarget.dataset.categoria;
+      if (action === "grimorio") { const grupos = t20HudMagiasPorCirculo(actor); const primeiro = [1,2,3,4,5].find(c => (grupos[c]?.length ?? 0) > 0) ?? 1; return abrirArsenalGrimorio(actor, primeiro); }
+      if (action === "pericias") return abrirArsenalPericias(actor);
+      return abrirArsenalCategoriaPopup(actor, categoria);
+    });
+
     html.find(".t20-hud-item").on("click", async ev => {
       const actor = t20HudActorSelecionado();
       const itemId = ev.currentTarget.dataset.itemId;
@@ -8313,6 +8361,44 @@ function t20ExtrairCustoLinhaMagia(row) {
   return "";
 }
 
+function t20ArsenalRegistrarAjustePMPendente({ actor, item, delta = 0, detalhes = [], origem = "arsenal" } = {}) {
+  const valor = Number(delta) || 0;
+  if (!actor || !item || !valor) return;
+  _t20ArsenalPendingPMAdjustments = (_t20ArsenalPendingPMAdjustments ?? []).filter(p => Date.now() - Number(p.createdAt ?? 0) < 120000);
+  _t20ArsenalPendingPMAdjustments.push({ actorId: actor.id, itemId: item.id, itemName: item.name, delta: valor, detalhes: Array.isArray(detalhes) ? detalhes : [], origem, createdAt: Date.now() });
+}
+function t20ArsenalConsumirAjustePMPendente(actor, itemData = {}, nomeItem = "") {
+  const lista = _t20ArsenalPendingPMAdjustments ?? [];
+  if (!actor || !lista.length) return null;
+  const agora = Date.now();
+  _t20ArsenalPendingPMAdjustments = lista.filter(p => agora - Number(p.createdAt ?? 0) < 120000);
+  const itemId = itemData?._id ?? itemData?.id ?? itemData?.itemId;
+  const normNome = t20HudAprimNorm(nomeItem || itemData?.name || "");
+  const idx = _t20ArsenalPendingPMAdjustments.findIndex(p => {
+    if (p.actorId && p.actorId !== actor.id) return false;
+    if (p.itemId && itemId && p.itemId === itemId) return true;
+    if (p.itemName && normNome && t20HudAprimNorm(p.itemName) === normNome) return true;
+    return !p.itemId && !p.itemName;
+  });
+  if (idx < 0) return null;
+  const [ajuste] = _t20ArsenalPendingPMAdjustments.splice(idx, 1);
+  return ajuste;
+}
+function t20AplicarAjusteArsenalNoCusto(custo, ajuste) {
+  if (!ajuste || !Number.isFinite(Number(ajuste.delta))) return custo;
+  const delta = Number(ajuste.delta) || 0;
+  const totalOriginal = Number(custo?.total ?? 0) || 0;
+  const total = Math.max(0, totalOriginal + delta);
+  return { ...custo, actorExtra: delta, total, base: Number(custo?.base ?? totalOriginal) || totalOriginal, extra: Number(custo?.extra ?? 0) || 0, totalOriginalArsenal: totalOriginal, ajusteArsenal: ajuste };
+}
+function t20HtmlNotaAjusteArsenalPM(ajuste) {
+  if (!ajuste) return "";
+  const delta = Number(ajuste.delta) || 0;
+  const sinal = delta >= 0 ? "+" : "−";
+  const detalhes = (ajuste.detalhes ?? []).slice(0, 5).map(d => `<li>${t20HudHtmlEscape(d)}</li>`).join("");
+  return `<div style="margin:8px 0 0;padding:8px 9px;border-radius:7px;background:#f8f1df;border:1px solid #8b6f43;color:#2b2114;font-size:0.88em;line-height:1.38;box-shadow:0 1px 4px rgba(0,0,0,0.12)">🧩 <b>Aprimoramentos do personagem</b>: ajuste aplicado ao custo: <b>${sinal}${Math.abs(delta)} PM</b>.${detalhes ? `<ul style="margin:5px 0 0 18px;padding:0">${detalhes}</ul>` : ""}</div>`;
+}
+
 // ── Card de controle de PM ───────────────────────────────────
 
 function t20ExtrairCustoPM(itemData = {}, message = null) {
@@ -8440,7 +8526,8 @@ function t20HtmlCardPM({ actor, nomeItem, custo, sustentavel = false, imgItem = 
       </div>
     </div>
     <div style="font-size:0.88em;margin-bottom:10px;color:#ddd6fe">
-      ${custo.extra ? `Custo base estimado: <b>${custo.base}</b> PM<br>Aprimoramentos detectados: <b>+${custo.extra}</b> PM<br>` : `Custo detectado: <b>${custo.total}</b> PM<br>`}
+      ${custo.extra ? `Custo base estimado: <b>${custo.base}</b> PM<br>Aprimoramentos detectados: <b>+${custo.extra}</b> PM<br>` : `Custo detectado: <b>${custo.totalOriginalArsenal ?? custo.total}</b> PM<br>`}
+      ${Number(custo.actorExtra || 0) ? `Ajustes do personagem: <b>${Number(custo.actorExtra) >= 0 ? "+" : "−"}${Math.abs(Number(custo.actorExtra))}</b> PM<br>` : ""}
       Custo total: <b>${custo.total}</b> PM
       ${sustentavel ? `<br><span style="color:#86efac">Duração sustentada detectada. O jogador pode ativar a sustentação manualmente.</span>` : ""}
     </div>
@@ -8503,7 +8590,12 @@ async function t20CriarCardPM(message) {
   if (modo === "off") return;
   if (message.flags?.["arsenal-t20"]?.tipo === "pm") return;
 
-  const itemData = message.flags?.tormenta20?.itemData;
+  let itemData = message.flags?.tormenta20?.itemData;
+  const textoMensagem = t20TextoLimpoLocal(message?.content ?? "");
+  const pareceCustoPericia = /\b\d+\s*PM\b/i.test(textoMensagem) && /(per[ií]cia|teste|foco em per[ií]cia|treinada|rolagem)/i.test(textoMensagem);
+  if (!itemData && pareceCustoPericia) {
+    itemData = { name: textoMensagem.match(/^(.*?)(?:\s+\d+d20|\s+\+?\d+\s*PM|$)/i)?.[1]?.trim() || "Teste de perícia", pm: textoMensagem.match(/\b(\d+)\s*PM\b/i)?.[1] ?? 0, img: message.content?.match(/img[^>]+src="([^"]+)"/)?.[1] ?? "" };
+  }
   if (!itemData) return;
 
   const actor = game.actors.get(message.speaker?.actor);
@@ -8515,19 +8607,22 @@ async function t20CriarCardPM(message) {
   if (!custoOriginal.total) return;
 
   const overrideVitoria = t20VitoriaOverrideParaMensagem(message, actor, nomeItem);
-  const custo = t20AplicarOverrideVitoriaNoCusto(custoOriginal, overrideVitoria);
+  const ajusteArsenal = t20ArsenalConsumirAjustePMPendente(actor, itemData, nomeItem);
+  let custo = t20AplicarOverrideVitoriaNoCusto(custoOriginal, overrideVitoria);
+  custo = t20AplicarAjusteArsenalNoCusto(custo, ajusteArsenal);
 
   const sustentavel = t20ItemEhSustentado(itemData, message);
   const whisper = t20WhisperGMAndActorOwners(actor);
   const notaVitoria = t20HtmlNotaVitoriaPM(overrideVitoria, custoOriginal.total);
+  const notaAjusteArsenal = t20HtmlNotaAjusteArsenalPM(ajusteArsenal);
 
   if (modo === "auto") {
     await t20AplicarPMDireto(actor, custo.total);
     await ChatMessage.create({
-      content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: true }) + notaVitoria,
+      content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: true }) + notaVitoria + notaAjusteArsenal,
       speaker: message.speaker,
       whisper,
-      flags: { "arsenal-t20": { tipo: "pm", origem: message.id, auto: true, vitoriaOverride: !!overrideVitoria, custoOriginal: custoOriginal.total, custoVitoria: custo.total } }
+      flags: { "arsenal-t20": { tipo: "pm", origem: message.id, auto: true, vitoriaOverride: !!overrideVitoria, custoOriginal: custoOriginal.total, custoVitoria: custo.total, ajusteArsenal: ajusteArsenal?.delta ?? 0 } }
     });
     if (overrideVitoria) _t20VitoriaOverridePM = null;
     return;
@@ -8535,10 +8630,10 @@ async function t20CriarCardPM(message) {
 
   // manual
   await ChatMessage.create({
-    content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: false }) + notaVitoria,
+    content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: false }) + notaVitoria + notaAjusteArsenal,
     speaker: message.speaker,
     whisper,
-    flags: { "arsenal-t20": { tipo: "pm", origem: message.id, vitoriaOverride: !!overrideVitoria, custoOriginal: custoOriginal.total, custoVitoria: custo.total } }
+    flags: { "arsenal-t20": { tipo: "pm", origem: message.id, vitoriaOverride: !!overrideVitoria, custoOriginal: custoOriginal.total, custoVitoria: custo.total, ajusteArsenal: ajusteArsenal?.delta ?? 0 } }
   });
   if (overrideVitoria) _t20VitoriaOverridePM = null;
 }
