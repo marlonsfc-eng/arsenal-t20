@@ -554,9 +554,12 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   // o próximo card gerado por ela é usado para atualizar o card original e depois removido.
   await t20ProcessarMensagemRerrolPendente(message);
   const actorMensagem = t20ActorDaMensagem(message);
+  const temVitoriaActor = t20ActorTemVitoriaQualquerCusto(actorMensagem);
   const arsenalOpts = {
     ...(_t20RerrolInfoParaProximoCard ?? {}),
-    temVitoria: t20ActorTemVitoriaQualquerCusto(actorMensagem),
+    // Se for um rerrol gerado pela própria Vitória, mantém o botão mesmo quando o sistema
+    // não preenche speaker/actor de forma confiável no novo card.
+    temVitoria: temVitoriaActor || !!_t20RerrolInfoParaProximoCard?.temVitoria,
   };
 
   const rollDano = message.rolls.find(r => !r.formula?.includes("d20"));
@@ -1006,7 +1009,7 @@ function t20AtualizarValorAtaqueNoHtmlString(html, novoTotal) {
 }
 
 
-async function t20AtualizarCardOriginalComRerrol(sourceMessage, rerollMessage) {
+async function t20AtualizarCardOriginalComRerrol(sourceMessage, rerollMessage, opts = {}) {
   const rollAtaque = rerollMessage?.rolls?.find?.(r => String(r?.formula ?? "").includes("d20"));
   if (!sourceMessage || !rollAtaque) return false;
 
@@ -1024,8 +1027,17 @@ async function t20AtualizarCardOriginalComRerrol(sourceMessage, rerollMessage) {
   const dadosAlvos = t20DadosAlvosDoCardIntegrado(card, totalAtaque, d20Result);
   if (!dadosAlvos.length) return false;
 
+  const actorMensagem = t20ActorDaMensagem(sourceMessage) ?? t20ActorDaMensagem(rerollMessage);
+  const vitoriaCountAtual = Number(card?.dataset?.vitoriaCount ?? opts?.vitoriaCount ?? 0) || 0;
+  const novoOpts = {
+    ...opts,
+    ...(_t20RerrolInfoParaProximoCard ?? {}),
+    vitoriaCount: Math.max(vitoriaCountAtual, Number(_t20RerrolInfoParaProximoCard?.vitoriaCount ?? 0) || 0),
+    temVitoria: t20ActorTemVitoriaQualquerCusto(actorMensagem) || !!opts?.temVitoria || !!_t20RerrolInfoParaProximoCard?.temVitoria,
+  };
+
   const novoWrapper = document.createElement("div");
-  novoWrapper.innerHTML = t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal).trim();
+  novoWrapper.innerHTML = t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal, novoOpts).trim();
   const novoBloco = novoWrapper.firstElementChild;
   if (!novoBloco) return false;
 
@@ -1245,9 +1257,15 @@ function t20NormalizarTextoArsenal(s) {
 function t20ActorTemVitoriaQualquerCusto(actor) {
   if (!actor?.items) return false;
   return actor.items.some(item => {
-    const nome = t20NormalizarTextoArsenal(item?.name);
-    return nome === "vitoria a qualquer custo" || nome.includes("vitoria a qualquer custo");
+    const nome = t20NormalizarTextoArsenal(item?.name ?? item?.system?.nome ?? item?.system?.name ?? "");
+    const slug = t20NormalizarTextoArsenal(item?.system?.slug ?? item?.flags?.tormenta20?.slug ?? item?.slug ?? "");
+    const texto = `${nome} ${slug}`;
+    return texto.includes("vitoria a qualquer custo") || texto.includes("vitoria-qualquer-custo") || texto.includes("vitoriaqualquercusto");
   });
+}
+
+function t20NomeEhVitoriaQualquerCusto(nome) {
+  return t20NormalizarTextoArsenal(nome).includes("vitoria a qualquer custo");
 }
 
 function t20ActorDaMensagem(message) {
@@ -8498,6 +8516,33 @@ function t20HtmlNotaVitoriaPM(override, custoOriginal) {
 }
 
 
+
+function t20CustoVitoriaItemDireto(actor) {
+  const n = Number(actor?.getFlag?.("arsenal-t20", "vitoriaQualquerCustoCount") ?? 0) || 0;
+  return 1 + Math.max(0, n);
+}
+
+async function t20IncrementarVitoriaItemDireto(actor) {
+  try {
+    const n = Number(actor?.getFlag?.("arsenal-t20", "vitoriaQualquerCustoCount") ?? 0) || 0;
+    await actor?.setFlag?.("arsenal-t20", "vitoriaQualquerCustoCount", Math.max(0, n) + 1);
+  } catch (e) {
+    console.warn("Arsenal T20 | não foi possível incrementar o contador direto de Vitória", e);
+  }
+}
+
+function t20CustoForcadoVitoriaItemDireto(actor, nomeItem) {
+  if (!t20NomeEhVitoriaQualquerCusto(nomeItem)) return null;
+  const custo = t20CustoVitoriaItemDireto(actor);
+  return {
+    base: custo,
+    extra: 0,
+    total: custo,
+    fonte: "vitoria-direta",
+    vitoriaDireta: true,
+  };
+}
+
 async function t20CriarCardPM(message) {
   const modo = t20PMModoControle();
   if (modo === "off") return;
@@ -8512,10 +8557,11 @@ async function t20CriarCardPM(message) {
   const nomeItem = t20ExtrairNomeItemDeMensagem(itemData, message);
   const imgItem = itemData.img ?? message.content?.match(/img[^>]+src="([^"]+)"/)?.[1] ?? "";
   const custoOriginal = t20ExtrairCustoPM(itemData, message);
-  if (!custoOriginal.total) return;
+  const custoVitoriaDireta = t20CustoForcadoVitoriaItemDireto(actor, nomeItem);
+  if (!custoOriginal.total && !custoVitoriaDireta?.total) return;
 
   const overrideVitoria = t20VitoriaOverrideParaMensagem(message, actor, nomeItem);
-  const custo = t20AplicarOverrideVitoriaNoCusto(custoOriginal, overrideVitoria);
+  const custo = custoVitoriaDireta ?? t20AplicarOverrideVitoriaNoCusto(custoOriginal, overrideVitoria);
 
   const sustentavel = t20ItemEhSustentado(itemData, message);
   const whisper = t20WhisperGMAndActorOwners(actor);
@@ -8530,6 +8576,7 @@ async function t20CriarCardPM(message) {
       flags: { "arsenal-t20": { tipo: "pm", origem: message.id, auto: true, vitoriaOverride: !!overrideVitoria, custoOriginal: custoOriginal.total, custoVitoria: custo.total } }
     });
     if (overrideVitoria) _t20VitoriaOverridePM = null;
+    if (custoVitoriaDireta) await t20IncrementarVitoriaItemDireto(actor);
     return;
   }
 
@@ -8538,9 +8585,10 @@ async function t20CriarCardPM(message) {
     content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: false }) + notaVitoria,
     speaker: message.speaker,
     whisper,
-    flags: { "arsenal-t20": { tipo: "pm", origem: message.id, vitoriaOverride: !!overrideVitoria, custoOriginal: custoOriginal.total, custoVitoria: custo.total } }
+    flags: { "arsenal-t20": { tipo: "pm", origem: message.id, vitoriaOverride: !!overrideVitoria, vitoriaDireta: !!custoVitoriaDireta, custoOriginal: custoOriginal.total, custoVitoria: custo.total } }
   });
   if (overrideVitoria) _t20VitoriaOverridePM = null;
+  if (custoVitoriaDireta) await t20IncrementarVitoriaItemDireto(actor);
 }
 
 async function t20AplicarPMBotao(btn) {
