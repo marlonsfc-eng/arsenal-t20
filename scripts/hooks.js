@@ -553,7 +553,7 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
   // Rerrol v3.2.2: quando o botão Rerrol abre a caixa original do sistema,
   // o próximo card gerado por ela é usado para atualizar o card original e depois removido.
   await t20ProcessarMensagemRerrolPendente(message);
-  const actorMensagem = t20ActorDaMensagem(message);
+  const actorMensagem = t20ActorDaMensagem(message) ?? await t20ResolverAtorMensagem(message);
   const temVitoriaActor = t20ActorTemVitoriaQualquerCusto(actorMensagem);
   const arsenalOpts = {
     ...(_t20RerrolInfoParaProximoCard ?? {}),
@@ -564,7 +564,6 @@ Hooks.on("createChatMessage", async (message, options, userId) => {
 
   const rollDano = message.rolls.find(r => !r.formula?.includes("d20"));
   const targets = Array.from(game.user.targets);
-  if (!targets.length) return;
 
   const totalAtaque = rollAtaque.total;
   const d20Result = rollAtaque.dice?.[0]?.results?.[0]?.result;
@@ -1264,6 +1263,52 @@ function t20ActorTemVitoriaQualquerCusto(actor) {
   });
 }
 
+function t20ActorTemUsurpar(actor) {
+  if (!actor?.items) return false;
+  return actor.items.some(item => {
+    const nome = t20NormalizarTextoArsenal(item?.name ?? item?.system?.nome ?? item?.system?.name ?? "");
+    const slug = t20NormalizarTextoArsenal(item?.system?.slug ?? item?.flags?.tormenta20?.slug ?? item?.slug ?? "");
+    const texto = `${nome} ${slug}`;
+    return texto.includes("usurpar") || texto.includes("usurpacao") || texto.includes("usurpacao arcana");
+  });
+}
+
+function t20MensagemEhMagia(itemData = {}, message = null) {
+  const tipo = t20NormalizarTextoArsenal(itemData?.type ?? itemData?.tipo ?? itemData?.system?.tipo ?? itemData?.system?.category ?? "");
+  const nome = t20NormalizarTextoArsenal(itemData?.name ?? itemData?.nome ?? "");
+  const system = itemData?.system ?? {};
+  const bruto = t20NormalizarTextoArsenal([
+    tipo, nome,
+    system?.tipo, system?.tipoMagia, system?.magia?.tipo, system?.categoria,
+    system?.circulo, system?.circle, system?.nivel, system?.level,
+    system?.execucao, system?.execution, system?.escola, system?.school,
+    message?.content ?? ""
+  ].filter(v => v !== undefined && v !== null).join(" "));
+
+  if (tipo.includes("magia") || tipo.includes("spell")) return true;
+  if (system?.magia || system?.circulo || system?.circle || system?.escola || system?.school) return true;
+  if (/\b(arcana|divina|universal)\b/.test(bruto) && /\b(circulo|circulo|execucao|alcance|resistencia)\b/.test(bruto)) return true;
+  if (/\b[1-5]\s*(º|o)?\s*circulo\b/.test(bruto)) return true;
+  return false;
+}
+
+function t20HtmlBotaoUsurparPM(actor, itemData = {}, message = null) {
+  if (!actor || !t20ActorTemUsurpar(actor) || !t20MensagemEhMagia(itemData, message)) return "";
+  return `<button class="t20-usurpar-eng" data-actor="${actor.uuid}" title="Usurpar: rolar Enganação após lançar esta magia" style="flex:1;padding:7px;border-radius:6px;background:linear-gradient(135deg,#0f766e,#14b8a6);border:1px solid #5eead4;color:white;font-weight:bold;cursor:pointer;box-shadow:0 1px 5px rgba(20,184,166,0.25)">🎭 Usurpar</button>`;
+}
+
+async function t20UsurparBotao(btn) {
+  try {
+    const actor = await fromUuid(btn.dataset.actor);
+    if (!actor) return ui.notifications.warn("Ator não encontrado para Usurpar.");
+    if (!t20ActorTemUsurpar(actor)) return ui.notifications.warn(`${actor.name} não possui Usurpar na ficha.`);
+    await t20HudRolarPericia(actor, "enga");
+  } catch (e) {
+    console.warn("Arsenal T20 | erro ao rolar Usurpar/Enganação", e);
+    ui.notifications.error("Não foi possível rolar Enganação para Usurpar.");
+  }
+}
+
 function t20NomeEhVitoriaQualquerCusto(nome) {
   return t20NormalizarTextoArsenal(nome).includes("vitoria a qualquer custo");
 }
@@ -1286,7 +1331,8 @@ function t20ActorDaMensagem(message) {
 }
 
 
-function t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal, opts = {}) {
+function t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos = [], danoPorTipo, danoTotal, opts = {}) {
+  dadosAlvos = Array.isArray(dadosAlvos) ? dadosAlvos : [];
   const temDano = danoPorTipo && Object.keys(danoPorTipo).length > 0;
 
   return `<div class="t20-arsenal-integrado" data-vitoria-count="${Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)}" style="margin-top:10px;padding:8px;border-radius:6px;border:1px solid #7a7060;border-left:4px solid #5c2a22;background:rgba(215,211,198,0.78);color:#1f1b16;font-family:serif">
@@ -1298,6 +1344,7 @@ function t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, dan
       </div>` : ""}
     </div>
     ${opts?.isVitoria ? `<div style="font-size:0.9em;color:#4a211b;margin:4px 0 6px;padding:5px 6px;border-radius:5px;background:rgba(92,42,34,0.08)">🎲 Vitória a Qualquer Custo usada: <b>${opts.custoPago ?? "?"} PM</b>. Próximo uso neste teste: <b>${1 + Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)} PM</b>.</div>` : ""}
+    ${!dadosAlvos.length ? `<div style="font-size:0.88em;color:#4f463a;margin:5px 0 2px;padding:6px 7px;border-radius:5px;background:rgba(248,250,252,0.45);border:1px solid rgba(122,112,96,0.30)">Nenhum alvo selecionado. O botão de Vitória continua disponível para refazer o ataque; para cálculo automático de acerto/dano, selecione o alvo antes da rolagem.</div>` : ""}
     ${dadosAlvos.map(a => {
       const res = t20LabelResultadoAtaque(a);
       const dano = t20CalcularDanoAlvoIntegrado(a, danoPorTipo);
@@ -1346,11 +1393,15 @@ async function t20PersistirMensagemDoBotao(btn) {
   }
 }
 
-async function t20IntegrarAtaqueNoCardOriginal(message, totalAtaque, dadosAlvos, danoPorTipo, danoTotal, opts = {}) {
-  if (!message || !dadosAlvos?.length) return;
+async function t20IntegrarAtaqueNoCardOriginal(message, totalAtaque, dadosAlvos = [], danoPorTipo, danoTotal, opts = {}) {
+  if (!message) return;
   if (String(message.content ?? "").includes("t20-arsenal-integrado")) return;
 
-  const bloco = t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, danoTotal, opts);
+  // Mesmo sem alvo selecionado, mantém o bloco Arsenal quando houver Vitória a Qualquer Custo.
+  // Assim o jogador continua tendo o botão para refazer o ataque, e o GM ainda pode usar o card normal do sistema.
+  if (!dadosAlvos?.length && !opts?.temVitoria && !opts?.isVitoria) return;
+
+  const bloco = t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos ?? [], danoPorTipo, danoTotal, opts);
   const content = `${message.content ?? ""}${bloco}`;
   try {
     await message.update({ content });
@@ -4345,6 +4396,14 @@ Hooks.on("renderChatMessageHTML", (message, html) => {
     btn._arsenalListenerAdded = true;
     btn.dataset.listenerAdded = "1";
     btn.addEventListener("click", () => t20AtivarSustentacaoBotao(btn));
+  });
+
+  html.querySelectorAll(".t20-usurpar-eng").forEach(btn => {
+    btn.dataset.messageId = message.id;
+    if (btn._arsenalListenerAdded) return;
+    btn._arsenalListenerAdded = true;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", () => t20UsurparBotao(btn));
   });
 
   html.querySelectorAll(".t20-turno-encerrar-sustentada").forEach(btn => {
@@ -8431,7 +8490,7 @@ function t20ExtrairNomeItemDeMensagem(itemData = {}, message = null) {
   return nomeEstruturado || "Magia";
 }
 
-function t20HtmlCardPM({ actor, nomeItem, custo, sustentavel = false, imgItem = "", pmJaAplicado = false }) {
+function t20HtmlCardPM({ actor, nomeItem, custo, sustentavel = false, imgItem = "", pmJaAplicado = false, extraButtons = "" }) {
   const botaoGasto = pmJaAplicado
     ? `<button disabled style="flex:1;padding:7px;border-radius:6px;background:#374151;border:1px solid #64748b;color:#cbd5e1;font-weight:bold;opacity:0.75">PM já gasto</button>`
     : `<button class="t20-pm-aplicar" data-actor="${actor.uuid}" data-pm="${custo.total}" style="flex:1;padding:7px;border-radius:6px;background:#5b45a0;border:1px solid #7c65c7;color:white;font-weight:bold;cursor:pointer">Gastar PM</button>`;
@@ -8466,6 +8525,7 @@ function t20HtmlCardPM({ actor, nomeItem, custo, sustentavel = false, imgItem = 
       ${botaoGasto}
       <button class="t20-pm-reverter" data-actor="${actor.uuid}" data-pm="${custo.total}" style="flex:1;padding:7px;border-radius:6px;background:#334155;border:1px solid #64748b;color:white;font-weight:bold;cursor:pointer">Reverter gasto</button>
       ${botaoSustentar}
+      ${extraButtons ?? ""}
     </div>
   </div>`;
 }
@@ -8566,11 +8626,12 @@ async function t20CriarCardPM(message) {
   const sustentavel = t20ItemEhSustentado(itemData, message);
   const whisper = t20WhisperGMAndActorOwners(actor);
   const notaVitoria = t20HtmlNotaVitoriaPM(overrideVitoria, custoOriginal.total);
+  const extraButtons = t20HtmlBotaoUsurparPM(actor, itemData, message);
 
   if (modo === "auto") {
     await t20AplicarPMDireto(actor, custo.total);
     await ChatMessage.create({
-      content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: true }) + notaVitoria,
+      content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: true, extraButtons }) + notaVitoria,
       speaker: message.speaker,
       whisper,
       flags: { "arsenal-t20": { tipo: "pm", origem: message.id, auto: true, vitoriaOverride: !!overrideVitoria, custoOriginal: custoOriginal.total, custoVitoria: custo.total } }
@@ -8582,7 +8643,7 @@ async function t20CriarCardPM(message) {
 
   // manual
   await ChatMessage.create({
-    content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: false }) + notaVitoria,
+    content: t20HtmlCardPM({ actor, nomeItem, custo, sustentavel, imgItem, pmJaAplicado: false, extraButtons }) + notaVitoria,
     speaker: message.speaker,
     whisper,
     flags: { "arsenal-t20": { tipo: "pm", origem: message.id, vitoriaOverride: !!overrideVitoria, vitoriaDireta: !!custoVitoriaDireta, custoOriginal: custoOriginal.total, custoVitoria: custo.total } }
