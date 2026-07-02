@@ -1101,7 +1101,7 @@ async function t20RestaurarPMRerrol(pending) {
 
 function t20CustoVitoria(pending) {
   const count = Math.max(0, Number(pending?.vitoriaCount ?? 0) || 0);
-  return 2 + count;
+  return 1 + count;
 }
 
 async function t20FinalizarPMVitoria(pending, motivo = "") {
@@ -1275,11 +1275,11 @@ function t20HtmlArsenalIntegradoAtaque(totalAtaque, dadosAlvos, danoPorTipo, dan
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(92,42,34,0.28);padding-bottom:5px;margin-bottom:6px;flex-wrap:wrap">
       <b style="color:#3b211d">Arsenal T20</b>
       ${opts?.temVitoria ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-        <button class="t20-reroll-ataque" title="Usar Vitória a Qualquer Custo: refaz o ataque pelo sistema e cobra apenas o custo progressivo do poder" style="padding:6px 10px;border-radius:8px;cursor:pointer;background:linear-gradient(135deg,#6d28d9 0%,#9333ea 45%,#f59e0b 140%);border:1px solid rgba(253,224,71,0.65);color:#fff;font-size:0.86em;font-weight:800;letter-spacing:0.01em;text-shadow:0 1px 1px rgba(0,0,0,0.35);box-shadow:0 2px 7px rgba(88,28,135,0.35)">✨ Vitória ${2 + Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)} PM</button>
+        <button class="t20-reroll-ataque" title="Usar Vitória a Qualquer Custo: refaz o ataque pelo sistema e cobra apenas o custo progressivo do poder" style="padding:6px 10px;border-radius:8px;cursor:pointer;background:linear-gradient(135deg,#6d28d9 0%,#9333ea 45%,#f59e0b 140%);border:1px solid rgba(253,224,71,0.65);color:#fff;font-size:0.86em;font-weight:800;letter-spacing:0.01em;text-shadow:0 1px 1px rgba(0,0,0,0.35);box-shadow:0 2px 7px rgba(88,28,135,0.35)">✨ Vitória ${1 + Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)} PM</button>
         <button class="t20-vitoria-reset" title="Zerar o custo progressivo de Vitória a Qualquer Custo neste card" style="padding:6px 9px;border-radius:8px;cursor:pointer;background:linear-gradient(180deg,#f8fafc,#d7d3c6);border:1px solid #7a7060;color:#3b211d;font-size:0.82em;font-weight:bold;box-shadow:0 1px 4px rgba(0,0,0,0.15)">↺ Zerar</button>
       </div>` : ""}
     </div>
-    ${opts?.isVitoria ? `<div style="font-size:0.9em;color:#4a211b;margin:4px 0 6px;padding:5px 6px;border-radius:5px;background:rgba(92,42,34,0.08)">🎲 Vitória a Qualquer Custo usada: <b>${opts.custoPago ?? "?"} PM</b>. Próximo uso neste teste: <b>${2 + Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)} PM</b>.</div>` : ""}
+    ${opts?.isVitoria ? `<div style="font-size:0.9em;color:#4a211b;margin:4px 0 6px;padding:5px 6px;border-radius:5px;background:rgba(92,42,34,0.08)">🎲 Vitória a Qualquer Custo usada: <b>${opts.custoPago ?? "?"} PM</b>. Próximo uso neste teste: <b>${1 + Math.max(0, Number(opts?.vitoriaCount ?? 0) || 0)} PM</b>.</div>` : ""}
     ${dadosAlvos.map(a => {
       const res = t20LabelResultadoAtaque(a);
       const dano = t20CalcularDanoAlvoIntegrado(a, danoPorTipo);
@@ -1660,7 +1660,7 @@ async function t20ResetarVitoriaIntegrado(btn) {
 
   const vitoriaBtn = card.querySelector(".t20-reroll-ataque");
   if (vitoriaBtn) {
-    vitoriaBtn.innerHTML = "✨ Vitória 2 PM";
+    vitoriaBtn.innerHTML = "✨ Vitória 1 PM";
     vitoriaBtn.title = "Usar Vitória a Qualquer Custo: refaz o ataque pelo sistema e cobra apenas o custo progressivo do poder";
   }
 
@@ -1670,7 +1670,7 @@ async function t20ResetarVitoriaIntegrado(btn) {
   const nota = document.createElement("div");
   nota.className = "t20-vitoria-reset-nota";
   nota.style.cssText = "font-size:0.86em;color:#4f463a;margin:5px 0 2px;padding:5px 6px;border-radius:5px;background:rgba(248,250,252,0.55);border:1px solid rgba(122,112,96,0.35)";
-  nota.innerHTML = "↺ Contador de Vitória zerado. Próximo uso: <b>2 PM</b>.";
+  nota.innerHTML = "↺ Contador de Vitória zerado. Próximo uso: <b>1 PM</b>.";
   const header = card.querySelector(":scope > div");
   header?.insertAdjacentElement?.("afterend", nota);
 
@@ -5357,32 +5357,6 @@ function t20HudEspacoItem(item) {
   return "";
 }
 
-
-function t20HudItemEhArma(item) {
-  if (!item) return false;
-  const tipo = String(item.type ?? "").toLowerCase();
-  const sys = item.system ?? {};
-  const campos = [
-    item.type,
-    sys.tipo, sys.type,
-    sys.categoria, sys.category,
-    sys.subtipo, sys.subtype,
-    sys.grupo, sys.group,
-    sys.equipamento?.tipo, sys.equipamento?.type,
-    sys.itemType, sys.classification
-  ].filter(Boolean).join(" ").toLowerCase();
-
-  if (/\b(arma|weapon)\b/i.test(tipo)) return true;
-  if (/\b(arma|weapon)\b/i.test(campos)) return true;
-
-  // Fallback conservador: itens de inventário com campos explícitos de ataque e dano,
-  // sem serem poderes/habilidades/magias/consumíveis.
-  if (/magia|spell|poder|power|feat|feature|habilidade|ability|consum/i.test(tipo + " " + campos)) return false;
-  const temAtaque = [sys.ataque, sys.attack, sys.bonusAtaque, sys.attackBonus].some(v => v !== undefined && v !== null && String(v) !== "");
-  const temDano = [sys.dano, sys.damage, sys.damages, sys.roll?.damage].some(v => v !== undefined && v !== null && String(v) !== "");
-  return !!(temAtaque && temDano && (t20HudQuantidadeItem(item) !== "" || t20HudEspacoItem(item) !== ""));
-}
-
 function t20HudClassificarItem(item) {
   const txt = t20HudItemTexto(item);
   const tipo = String(item.type ?? "").toLowerCase();
@@ -5394,7 +5368,11 @@ function t20HudClassificarItem(item) {
     /\bexecu[cç][aã]o\s*:/i.test(txt)
   ) return "magias";
 
-  if (t20HudItemEhArma(item)) return "ataques";
+  if (
+    tipo.includes("arma") || tipo.includes("weapon") || tipo.includes("attack") ||
+    /\bataque\b/i.test(txt) ||
+    item.system?.rolls?.some?.(r => String(r?.type ?? r?.label ?? r?.name ?? "").toLowerCase().includes("ataque"))
+  ) return "ataques";
 
   if (
     tipo.includes("poder") || tipo.includes("power") || tipo.includes("feat") ||
@@ -6382,7 +6360,7 @@ class ArsenalConjurarMagiaDialog extends Application {
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex:0 0 auto">
           <button class="t20-cast-toggle-desc" title="Mostrar ou ocultar a descrição original completa da magia"
-            style="display:inline-flex!important;align-items:center;justify-content:center;flex:0 0 auto;width:auto;min-width:74px;padding:7px 10px;border-radius:999px;background:${this.mostrarDescricao ? `${th.accent}22` : th.panel2};border:1px solid ${this.mostrarDescricao ? th.accent : th.border};color:${this.mostrarDescricao ? th.title : th.text};font-size:0.78em;font-weight:bold;cursor:pointer;white-space:nowrap">
+            style="padding:7px 10px;border-radius:999px;background:${this.mostrarDescricao ? `${th.accent}22` : th.panel2};border:1px solid ${this.mostrarDescricao ? th.accent : th.border};color:${this.mostrarDescricao ? th.title : th.text};font-size:0.78em;font-weight:bold;cursor:pointer;white-space:nowrap">
             ${this.mostrarDescricao ? "Ocultar descrição" : "Ver descrição completa"}
           </button>
           <div style="text-align:center;background:${th.panel};border:1px solid ${th.border};border-radius:8px;padding:7px 10px;min-width:72px">
@@ -7003,14 +6981,14 @@ class ArsenalGrimorio extends Application {
       const ativo = this.filtro === "circle" && this.circulo === c;
       const qtd = grupos[c]?.length ?? 0;
       return `<button class="t20-grimorio-nav" data-filter="circle" data-circulo="${c}" type="button"
-        style="display:inline-flex!important;align-items:center;justify-content:center;flex:0 0 auto;width:auto;min-width:74px;padding:7px 10px;border-radius:999px;border:1px solid ${ativo ? th.accent : th.border};background:${ativo ? `${th.accent}2e` : th.panel};color:${ativo ? th.title : th.text};cursor:pointer;font-weight:${ativo ? "800" : "600"};font-size:0.86em">${c}º <span style="color:${ativo ? th.accent2 : th.muted}">${qtd}</span></button>`;
+        style="padding:7px 10px;border-radius:999px;border:1px solid ${ativo ? th.accent : th.border};background:${ativo ? `${th.accent}2e` : th.panel};color:${ativo ? th.title : th.text};cursor:pointer;font-weight:${ativo ? "800" : "600"};font-size:0.86em">${c}º <span style="color:${ativo ? th.accent2 : th.muted}">${qtd}</span></button>`;
     }).join("");
     const reacaoAtivo = this.filtro === "reaction";
     const reacaoQtd = t20HudTodasMagiasActor(this.actor).filter(t20HudGrimorioEhReacao).length;
-    return `<div class="t20-grimorio-nav-row" style="display:flex!important;flex-direction:row!important;gap:6px;flex-wrap:wrap;margin:0 0 8px;align-items:center;justify-content:flex-start;width:100%">
+    return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px;align-items:center">
       ${botoes}
       <button class="t20-grimorio-nav" data-filter="reaction" type="button"
-        style="display:inline-flex!important;align-items:center;justify-content:center;flex:0 0 auto;width:auto;min-width:116px;padding:7px 11px;border-radius:999px;border:1px solid ${reacaoAtivo ? th.accent : th.border};background:${reacaoAtivo ? `${th.accent}2e` : th.panel};color:${reacaoAtivo ? th.title : th.text};cursor:pointer;font-weight:${reacaoAtivo ? "800" : "600"};font-size:0.86em">⚡ Reação <span style="color:${reacaoAtivo ? th.accent2 : th.muted}">${reacaoQtd}</span></button>
+        style="padding:7px 11px;border-radius:999px;border:1px solid ${reacaoAtivo ? th.accent : th.border};background:${reacaoAtivo ? `${th.accent}2e` : th.panel};color:${reacaoAtivo ? th.title : th.text};cursor:pointer;font-weight:${reacaoAtivo ? "800" : "600"};font-size:0.86em">⚡ Reação <span style="color:${reacaoAtivo ? th.accent2 : th.muted}">${reacaoQtd}</span></button>
     </div>`;
   }
 
@@ -7547,14 +7525,8 @@ function t20HudColetarDefesasEspeciais(actor) {
       const label = obj.label ?? obj.name ?? obj.nome ?? obj.value ?? obj.valor ?? obj.txt ?? obj.texto;
       if (label) add(kind, label);
       else for (const [k,v] of Object.entries(obj)) {
-        const chave = t20HudAprimTextoLimpo(k);
-        if (!chave || /^\d+$/.test(chave)) { walkVal(kind, v, depth + 1); continue; }
-        if (v === true) add(kind, chave);
-        else if (typeof v === "number" || typeof v === "string") {
-          const val = t20HudAprimTextoLimpo(v);
-          if (val && val !== "0" && val !== "false") add(kind, `${chave} ${val}`);
-          else if (val === "0" && kind !== "res") add(kind, chave);
-        } else walkVal(kind, v, depth + 1);
+        if (v === true) add(kind, k);
+        else walkVal(kind, v, depth + 1);
       }
     }
   };
@@ -7709,174 +7681,6 @@ function atualizarArsenalHUD() {
   if (_arsenalHUD?.rendered) _arsenalHUD.render(false);
 }
 
-
-let _arsenalCategoriaApp = null;
-
-function t20HudEsc(s) { return t20HudHtmlEscape(String(s ?? "")); }
-
-function t20HudAtaqueValorItem(item) {
-  const sys = item?.system ?? {};
-  const candidatos = [sys.ataque, sys.attack, sys.bonusAtaque, sys.attackBonus, sys.rolls?.ataque, sys.roll?.ataque];
-  for (const c of candidatos) {
-    const v = (c && typeof c === "object") ? (c.total ?? c.value ?? c.bonus ?? c.mod ?? c.formula) : c;
-    if (v !== undefined && v !== null && String(v).trim() !== "") {
-      const str = String(v).trim();
-      return /^-?\d+$/.test(str) ? `${Number(str) >= 0 ? "+" : ""}${Number(str)}` : str;
-    }
-  }
-  const txt = [sys.formula, sys.roll, sys.description?.value, sys.descricao?.value, sys.description, sys.descricao].filter(Boolean).join(" ");
-  const m = String(txt).match(/ataque[^+\-\d]*(?:\+)?\s*(-?\d+)/i);
-  return m ? `${Number(m[1]) >= 0 ? "+" : ""}${Number(m[1])}` : "—";
-}
-
-function t20HudDanoCriticoItem(item) {
-  const sys = item?.system ?? {};
-  const dano = (() => {
-    const candidatos = [sys.dano, sys.damage, sys.damages, sys.roll?.damage, sys.formulaDano, sys.damageFormula];
-    for (const c of candidatos) {
-      if (c === undefined || c === null || c === "") continue;
-      if (typeof c === "string" || typeof c === "number") return String(c);
-      if (Array.isArray(c)) return c.map(x => x?.formula ?? x?.value ?? x?.dano ?? x).filter(Boolean).join(" + ");
-      if (typeof c === "object") {
-        const v = c.formula ?? c.value ?? c.total ?? c.base ?? c.dano ?? c.damage;
-        if (v !== undefined && v !== null && String(v) !== "") return String(v);
-      }
-    }
-    return "";
-  })();
-  const crit = (() => {
-    const candidatos = [sys.critico, sys.critical, sys.margem, sys.criticalRange, sys.multiplicador, sys.multiplier];
-    const vals = [];
-    for (const c of candidatos) {
-      const v = (c && typeof c === "object") ? (c.value ?? c.total ?? c.range ?? c.multiplier ?? c.multiplicador) : c;
-      if (v !== undefined && v !== null && String(v).trim() !== "") vals.push(String(v).trim());
-    }
-    return vals.length ? vals.join("/") : "";
-  })();
-  if (dano && crit) return `${dano}, ${crit}`;
-  return dano || crit || "—";
-}
-
-function t20HudAbrirCategoria(actor, cat, titulo, itens, tipo = "item") {
-  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
-  if (_arsenalCategoriaApp?.rendered) _arsenalCategoriaApp.close();
-  _arsenalCategoriaApp = new ArsenalCategoriaHUD(actor, cat, titulo, itens, tipo);
-  _arsenalCategoriaApp.render(true);
-}
-
-class ArsenalCategoriaHUD extends Application {
-  constructor(actor, cat, titulo, itens, tipo = "item", options = {}) {
-    super(options);
-    this.actor = actor;
-    this.cat = cat;
-    this.titulo = titulo;
-    this.itens = Array.from(itens ?? []);
-    this.tipo = tipo;
-    this.busca = "";
-  }
-  static get defaultOptions() {
-    return foundry.utils.mergeObject(super.defaultOptions, {
-      id: "arsenal-categoria-hud",
-      title: "Arsenal T20",
-      width: 650,
-      height: 560,
-      resizable: true,
-      minimizable: true,
-    });
-  }
-  async getData() { return {}; }
-  get template() { return null; }
-  async _renderInner() {
-    const div = document.createElement("div");
-    div.innerHTML = this._html();
-    return $(div);
-  }
-  render(force, options = {}) {
-    const r = super.render(force, options);
-    setTimeout(() => {
-      const el = this.element?.[0];
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      this.setPosition({ left: Math.max(40, Math.round((window.innerWidth - rect.width) / 2)), top: Math.max(50, Math.round((window.innerHeight - rect.height) / 2)) });
-    }, 30);
-    return r;
-  }
-  _filtrados() {
-    const q = String(this.busca ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    return this.itens.filter(item => !q || String(item.name ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(q));
-  }
-  _htmlAtaques(th, lista) {
-    return `<div style="overflow:auto;min-height:0;flex:1;border:1px solid ${th.border};border-radius:10px;background:${th.panel}99">
-      <table style="width:100%;border-collapse:collapse;font-size:0.92em">
-        <thead style="position:sticky;top:0;background:${th.panel2};z-index:1">
-          <tr>
-            <th style="text-align:left;padding:7px 8px;color:${th.title};border-bottom:1px solid ${th.border}">Armas</th>
-            <th style="text-align:left;padding:7px 8px;color:${th.title};border-bottom:1px solid ${th.border}">Ataque</th>
-            <th style="text-align:left;padding:7px 8px;color:${th.title};border-bottom:1px solid ${th.border}">Dano/Crítico</th>
-            <th style="text-align:center;padding:7px 8px;color:${th.title};border-bottom:1px solid ${th.border}">Qtd</th>
-            <th style="text-align:center;padding:7px 8px;color:${th.title};border-bottom:1px solid ${th.border}">Esp.</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${lista.map(item => `<tr class="t20-cat-item" data-item-id="${item.id}" style="cursor:pointer;border-bottom:1px solid ${th.border}55">
-            <td style="padding:7px 8px;min-width:180px"><div style="display:flex;align-items:center;gap:7px">${item.img ? `<img src="${item.img}" style="width:28px;height:28px;border-radius:4px;object-fit:cover">` : ""}<b style="color:${th.text}">${t20HudEsc(item.name)}</b></div></td>
-            <td style="padding:7px 8px;white-space:nowrap">${t20HudEsc(t20HudAtaqueValorItem(item))}</td>
-            <td style="padding:7px 8px;white-space:nowrap">${t20HudEsc(t20HudDanoCriticoItem(item))}</td>
-            <td style="padding:7px 8px;text-align:center">${t20HudEsc(t20HudQuantidadeItem(item) || "—")}</td>
-            <td style="padding:7px 8px;text-align:center">${t20HudEsc(t20HudEspacoItem(item) || "—")}</td>
-          </tr>`).join("")}
-        </tbody>
-      </table>
-    </div>`;
-  }
-  _htmlCards(th, lista) {
-    return `<div style="overflow:auto;min-height:0;flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;align-content:start;padding:2px">
-      ${lista.map(item => `<button class="t20-cat-item" data-item-id="${item.id}" style="display:flex;align-items:center;gap:9px;text-align:left;min-height:62px;padding:9px;border-radius:12px;background:linear-gradient(180deg,${th.panel2},${th.panel});border:1px solid ${th.border};color:${th.text};cursor:pointer;box-shadow:0 3px 8px rgba(0,0,0,.12)">
-        ${item.img ? `<img src="${item.img}" style="width:38px;height:38px;border-radius:8px;object-fit:cover;border:1px solid ${th.accent}55">` : `<span style="width:38px;height:38px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:${th.bg2}">•</span>`}
-        <span style="min-width:0;flex:1"><b style="display:block;color:${th.title};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t20HudEsc(item.name)}</b><small style="color:${th.muted}">${t20HudEsc(item.type ?? "item")}</small></span>
-        ${t20HudQuantidadeItem(item) ? `<span style="padding:3px 7px;border-radius:999px;border:1px solid ${th.border};background:${th.panel};color:${th.muted};font-weight:bold">x${t20HudEsc(t20HudQuantidadeItem(item))}</span>` : ""}
-      </button>`).join("")}
-    </div>`;
-  }
-  _html() {
-    const th = t20HudTheme();
-    const lista = this._filtrados();
-    return `<div style="height:100%;box-sizing:border-box;display:flex;flex-direction:column;background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};border-radius:8px;color:${th.text};font-family:serif;padding:10px">
-      <div style="display:flex;align-items:center;gap:9px;border-bottom:1px solid ${th.accent}44;padding-bottom:8px;margin-bottom:8px">
-        ${this.actor?.img ? `<img src="${this.actor.img}" style="width:38px;height:38px;border-radius:8px;object-fit:cover;border:1px solid ${th.accent}66">` : ""}
-        <div style="min-width:0;flex:1"><div style="font-size:.82em;color:${th.muted};text-transform:uppercase;letter-spacing:.05em">${t20HudEsc(this.titulo)}</div><div style="font-weight:bold;color:${th.title};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t20HudEsc(this.actor?.name ?? "Personagem")}</div></div>
-        <div style="font-size:.88em;color:${th.muted}">${lista.length}/${this.itens.length}</div>
-      </div>
-      <input class="t20-cat-busca" type="text" placeholder="Buscar..." value="${t20HudEsc(this.busca)}" style="width:100%;box-sizing:border-box;margin-bottom:9px;padding:7px 9px;border-radius:6px;background:${th.panel};border:1px solid ${th.border};color:${th.text}">
-      ${lista.length ? (this.cat === "ataques" ? this._htmlAtaques(th, lista) : this._htmlCards(th, lista)) : `<div style="color:${th.muted};padding:14px;text-align:center">Nada encontrado.</div>`}
-    </div>`;
-  }
-  activateListeners(html) {
-    super.activateListeners(html);
-    html.find(".t20-cat-busca").on("keydown keypress keyup", ev => ev.stopPropagation()).on("input", ev => {
-      ev.preventDefault(); ev.stopPropagation();
-      const valor = ev.currentTarget.value ?? ""; const pos = ev.currentTarget.selectionStart ?? valor.length;
-      this.busca = valor; this.render(false);
-      setTimeout(() => { const input = this.element?.[0]?.querySelector?.(".t20-cat-busca"); input?.focus?.(); input?.setSelectionRange?.(Math.min(pos, this.busca.length), Math.min(pos, this.busca.length)); }, 0);
-    });
-    html.find(".t20-cat-item").on("click", async ev => {
-      ev.preventDefault();
-      const itemId = ev.currentTarget.dataset.itemId;
-      await t20HudUsarItem(this.actor, itemId);
-    });
-  }
-}
-
-function t20HudDefesasEspeciaisHtml(especiais, th) {
-  const grupos = { res: [], imu: [], vul: [] };
-  for (const e of especiais ?? []) if (grupos[e.kind]) grupos[e.kind].push(e.value);
-  const chips = (arr) => arr.map(v => `<span style="display:inline-block;padding:2px 6px;border-radius:4px;background:${th.panel};border:1px solid ${th.border};color:${th.text};font-size:0.82em;line-height:1.15">${t20HudEsc(v)}</span>`).join(" ");
-  if (!grupos.res.length && !grupos.imu.length && !grupos.vul.length) return `<div style="font-size:0.78em;color:${th.muted}">Sem resistências/imunidades detectadas.</div>`;
-  return `${grupos.res.length ? `<div><b style="display:block;color:${th.title};font-size:0.82em;margin-bottom:2px">Resistências</b><div style="display:flex;gap:4px;flex-wrap:wrap">${chips(grupos.res)}</div></div>` : ""}
-    ${grupos.imu.length ? `<div style="margin-top:4px"><b style="display:block;color:${th.title};font-size:0.82em;margin-bottom:2px">Imunidades e Condições</b><div style="display:flex;gap:4px;flex-wrap:wrap">${chips(grupos.imu)}</div></div>` : ""}
-    ${grupos.vul.length ? `<div style="margin-top:4px"><b style="display:block;color:${th.title};font-size:0.82em;margin-bottom:2px">Vulnerabilidades</b><div style="display:flex;gap:4px;flex-wrap:wrap">${chips(grupos.vul)}</div></div>` : ""}`;
-}
-
 class ArsenalHUD extends Application {
   static get defaultOptions() {
     return foundry.utils.mergeObject(super.defaultOptions, {
@@ -8005,10 +7809,7 @@ class ArsenalHUD extends Application {
       <div class="t20-hud-drag" style="display:grid;grid-template-columns:auto 1fr auto;gap:7px;margin-bottom:6px;border-bottom:1px solid ${th.accent}44;padding-bottom:6px;cursor:${modo === "token" ? "default" : "move"};flex-shrink:0">
         ${img ? `<img src="${img}" style="grid-row:1 / span 2;width:34px;height:34px;border-radius:6px;object-fit:cover;border:1px solid ${th.accent}66">` : ""}
         <div style="min-width:0;align-self:end">
-          <div style="display:flex;align-items:center;gap:6px;min-width:0;line-height:1.05">
-            <span style="color:${th.title};font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${nome}</span>
-            ${actor ? `<span title="ND/Nível" style="flex:0 0 auto;padding:1px 6px;border-radius:999px;border:1px solid ${th.accent};background:${th.panel};color:${th.accent2};font-weight:bold;font-size:0.72em;white-space:nowrap">${ndNivel}</span>` : ""}
-          </div>
+          <div style="color:${th.title};font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.05">${nome}</div>
         </div>
         <div style="display:flex;gap:4px;align-items:start;justify-content:flex-end">
           ${collapsed ? "" : `<button class="t20-hud-toggle-all" title="${t20HudTodasSecoesRecolhidas() ? "Expandir todas as categorias" : "Recolher todas as categorias"}" style="${this._smallCtrl(th)}">${t20HudTodasSecoesRecolhidas() ? "▾" : "▴"}</button>`}
@@ -8027,11 +7828,12 @@ class ArsenalHUD extends Application {
 
       ${collapsed || !actor ? "" : `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:7px;flex-shrink:0">
         <div title="Defesa" style="padding:5px 6px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};text-align:center"><div style="font-size:0.68em;color:${th.muted};text-transform:uppercase">DEF</div><b style="color:${th.title}">${defesa ?? "—"}</b></div>
-        <button class="t20-hud-save" data-pericia-id="fort" title="Rolar Fortitude" style="padding:5px 6px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};text-align:center;color:${th.text};cursor:pointer;font-family:inherit"><div style="font-size:0.68em;color:${th.muted};text-transform:uppercase">Fort</div><b>${fort ?? "—"}</b></button>
-        <button class="t20-hud-save" data-pericia-id="refl" title="Rolar Reflexos" style="padding:5px 6px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};text-align:center;color:${th.text};cursor:pointer;font-family:inherit"><div style="font-size:0.68em;color:${th.muted};text-transform:uppercase">Refl</div><b>${refl ?? "—"}</b></button>
-        <button class="t20-hud-save" data-pericia-id="vont" title="Rolar Vontade" style="padding:5px 6px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};text-align:center;color:${th.text};cursor:pointer;font-family:inherit"><div style="font-size:0.68em;color:${th.muted};text-transform:uppercase">Vont</div><b>${vont ?? "—"}</b></button>
-        <div style="grid-column:1 / -1;padding:6px;border-radius:7px;background:${th.panel2};border:1px solid ${th.border}">
-          ${t20HudDefesasEspeciaisHtml(especiais, th)}
+        <div title="Fortitude" style="padding:5px 6px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};text-align:center"><div style="font-size:0.68em;color:${th.muted};text-transform:uppercase">Fort</div><b>${fort ?? "—"}</b></div>
+        <div title="Reflexos" style="padding:5px 6px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};text-align:center"><div style="font-size:0.68em;color:${th.muted};text-transform:uppercase">Refl</div><b>${refl ?? "—"}</b></div>
+        <div title="Vontade" style="padding:5px 6px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};text-align:center"><div style="font-size:0.68em;color:${th.muted};text-transform:uppercase">Vont</div><b>${vont ?? "—"}</b></div>
+        <div style="grid-column:1 / -1;display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:5px 6px;border-radius:7px;background:${th.panel2};border:1px solid ${th.border}">
+          <span style="font-size:0.78em;color:${th.accent2};font-weight:bold">${ndNivel}</span>
+          ${especiais.length ? especiais.map(e => `<span title="${e.kind === "imu" ? "Imunidade" : e.kind === "vul" ? "Vulnerabilidade" : "Resistência"}" style="padding:2px 6px;border-radius:999px;border:1px solid ${e.kind === "imu" ? "#facc15" : e.kind === "vul" ? "#f87171" : "#60a5fa"};color:${e.kind === "imu" ? "#fde68a" : e.kind === "vul" ? "#fecaca" : "#bfdbfe"};background:rgba(0,0,0,0.18);font-size:0.76em;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.kind === "imu" ? "Imu" : e.kind === "vul" ? "Vul" : "Res"}: ${e.value}</span>`).join("") : `<span style="font-size:0.76em;color:${th.muted}">Sem resistências/imunidades detectadas.</span>`}
         </div>
       </div>`}
 
@@ -8067,44 +7869,28 @@ class ArsenalHUD extends Application {
 
   _renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador, layout = "compact", actor = null) {
     const defs = {
-      favoritos:  { titulo: "⭐ Favoritos", itens: grupos.favoritos ?? [], tipo: "item", desc: "Atalhos" },
-      ataques:    { titulo: "⚔️ Ataques", itens: grupos.ataques ?? [], tipo: "item", desc: "Armas da ficha" },
-      magias:     { titulo: "🪄 Grimório", itens: grupos.magias ?? [], tipo: "item", desc: "Magias por círculo" },
-      consumiveis:{ titulo: "🧪 Consumíveis", itens: grupos.consumiveis ?? [], tipo: "item", desc: "Poções e itens de uso" },
-      poderes:    { titulo: "✨ Poderes/Habilidades", itens: grupos.poderes ?? [], tipo: "item", desc: "Efeitos ativáveis" },
-      pericias:   { titulo: "🎲 Perícias", itens: personagemJogador ? t20HudTodasPericiasActor(actor) : [], tipo: "pericia", desc: "Testes de perícia" },
+      favoritos:  { titulo: "⭐ Favoritos", itens: grupos.favoritos ?? [], tipo: "item" },
+      ataques:    { titulo: "⚔️ Ataques", itens: grupos.ataques, tipo: "item" },
+      magias:     { titulo: "🪄 Magias", itens: grupos.magias, tipo: "item" },
+      consumiveis:{ titulo: "🧪 Consumíveis", itens: grupos.consumiveis ?? [], tipo: "item" },
+      poderes:    { titulo: "✨ Poderes/Habilidades", itens: grupos.poderes, tipo: "item" },
+      pericias:   { titulo: "🎲 Perícias treinadas", itens: personagemJogador ? pericias : [], tipo: "pericia" },
     };
 
     return t20HudGetCategoryOrder()
       .filter(cat => cat !== "pericias" || personagemJogador)
       .map(cat => {
-        const def = defs[cat];
-        if (!def) return "";
         if (cat === "magias" && t20HudSpellMode() === "grimoire") {
-          const gruposMagia = t20HudMagiasPorCirculo(actor);
-          const total = [1,2,3,4,5].reduce((sum, c) => sum + (gruposMagia[c]?.length ?? 0), 0);
-          const reacoes = t20HudTodasMagiasActor(actor).filter(t20HudGrimorioEhReacao).length;
-          return this._categoriaAtalho("magias", "📖 Grimório", total, `${reacoes} reação(ões)`, bottom);
+          return this._secaoGrimorio(actor, bottom, layout);
         }
         if (cat === "pericias") {
-          const treinadas = (def.itens ?? []).filter(p => p.treinada).length;
-          return this._categoriaAtalho("pericias", def.titulo, def.itens.length, `${treinadas} treinada(s)`, bottom);
+          return this._secaoPericias(actor, bottom, layout);
         }
-        return this._categoriaAtalho(cat, def.titulo, def.itens.length, def.desc, bottom);
+        const def = defs[cat];
+        if (!def) return "";
+        return this._secao(def.titulo, def.itens, bottom, def.tipo, cat, layout);
       })
       .join("");
-  }
-
-  _categoriaAtalho(cat, titulo, qtd = 0, desc = "", bottom = false) {
-    const th = t20HudTheme();
-    return `<button class="t20-hud-open-cat" data-cat="${cat}" title="Abrir ${titulo.replace(/^[^\wÀ-ÿ]+\s*/, "")}" style="display:flex;align-items:center;gap:10px;width:100%;min-height:62px;margin:${bottom ? "0" : "0 0 8px"};padding:10px;border-radius:12px;background:linear-gradient(135deg,${th.panel2},${th.panel});border:1px solid ${th.border};border-left:4px solid ${th.accent};color:${th.text};cursor:pointer;text-align:left;box-shadow:0 3px 9px rgba(0,0,0,.15), inset 0 1px 0 rgba(255,255,255,.08)">
-      <span style="font-size:1.35em;width:30px;text-align:center;flex:0 0 auto">${titulo.trim().split(/\s+/)[0]}</span>
-      <span style="min-width:0;flex:1;display:flex;flex-direction:column;line-height:1.15">
-        <b style="color:${th.title};font-size:0.98em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${titulo.replace(/^\S+\s*/, "")}</b>
-        <small style="color:${th.muted};font-size:0.76em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${desc}</small>
-      </span>
-      <span style="flex:0 0 auto;min-width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:999px;background:${th.panel2};border:1px solid ${th.border};color:${th.muted};font-weight:bold;font-size:.86em">${qtd}</span>
-    </button>`;
   }
 
   _secaoHeader(titulo, cat, qtd = null) {
@@ -8364,33 +8150,6 @@ class ArsenalHUD extends Application {
       ev.preventDefault();
       ev.stopPropagation();
       t20HudMoverCategoria(ev.currentTarget.dataset.cat, parseInt(ev.currentTarget.dataset.dir) || 0);
-    });
-
-    html.find(".t20-hud-save").on("click", async ev => {
-      ev.preventDefault(); ev.stopPropagation();
-      const actor = t20HudActorSelecionado();
-      await t20HudRolarPericia(actor, ev.currentTarget.dataset.periciaId);
-    });
-
-    html.find(".t20-hud-open-cat").on("click", ev => {
-      ev.preventDefault(); ev.stopPropagation();
-      const actor = t20HudActorSelecionado();
-      const grupos = t20HudItensActor(actor);
-      const cat = ev.currentTarget.dataset.cat;
-      if (cat === "magias") {
-        const gm = t20HudMagiasPorCirculo(actor);
-        const primeiro = [1,2,3,4,5].find(c => (gm[c]?.length ?? 0) > 0) ?? 1;
-        return abrirArsenalGrimorio(actor, primeiro);
-      }
-      if (cat === "pericias") return abrirArsenalPericias(actor);
-      const defs = {
-        favoritos: ["⭐ Favoritos", grupos.favoritos ?? []],
-        ataques: ["⚔️ Ataques", grupos.ataques ?? []],
-        poderes: ["✨ Poderes/Habilidades", grupos.poderes ?? []],
-        consumiveis: ["🧪 Consumíveis", grupos.consumiveis ?? []],
-      };
-      const def = defs[cat];
-      if (def) return t20HudAbrirCategoria(actor, cat, def[0], def[1], "item");
     });
 
     html.find(".t20-hud-item").on("click", async ev => {
