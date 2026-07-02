@@ -7037,6 +7037,32 @@ class ArsenalGrimorio extends Application {
   async _renderInner() {
     const div = document.createElement("div");
     div.innerHTML = this._html();
+    // Defesa contra CSS global do Foundry/sistema que força botões em display:block/width:100%.
+    const style = document.createElement("style");
+    style.textContent = `
+      .window-app#arsenal-grimorio .t20-grimorio-circulos-row,
+      #arsenal-grimorio .t20-grimorio-circulos-row {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: wrap !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        gap: 6px !important;
+      }
+      .window-app#arsenal-grimorio .t20-grimorio-circulos-row > button.t20-grimorio-nav,
+      #arsenal-grimorio .t20-grimorio-circulos-row > button.t20-grimorio-nav {
+        display: inline-flex !important;
+        width: auto !important;
+        min-width: 76px !important;
+        max-width: 140px !important;
+        flex: 1 1 76px !important;
+        align-items: center !important;
+        justify-content: center !important;
+        margin: 0 !important;
+        white-space: nowrap !important;
+      }
+    `;
+    div.prepend(style);
     return $(div);
   }
 
@@ -7058,14 +7084,14 @@ class ArsenalGrimorio extends Application {
       const ativo = this.filtro === "circle" && this.circulo === c;
       const qtd = grupos[c]?.length ?? 0;
       return `<button class="t20-grimorio-nav" data-filter="circle" data-circulo="${c}" type="button"
-        style="padding:7px 10px;border-radius:999px;border:1px solid ${ativo ? th.accent : th.border};background:${ativo ? `${th.accent}2e` : th.panel};color:${ativo ? th.title : th.text};cursor:pointer;font-weight:${ativo ? "800" : "600"};font-size:0.86em">${c}º <span style="color:${ativo ? th.accent2 : th.muted}">${qtd}</span></button>`;
+        style="display:inline-flex !important;align-items:center;justify-content:center;gap:4px;width:auto !important;min-width:76px;max-width:110px;flex:1 1 76px !important;padding:7px 10px;border-radius:999px;border:1px solid ${ativo ? th.accent : th.border};background:${ativo ? `${th.accent}2e` : th.panel};color:${ativo ? th.title : th.text};cursor:pointer;font-weight:${ativo ? "800" : "600"};font-size:0.86em;white-space:nowrap">${c}º <span style="color:${ativo ? th.accent2 : th.muted}">${qtd}</span></button>`;
     }).join("");
     const reacaoAtivo = this.filtro === "reaction";
     const reacaoQtd = t20HudTodasMagiasActor(this.actor).filter(t20HudGrimorioEhReacao).length;
-    return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px;align-items:center">
+    return `<div class="t20-grimorio-circulos-row" style="display:flex !important;flex-direction:row !important;gap:6px;flex-wrap:wrap !important;margin:0 0 8px;align-items:center;justify-content:flex-start;width:100%">
       ${botoes}
       <button class="t20-grimorio-nav" data-filter="reaction" type="button"
-        style="padding:7px 11px;border-radius:999px;border:1px solid ${reacaoAtivo ? th.accent : th.border};background:${reacaoAtivo ? `${th.accent}2e` : th.panel};color:${reacaoAtivo ? th.title : th.text};cursor:pointer;font-weight:${reacaoAtivo ? "800" : "600"};font-size:0.86em">⚡ Reação <span style="color:${reacaoAtivo ? th.accent2 : th.muted}">${reacaoQtd}</span></button>
+        style="display:inline-flex !important;align-items:center;justify-content:center;gap:4px;width:auto !important;min-width:92px;max-width:140px;flex:1 1 92px !important;padding:7px 11px;border-radius:999px;border:1px solid ${reacaoAtivo ? th.accent : th.border};background:${reacaoAtivo ? `${th.accent}2e` : th.panel};color:${reacaoAtivo ? th.title : th.text};cursor:pointer;font-weight:${reacaoAtivo ? "800" : "600"};font-size:0.86em;white-space:nowrap">⚡ Reação <span style="color:${reacaoAtivo ? th.accent2 : th.muted}">${reacaoQtd}</span></button>
     </div>`;
   }
 
