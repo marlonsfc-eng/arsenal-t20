@@ -243,7 +243,7 @@ Hooks.once("ready", () => {
   if (game.settings.get(MOD, "autoPMCard"))      ativas.push("PM");
   if (game.settings.get(MOD, "autoAuras"))       ativas.push("Auras");
 
-  console.log(`Arsenal T20 | v3.4.0 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
+  console.log(`Arsenal T20 | v3.4.10 carregado! Ativas: ${ativas.join(", ") || "nenhuma"}`);
 
   try {
     const migKey = "themeDefaultFoundryClassic.v302";
@@ -515,28 +515,77 @@ function mensagemEhAtaqueReal(message, rollAtaque) {
   return false;
 }
 
-function extrairResistenciaDaMensagem(message, itemData = {}) {
-  const res = itemData?.resistencia;
-  if (res?.txt || res?.pericia) return { ...res };
+function t20ExtrairCDExplicitaDeTexto(texto) {
+  const limpo = textoChatLimpo(texto ?? "");
+  if (!limpo) return null;
 
+  const match =
+    limpo.match(/\bCD\s*[:=]?\s*(\d{1,3})\b/i) ??
+    limpo.match(/\((?:CD|cd)\s*(\d{1,3})\)/i) ??
+    limpo.match(/classe\s+de\s+dificuldade\s*[:=]?\s*(\d{1,3})/i);
+
+  if (!match) return null;
+  const cd = parseInt(match[1], 10);
+  return Number.isFinite(cd) ? cd : null;
+}
+
+function t20ExtrairCDExplicitaDeResistencia(res) {
+  if (!res || typeof res !== "object") return null;
+
+  const candidatosDiretos = [
+    res.cdTexto, res.cd, res.CD, res.dc, res.DC, res.dificuldade,
+    res.dificuldadeClasse, res.classeDificuldade, res.valorCD, res.cdFinal,
+    res.value, res.valor, res.total,
+  ];
+
+  for (const candidato of candidatosDiretos) {
+    if (typeof candidato === "number" && Number.isFinite(candidato)) return candidato;
+    if (typeof candidato === "string") {
+      const porTexto = t20ExtrairCDExplicitaDeTexto(candidato);
+      if (porTexto !== null) return porTexto;
+      // Só aceita número solto em campos claramente numéricos de CD; evita capturar "Metade" ou texto comum.
+      if (/^(cd|dc|dificuldade|valorCD|cdFinal)$/i.test(Object.entries(res).find(([, v]) => v === candidato)?.[0] ?? "")) {
+        const num = numeroOuNull(candidato);
+        if (num !== null) return num;
+      }
+    }
+  }
+
+  for (const valor of Object.values(res)) {
+    if (typeof valor !== "string") continue;
+    const porTexto = t20ExtrairCDExplicitaDeTexto(valor);
+    if (porTexto !== null) return porTexto;
+  }
+
+  return null;
+}
+
+function extrairResistenciaDaMensagem(message, itemData = {}) {
   const texto = textoChatLimpo(message.content ?? "");
   const flavor = textoChatLimpo(message.flavor ?? "");
   const combinado = `${texto} ${flavor}`;
+  const cdDoCard = t20ExtrairCDExplicitaDeTexto(combinado);
+
+  const res = itemData?.resistencia;
+  if (res?.txt || res?.pericia) {
+    const cdResistencia = t20ExtrairCDExplicitaDeResistencia(res);
+    const cdTexto = numeroOuNull(res?.cdTexto) ?? cdResistencia ?? cdDoCard;
+    return { ...res, cdTexto };
+  }
 
   const tipoMatch = combinado.match(/\b(Reflexos|Fortitude|Vontade)\b/i);
   if (!tipoMatch) return null;
 
   const tipo = tipoMatch[1].toLowerCase();
-  const cdMatch = combinado.match(/\bCD\s*(\d+)\b/i);
   const txtMatch =
     combinado.match(/Resist[eê]ncia:\s*([^.;]+)/i) ??
-    combinado.match(/\b(Reflexos|Fortitude|Vontade)\b[^.]{0,80}(?:CD\s*\d+)?/i);
+    combinado.match(/\b(Reflexos|Fortitude|Vontade)\b[^.]{0,120}(?:CD\s*\d+)?/i);
 
   const pericia = tipo.startsWith("ref") ? "refl" : tipo.startsWith("fort") ? "fort" : "vont";
   return {
     txt: txtMatch?.[0] ?? tipoMatch[0],
     pericia,
-    cdTexto: cdMatch ? parseInt(cdMatch[1]) : null,
+    cdTexto: cdDoCard,
   };
 }
 
@@ -4390,6 +4439,14 @@ Hooks.on("renderChatMessageHTML", (message, html) => {
     btn.addEventListener("click", () => t20ReverterPMBotao(btn));
   });
 
+  html.querySelectorAll(".t20-effect-macro-remove").forEach(btn => {
+    btn.dataset.messageId = message.id;
+    if (btn._arsenalListenerAdded) return;
+    btn._arsenalListenerAdded = true;
+    btn.dataset.listenerAdded = "1";
+    btn.addEventListener("click", () => t20EffectMacroRemoveButton(btn));
+  });
+
   html.querySelectorAll(".t20-pm-sustentar").forEach(btn => {
     btn.dataset.messageId = message.id;
     if (btn._arsenalListenerAdded) return;
@@ -5315,7 +5372,7 @@ function t20HudThemeKey() {
 }
 
 
-const T20_HUD_CATEGORIAS_PADRAO = ["favoritos", "magias", "consumiveis", "poderes", "pericias", "ataques"];
+const T20_HUD_CATEGORIAS_PADRAO = ["favoritos", "macros", "magias", "consumiveis", "poderes", "pericias", "ataques"];
 
 function t20HudGetCategoryOrder() {
   try {
@@ -7669,6 +7726,342 @@ function t20HudTodasPericiasActor(actor) {
   }).sort((a,b) => a.label.localeCompare(b.label, "pt-BR"));
 }
 
+
+function t20Esc(s = "") {
+  return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function t20MacroNorm(s = "") {
+  return String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+function t20EffectMacrosGet(actor) {
+  try {
+    const lista = actor?.getFlag?.("arsenal-t20", "effectMacros");
+    return Array.isArray(lista) ? lista : [];
+  } catch { return []; }
+}
+
+async function t20EffectMacrosSet(actor, macros) {
+  if (!actor) return;
+  await actor.setFlag("arsenal-t20", "effectMacros", Array.isArray(macros) ? macros : []);
+}
+
+function t20EffectMacroNovoId() {
+  try { return foundry.utils.randomID(); } catch { return `macro-${Date.now()}-${Math.floor(Math.random()*9999)}`; }
+}
+
+function t20EffectMacroParseChanges(text = "") {
+  const linhas = String(text ?? "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const modes = CONST.ACTIVE_EFFECT_MODES ?? {};
+  const modeMap = {
+    add: modes.ADD ?? 2,
+    somar: modes.ADD ?? 2,
+    soma: modes.ADD ?? 2,
+    '+': modes.ADD ?? 2,
+    multiply: modes.MULTIPLY ?? 1,
+    multiplicar: modes.MULTIPLY ?? 1,
+    '*': modes.MULTIPLY ?? 1,
+    override: modes.OVERRIDE ?? 5,
+    substituir: modes.OVERRIDE ?? 5,
+    '=': modes.OVERRIDE ?? 5,
+    custom: modes.CUSTOM ?? 0,
+  };
+  return linhas.map(l => {
+    const parts = l.split("|").map(p => p.trim());
+    const key = parts[0] ?? "";
+    const modeRaw = t20MacroNorm(parts[1] ?? "add");
+    const value = parts[2] ?? "";
+    const priority = Number(parts[3] ?? 20) || 20;
+    if (!key || value === "") return null;
+    return { key, mode: modeMap[modeRaw] ?? Number(parts[1]) ?? (modes.ADD ?? 2), value, priority };
+  }).filter(Boolean);
+}
+
+function t20EffectMacroChangesToText(changes = []) {
+  const modes = CONST.ACTIVE_EFFECT_MODES ?? {};
+  const modeName = mode => {
+    if (Number(mode) === Number(modes.ADD ?? 2)) return "add";
+    if (Number(mode) === Number(modes.MULTIPLY ?? 1)) return "multiply";
+    if (Number(mode) === Number(modes.OVERRIDE ?? 5)) return "override";
+    if (Number(mode) === Number(modes.CUSTOM ?? 0)) return "custom";
+    return String(mode ?? "add");
+  };
+  return (changes ?? []).map(c => `${c.key ?? ""} | ${modeName(c.mode)} | ${c.value ?? ""} | ${c.priority ?? 20}`).join("\n");
+}
+
+function t20EffectMacroParseStatuses(text = "") {
+  return String(text ?? "").split(/\r?\n|,/).map(x => x.trim()).filter(Boolean);
+}
+
+function t20EffectMacroStatusToText(statuses = []) {
+  return (statuses ?? []).join("\n");
+}
+
+function t20EffectMacroResumo(macro) {
+  const partes = [];
+  const nChanges = macro?.changes?.length ?? 0;
+  const nStatuses = macro?.statuses?.length ?? 0;
+  if (Number(macro?.cost ?? 0) > 0) partes.push(`${macro.cost} PM`);
+  if (Number(macro?.durationRounds ?? 0) > 0) partes.push(`${macro.durationRounds} rodada(s)`);
+  if (nChanges) partes.push(`${nChanges} modificador(es)`);
+  if (nStatuses) partes.push(`${nStatuses} condição(ões)`);
+  partes.push(macro?.targetMode === "targets" ? "alvos" : "próprio");
+  return partes.join(" · ");
+}
+
+function t20EffectMacroTargets(actor, macro) {
+  if (macro?.targetMode === "targets") {
+    const tokens = Array.from(game.user?.targets ?? []).filter(t => t?.actor);
+    if (tokens.length) return tokens.map(t => t.actor);
+    ui.notifications.warn("Nenhum alvo selecionado. Aplicando no próprio personagem.");
+  }
+  return actor ? [actor] : [];
+}
+
+function t20EffectMacroEffectData(actor, macro) {
+  const durRounds = Math.max(0, Math.floor(Number(macro?.durationRounds ?? 0) || 0));
+  const durSeconds = Math.max(0, Math.floor(Number(macro?.durationSeconds ?? 0) || 0));
+  const duration = {};
+  if (durRounds > 0) duration.rounds = durRounds;
+  if (durSeconds > 0) duration.seconds = durSeconds;
+  return {
+    name: macro?.name || "Macro Arsenal",
+    icon: macro?.img || actor?.img || "icons/svg/aura.svg",
+    origin: actor?.uuid,
+    disabled: false,
+    duration,
+    changes: Array.isArray(macro?.changes) ? macro.changes : [],
+    flags: { "arsenal-t20": { effectMacro: true, macroId: macro?.id, sourceActor: actor?.uuid } },
+  };
+}
+
+async function t20EffectMacroAplicar(actor, macroId) {
+  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+  const macros = t20EffectMacrosGet(actor);
+  const macro = macros.find(m => m.id === macroId);
+  if (!macro) return ui.notifications.warn("Macro não encontrada.");
+
+  const targets = t20EffectMacroTargets(actor, macro);
+  if (!targets.length) return ui.notifications.warn("Nenhum alvo válido.");
+
+  const cost = Math.max(0, Math.floor(Number(macro.cost ?? 0) || 0));
+  if (cost > 0) await t20AplicarPMDireto(actor, cost);
+
+  const created = [];
+  for (const targetActor of targets) {
+    const docs = [];
+    const changes = Array.isArray(macro.changes) ? macro.changes.filter(c => c?.key && c?.value !== undefined) : [];
+    if (changes.length) docs.push(t20EffectMacroEffectData(actor, { ...macro, changes }));
+    if (docs.length) {
+      const made = await targetActor.createEmbeddedDocuments("ActiveEffect", docs);
+      for (const ef of made ?? []) created.push({ actorUuid: targetActor.uuid, effectId: ef.id, name: ef.name ?? ef.label ?? macro.name });
+    }
+    for (const st of macro.statuses ?? []) {
+      try {
+        if (typeof targetActor.toggleStatusEffect === "function" && !targetActor.statuses?.has?.(st)) await targetActor.toggleStatusEffect(st);
+      } catch (e) { console.warn("Arsenal T20 | não foi possível aplicar condição da macro", st, e); }
+    }
+  }
+
+  const whisper = t20WhisperGMAndActorOwners(actor);
+  const targetNames = targets.map(a => a.name).join(", ");
+  const effectsPayload = encodeURIComponent(JSON.stringify(created));
+  const removeBtn = created.length ? `<button class="t20-effect-macro-remove" data-effects="${effectsPayload}" style="flex:1;padding:7px;border-radius:6px;background:#334155;border:1px solid #64748b;color:white;font-weight:bold;cursor:pointer">Remover efeitos</button>` : "";
+  const pmBtn = cost > 0 ? `<button class="t20-pm-reverter" data-actor="${actor.uuid}" data-pm="${cost}" style="flex:1;padding:7px;border-radius:6px;background:#55301f;border:1px solid #f59e0b;color:white;font-weight:bold;cursor:pointer">Reverter PM</button>` : "";
+
+  await ChatMessage.create({
+    speaker: ChatMessage.getSpeaker({ actor }),
+    whisper,
+    content: `<div class="t20-effect-macro-card" style="background:linear-gradient(180deg,#1f1a2e,#15111f);border:1px solid #51416f;border-top:3px solid #34d399;border-radius:8px;padding:12px;color:#e9ddff;font-family:serif">
+      <div style="display:flex;align-items:center;gap:9px;border-bottom:1px solid rgba(52,211,153,0.25);padding-bottom:8px;margin-bottom:8px">
+        <div style="font-size:1.5em">${t20Esc(macro.icon || "✨")}</div>
+        <div style="flex:1;min-width:0">
+          <div style="color:#a7f3d0;font-weight:bold">Macro de Efeitos — ${t20Esc(macro.name)}</div>
+          <div style="font-size:0.82em;color:#b9a7d9">por ${t20Esc(actor.name)} em ${t20Esc(targetNames)}</div>
+        </div>
+        ${cost > 0 ? `<div style="text-align:center;background:rgba(0,0,0,0.22);padding:5px 10px;border-radius:6px"><div style="font-size:0.68em;color:#b9a7d9">Custo</div><b style="font-size:1.25em;color:#fcd34d">${cost}</b></div>` : ""}
+      </div>
+      <div style="font-size:0.88em;margin-bottom:10px;color:#ddd6fe;line-height:1.35">
+        ${macro.changes?.length ? `Modificadores aplicados: <b>${macro.changes.length}</b><br>` : ""}
+        ${macro.statuses?.length ? `Condições solicitadas: <b>${t20Esc(macro.statuses.join(", "))}</b><br>` : ""}
+        ${Number(macro.durationRounds ?? 0) > 0 ? `Duração: <b>${macro.durationRounds}</b> rodada(s)<br>` : ""}
+        Custo total: <b>${cost}</b> PM
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${pmBtn}${removeBtn}</div>
+    </div>`,
+    flags: { "arsenal-t20": { tipo: "effectMacro", macroId: macro.id, actor: actor.uuid } }
+  });
+
+  ui.notifications.info(`Macro '${macro.name}' aplicada.`);
+}
+
+async function t20EffectMacroRemoveButton(btn) {
+  let effects = [];
+  try { effects = JSON.parse(decodeURIComponent(btn.dataset.effects ?? "[]")); } catch {}
+  let removed = 0;
+  for (const e of effects) {
+    try {
+      const actor = await fromUuid(e.actorUuid);
+      if (actor && e.effectId && actor.effects?.get?.(e.effectId)) {
+        await actor.deleteEmbeddedDocuments("ActiveEffect", [e.effectId]);
+        removed++;
+      }
+    } catch (err) { console.warn("Arsenal T20 | falha ao remover efeito de macro", err); }
+  }
+  btn.disabled = true;
+  btn.style.opacity = "0.55";
+  btn.textContent = `Removidos (${removed})`;
+  ui.notifications.info(`${removed} efeito(s) removido(s).`);
+}
+
+let _arsenalEffectMacros = null;
+function abrirArsenalEffectMacros(actor) {
+  if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
+  if (_arsenalEffectMacros?.rendered) _arsenalEffectMacros.close();
+  _arsenalEffectMacros = new ArsenalEffectMacros(actor);
+  _arsenalEffectMacros.render(true);
+}
+
+class ArsenalEffectMacros extends Application {
+  constructor(actor, options = {}) {
+    super(options);
+    this.actor = actor;
+    this.busca = "";
+  }
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: "arsenal-effect-macros",
+      title: "Macros de Efeitos — Arsenal T20",
+      width: 720,
+      height: 620,
+      resizable: true,
+      minimizable: true,
+    });
+  }
+  async getData() { return {}; }
+  get template() { return null; }
+  async _renderInner() {
+    const div = document.createElement("div");
+    div.innerHTML = this._html();
+    return $(div);
+  }
+  _lista() {
+    const q = t20MacroNorm(this.busca);
+    const macros = t20EffectMacrosGet(this.actor);
+    return macros.filter(m => !q || t20MacroNorm(`${m.name} ${m.description}`).includes(q));
+  }
+  _html() {
+    const th = t20HudTheme();
+    const macros = this._lista();
+    return `<div style="height:100%;box-sizing:border-box;display:flex;flex-direction:column;background:linear-gradient(180deg,${th.bg1},${th.bg2});border:1px solid ${th.border};border-top:3px solid ${th.accent};border-radius:8px;color:${th.text};font-family:serif;padding:10px">
+      <div style="display:flex;align-items:center;gap:9px;border-bottom:1px solid ${th.accent}44;padding-bottom:8px;margin-bottom:8px">
+        ${this.actor?.img ? `<img src="${this.actor.img}" style="width:38px;height:38px;border-radius:8px;object-fit:cover;border:1px solid ${th.accent}66">` : ""}
+        <div style="min-width:0;flex:1">
+          <div style="font-size:0.82em;color:${th.muted};text-transform:uppercase;letter-spacing:0.05em">Macros de Efeitos</div>
+          <div style="color:${th.title};font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t20Esc(this.actor?.name ?? "Personagem")}</div>
+        </div>
+        <button class="t20-effect-macro-create" style="padding:7px 10px;border-radius:8px;background:${th.accent};border:1px solid ${th.accent2};color:${th.bg1};font-weight:bold;cursor:pointer">+ Criar Macro</button>
+      </div>
+      <input class="t20-effect-macro-busca" type="text" placeholder="Buscar macro..." value="${t20Esc(this.busca ?? "")}" style="width:100%;box-sizing:border-box;margin-bottom:9px;padding:7px 9px;border-radius:6px;background:${th.panel};border:1px solid ${th.border};color:${th.text}">
+      <div style="overflow:auto;min-height:0;flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:9px;align-content:start;padding-right:3px">
+        ${macros.length ? macros.map(m => `<div style="display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:12px;background:linear-gradient(180deg,${th.panel2},${th.panel});border:1px solid ${th.border};border-left:4px solid ${th.accent};box-shadow:0 3px 10px rgba(0,0,0,0.18)">
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:9px;background:${th.bg2};font-size:1.35em">${t20Esc(m.icon || "✨")}</span>
+            <div style="min-width:0;flex:1">
+              <b style="display:block;color:${th.title};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t20Esc(m.name || "Macro")}</b>
+              <span style="font-size:0.8em;color:${th.muted}">${t20Esc(t20EffectMacroResumo(m))}</span>
+            </div>
+          </div>
+          ${m.description ? `<div style="font-size:0.84em;color:${th.muted};line-height:1.3">${t20Esc(m.description)}</div>` : ""}
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:auto">
+            <button class="t20-effect-macro-apply" data-id="${m.id}" style="flex:1;padding:7px;border-radius:7px;background:#14532d;border:1px solid #34d399;color:#d1fae5;font-weight:bold;cursor:pointer">Aplicar</button>
+            <button class="t20-effect-macro-edit" data-id="${m.id}" style="padding:7px 9px;border-radius:7px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer">Editar</button>
+            <button class="t20-effect-macro-delete" data-id="${m.id}" style="padding:7px 9px;border-radius:7px;background:#3b1111;border:1px solid #f87171;color:#fecaca;cursor:pointer">Excluir</button>
+          </div>
+        </div>`).join("") : `<div style="grid-column:1/-1;color:${th.muted};padding:18px;text-align:center;border:1px dashed ${th.border};border-radius:12px;background:${th.panel}">Nenhuma macro criada para este personagem.</div>`}
+      </div>
+      <div style="font-size:0.76em;color:${th.muted};margin-top:8px;line-height:1.3">Cada macro fica salva na ficha do ator. Use uma linha por modificador no formato: <b>caminho | modo | valor | prioridade</b>.</div>
+    </div>`;
+  }
+  async _abrirEditor(macro = null) {
+    const isEdit = !!macro;
+    const data = macro ?? { name: "Nova preparação", icon: "✨", cost: 0, durationRounds: 10, targetMode: "self", description: "", changes: [], statuses: [] };
+    const content = `<form style="display:flex;flex-direction:column;gap:8px">
+      <div class="form-group"><label>Nome</label><input name="name" type="text" value="${t20Esc(data.name)}"></div>
+      <div class="form-group"><label>Ícone/emoji</label><input name="icon" type="text" value="${t20Esc(data.icon || "✨")}"></div>
+      <div class="form-group"><label>Custo de PM</label><input name="cost" type="number" min="0" step="1" value="${Number(data.cost ?? 0) || 0}"></div>
+      <div class="form-group"><label>Duração em rodadas</label><input name="durationRounds" type="number" min="0" step="1" value="${Number(data.durationRounds ?? 0) || 0}"></div>
+      <div class="form-group"><label>Aplicar em</label><select name="targetMode"><option value="self" ${data.targetMode !== "targets" ? "selected" : ""}>Próprio personagem</option><option value="targets" ${data.targetMode === "targets" ? "selected" : ""}>Alvos selecionados</option></select></div>
+      <div class="form-group stacked"><label>Descrição curta</label><textarea name="description" rows="2">${t20Esc(data.description ?? "")}</textarea></div>
+      <div class="form-group stacked"><label>Modificadores / Active Effects</label><textarea name="changes" rows="7" placeholder="system.attributes.defesa.value | add | 4 | 20">${t20Esc(t20EffectMacroChangesToText(data.changes))}</textarea><p class="notes">Modos: add, multiply, override, custom. Exemplo: system.attributes.defesa.value | add | 4 | 20</p></div>
+      <div class="form-group stacked"><label>Condições/status para aplicar</label><textarea name="statuses" rows="3" placeholder="frightened\nprone">${t20Esc(t20EffectMacroStatusToText(data.statuses))}</textarea><p class="notes">Use o ID da condição/status do Foundry/T20, uma por linha. Opcional.</p></div>
+    </form>`;
+    new Dialog({
+      title: isEdit ? "Editar Macro de Efeitos" : "Criar Macro de Efeitos",
+      content,
+      buttons: {
+        save: { label: "Salvar", callback: async html => {
+          const root = html?.[0] ?? html;
+          const get = n => root.querySelector?.(`[name="${n}"]`)?.value ?? html.find?.(`[name="${n}"]`)?.val?.() ?? "";
+          const macros = t20EffectMacrosGet(this.actor);
+          const novo = {
+            id: data.id ?? t20EffectMacroNovoId(),
+            name: get("name").trim() || "Macro sem nome",
+            icon: get("icon").trim() || "✨",
+            cost: Math.max(0, Math.floor(Number(get("cost")) || 0)),
+            durationRounds: Math.max(0, Math.floor(Number(get("durationRounds")) || 0)),
+            targetMode: get("targetMode") === "targets" ? "targets" : "self",
+            description: get("description").trim(),
+            changes: t20EffectMacroParseChanges(get("changes")),
+            statuses: t20EffectMacroParseStatuses(get("statuses")),
+          };
+          const idx = macros.findIndex(m => m.id === novo.id);
+          if (idx >= 0) macros[idx] = novo; else macros.push(novo);
+          await t20EffectMacrosSet(this.actor, macros);
+          this.render(false);
+        }},
+        cancel: { label: "Cancelar" }
+      },
+      default: "save"
+    }, { width: 620 }).render(true);
+  }
+  activateListeners(html) {
+    super.activateListeners(html);
+    html.find(".t20-effect-macro-busca").on("keydown keypress keyup", ev => ev.stopPropagation()).on("input", ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      const valor = ev.currentTarget.value ?? "";
+      const pos = ev.currentTarget.selectionStart ?? valor.length;
+      this.busca = valor;
+      this.render(false);
+      setTimeout(() => {
+        const input = this.element?.[0]?.querySelector?.(".t20-effect-macro-busca");
+        input?.focus?.(); input?.setSelectionRange?.(Math.min(pos, this.busca.length), Math.min(pos, this.busca.length));
+      }, 0);
+    });
+    html.find(".t20-effect-macro-create").on("click", ev => { ev.preventDefault(); this._abrirEditor(); });
+    html.find(".t20-effect-macro-edit").on("click", ev => {
+      ev.preventDefault();
+      const macro = t20EffectMacrosGet(this.actor).find(m => m.id === ev.currentTarget.dataset.id);
+      if (macro) this._abrirEditor(macro);
+    });
+    html.find(".t20-effect-macro-delete").on("click", async ev => {
+      ev.preventDefault();
+      const id = ev.currentTarget.dataset.id;
+      const macros = t20EffectMacrosGet(this.actor);
+      const macro = macros.find(m => m.id === id);
+      const ok = await Dialog.confirm({ title: "Excluir macro", content: `<p>Excluir <b>${t20Esc(macro?.name ?? "macro")}</b>?</p>` });
+      if (!ok) return;
+      await t20EffectMacrosSet(this.actor, macros.filter(m => m.id !== id));
+      this.render(false);
+    });
+    html.find(".t20-effect-macro-apply").on("click", async ev => {
+      ev.preventDefault();
+      await t20EffectMacroAplicar(this.actor, ev.currentTarget.dataset.id);
+    });
+  }
+}
+
 let _arsenalPericias = null;
 function abrirArsenalPericias(actor) {
   if (!actor) return ui.notifications.warn("Nenhum personagem selecionado.");
@@ -7973,6 +8366,7 @@ class ArsenalHUD extends Application {
   _renderCategoriasOrdenadas(grupos, pericias, bottom, personagemJogador, layout = "compact", actor = null) {
     const defs = {
       favoritos:  { titulo: "⭐ Favoritos", itens: grupos.favoritos ?? [], tipo: "item" },
+      macros:     { titulo: "✨ Macros", itens: [], tipo: "macro" },
       ataques:    { titulo: "⚔️ Ataques", itens: grupos.ataques, tipo: "item" },
       magias:     { titulo: "🪄 Magias", itens: grupos.magias, tipo: "item" },
       consumiveis:{ titulo: "🧪 Consumíveis", itens: grupos.consumiveis ?? [], tipo: "item" },
@@ -7983,6 +8377,9 @@ class ArsenalHUD extends Application {
     return t20HudGetCategoryOrder()
       .filter(cat => cat !== "pericias" || personagemJogador)
       .map(cat => {
+        if (cat === "macros") {
+          return this._secaoMacros(actor, bottom, layout);
+        }
         if (cat === "magias" && t20HudSpellMode() === "grimoire") {
           return this._secaoGrimorio(actor, bottom, layout);
         }
@@ -8007,6 +8404,24 @@ class ArsenalHUD extends Application {
         style="padding:1px 5px;border-radius:4px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-size:0.78em">▲</button>
       <button class="t20-hud-cat-move" data-cat="${cat}" data-dir="1" title="Mover categoria para baixo/direita"
         style="padding:1px 5px;border-radius:4px;background:${th.panel};border:1px solid ${th.border};color:${th.text};cursor:pointer;font-size:0.78em">▼</button>
+    </div>`;
+  }
+
+  _secaoMacros(actor, bottom, layout = "compact") {
+    const macros = t20EffectMacrosGet(actor);
+    const recolhida = t20HudSecaoRecolhida("macros");
+    const th = t20HudTheme();
+    return `<div style="${bottom ? "min-width:0" : "margin-bottom:9px"}">
+      ${this._secaoHeader("✨ Macros", "macros", macros.length)}
+      ${recolhida ? "" : `<button class="t20-hud-macros-open" type="button"
+        style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:${layout === "cards" ? "68px" : "54px"};padding:10px;border-radius:12px;
+        background:linear-gradient(135deg,${th.panel2},${th.panel});border:1px solid ${th.accent};color:${th.title};cursor:pointer;font-weight:900;font-size:1.02em;box-shadow:0 5px 14px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.06)">
+        <span style="font-size:1.28em">✨</span>
+        <span style="display:flex;flex-direction:column;line-height:1.15">
+          <span>Macros</span>
+          <span style="font-size:0.74em;color:${th.muted};font-weight:600">${macros.length} preparação(ões)</span>
+        </span>
+      </button>`}
     </div>`;
   }
 
@@ -8270,6 +8685,11 @@ class ArsenalHUD extends Application {
       const actor = t20HudActorSelecionado();
       const circulo = Number(ev.currentTarget.dataset.circulo);
       abrirArsenalGrimorio(actor, circulo);
+    });
+
+    html.find(".t20-hud-macros-open").on("click", ev => {
+      ev.preventDefault();
+      abrirArsenalEffectMacros(t20HudActorSelecionado());
     });
 
     html.find(".t20-hud-grimorio-open").on("click", ev => {
